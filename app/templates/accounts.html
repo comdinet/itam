@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Local accounts &middot; ITAM{% endblock %}
+{% block body %}
+<h1>Local accounts <span class="count">{{ accounts|length }}</span></h1>
+<p class="meta">These are sign-in accounts for this app. They are separate from the
+  people synced out of Entra ID &mdash; those are inventory records, not logins.</p>
+
+<table>
+  <thead><tr><th>Username</th><th>Role</th><th>Created</th><th>Last sign-in</th>
+    <th>Status</th><th></th></tr></thead>
+  <tbody>
+  {% for a in accounts %}
+    <tr>
+      <td><strong>{{ a.username }}</strong>{% if a.username == me.username %}
+          <span class="tag spare">you</span>{% endif %}</td>
+      <td>{{ 'Admin' if a.is_admin else 'Standard' }}</td>
+      <td>{{ (a.created_at or '')[:10] }}</td>
+      <td>{{ (a.last_login or 'never')[:16].replace('T', ' ') }}</td>
+      <td>{% if a.must_change %}<span class="tag">must set password</span>
+          {% else %}active{% endif %}</td>
+      <td class="row-actions">
+        {% if a.username != me.username %}
+        <form method="post" action="/accounts/delete"
+              onsubmit="return confirm('Delete account {{ a.username }}?')">
+          <input type="hidden" name="username" value="{{ a.username }}">
+          <button class="link danger">Delete</button></form>
+        {% endif %}
+      </td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<details class="panel">
+  <summary>Add an account</summary>
+  <form class="grid-form" method="post" action="/accounts/new">
+    <label>Username<input name="username" required placeholder="e.dawson"></label>
+    <label>Initial password<input type="password" name="password" minlength="12" required
+           autocomplete="new-password"></label>
+    <label>Role<select name="is_admin">
+      <option value="">Standard</option><option value="1">Admin</option></select></label>
+    <button type="submit">Create account</button>
+  </form>
+  <p class="hint">Minimum 12 characters. The new account must set its own password
+     at first sign-in. Admins can manage accounts; standard accounts cannot.</p>
+</details>
+
+<details class="panel">
+  <summary>Reset someone's password</summary>
+  <form class="grid-form" method="post" action="/accounts/reset">
+    <label>Account<select name="username" required>
+      {% for a in accounts %}<option value="{{ a.username }}">{{ a.username }}</option>{% endfor %}
+    </select></label>
+    <label>New password<input type="password" name="password" minlength="12" required
+           autocomplete="new-password"></label>
+    <button type="submit">Reset password</button>
+  </form>
+  <p class="hint">Signs out that account's sessions and forces a change at next sign-in.</p>
+</details>
+{% endblock %}

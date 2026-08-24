@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Subscriptions &middot; ITAM{% endblock %}
+{% block body %}
+<h1>Subscriptions <span class="count">{{ subs|length }}</span></h1>
+<p class="meta">Run-rate: <strong>{{ currency }} {{ monthly|money }}</strong> / month
+   &middot; {{ currency }} {{ (monthly * 12)|money }} / year</p>
+
+<details class="panel" {% if not subs %}open{% endif %}>
+  <summary>Add a subscription</summary>
+  <form class="grid-form" method="post" action="/subscriptions/new">
+    <label>Name<input name="name" required placeholder="Microsoft 365 E3"></label>
+    <label>Vendor<input name="vendor" placeholder="Microsoft"></label>
+    <label>Cost per seat / month ({{ currency }})<input name="monthly_cost" inputmode="decimal" placeholder="33.00"></label>
+    <label class="wide">Notes<input name="notes" placeholder="renewal date, contract ref, …"></label>
+    <button type="submit">Add subscription</button>
+  </form>
+</details>
+
+<table>
+  <thead><tr><th>Subscription</th><th>Vendor</th><th class="num">Per seat / mo</th>
+    <th class="num">Seats</th><th class="num">Monthly</th><th class="num">Annual</th></tr></thead>
+  <tbody>
+  {% for s in subs %}
+    <tr><td><a href="/subscriptions/{{ s.id }}">{{ s.name }}</a></td>
+        <td>{{ s.vendor or '' }}</td>
+        <td class="num">{{ s.monthly_cost_cents|money }}</td>
+        <td class="num">{{ s.seats }}</td>
+        <td class="num">{{ s.monthly|money }}</td>
+        <td class="num">{{ (s.monthly * 12)|money }}</td></tr>
+  {% else %}
+    <tr><td colspan="6" class="empty">No subscriptions yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

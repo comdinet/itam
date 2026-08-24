@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Dashboard &middot; ITAM{% endblock %}
+{% block body %}
+<h1>Dashboard</h1>
+<div class="cards">
+  <div class="card"><span class="label">Monthly SaaS run-rate</span>
+    <span class="big">{{ currency }} {{ t.monthly|money }}</span>
+    <span class="sub">{{ currency }} {{ (t.monthly * 12)|money }} / year</span></div>
+  <div class="card"><span class="label">Hardware &amp; software value</span>
+    <span class="big">{{ currency }} {{ t.asset_value|money }}</span>
+    <span class="sub">{{ t.assets }} assets tracked</span></div>
+  <div class="card"><span class="label">People</span>
+    <span class="big">{{ t.users }}</span>
+    <span class="sub">{{ t.users_disabled }} disabled account(s)</span></div>
+  <div class="card"><span class="label">Spare / unassigned</span>
+    <span class="big">{{ t.spare }}</span>
+    <span class="sub">{{ currency }} {{ t.spare_value|money }} sitting idle</span></div>
+</div>
+
+{% if orphans %}
+<div class="warn">
+  <strong>{{ orphans|length }} licence(s) assigned to disabled accounts</strong> &mdash; likely reclaimable:
+  <ul>{% for o in orphans %}<li>{{ o.name }} &rarr; {{ o.upn }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
+<h2>Subscriptions by monthly spend</h2>
+<table>
+  <thead><tr><th>Subscription</th><th>Vendor</th><th class="num">Per seat</th>
+    <th class="num">Seats</th><th class="num">Monthly</th><th class="num">Annual</th></tr></thead>
+  <tbody>
+  {% for s in top_subs %}
+    <tr><td><a href="/subscriptions/{{ s.id }}">{{ s.name }}</a></td>
+        <td>{{ s.vendor or '' }}</td>
+        <td class="num">{{ s.monthly_cost_cents|money }}</td>
+        <td class="num">{{ s.seats }}</td>
+        <td class="num">{{ s.monthly|money }}</td>
+        <td class="num">{{ (s.monthly * 12)|money }}</td></tr>
+  {% else %}
+    <tr><td colspan="6" class="empty">No subscriptions yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2>By department</h2>
+<table>
+  <thead><tr><th>Department</th><th class="num">People</th>
+    <th class="num">Asset value</th><th class="num">Monthly SaaS</th><th class="num">Annual SaaS</th></tr></thead>
+  <tbody>
+  {% for d in by_dept %}
+    <tr><td>{{ d.department }}</td><td class="num">{{ d.people }}</td>
+        <td class="num">{{ d.asset_total|money }}</td>
+        <td class="num">{{ d.monthly_total|money }}</td>
+        <td class="num">{{ (d.monthly_total * 12)|money }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p><a class="btn" href="/export/costs.csv">Export per-person costs (CSV)</a></p>
+{% endblock %}

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}{{ a.name }} &middot; ITAM{% endblock %}
+{% block body %}
+<p class="crumb"><a href="/assets">&larr; Assets</a></p>
+<h1>Edit asset</h1>
+<p class="meta">{{ a.category }}{% if a.serial %} &middot; <span class="mono">{{ a.serial }}</span>{% endif %}</p>
+
+<div class="panel">
+  <form class="grid-form" method="post" action="/assets/{{ a.id }}/edit">
+    <label>Name<input name="name" value="{{ a.name }}" required></label>
+    <label>Category<select name="category">
+      {% for c in categories %}<option value="{{ c }}" {% if c == a.category %}selected{% endif %}>{{ c }}</option>{% endfor %}
+    </select></label>
+    <label>Cost ({{ currency }})<input name="cost" inputmode="decimal" value="{{ a.cost_cents|money }}"></label>
+    <label>Serial<input name="serial" value="{{ a.serial or '' }}"></label>
+    <label>Purchased<input type="date" name="purchased_on" value="{{ a.purchased_on or '' }}"></label>
+    <label>Assigned to<select name="assigned_upn"><option value="">&mdash; spare &mdash;</option>
+      {% for u in users %}<option value="{{ u.upn }}" {% if u.upn == a.assigned_upn %}selected{% endif %}>{{ u.display_name }}</option>{% endfor %}
+    </select></label>
+    <label class="wide">Notes<input name="notes" value="{{ a.notes or '' }}"></label>
+    <button type="submit">Save changes</button>
+  </form>
+  {% if a.assigned_on %}<p class="hint">Assigned since {{ a.assigned_on }}.</p>{% endif %}
+</div>
+
+<div class="panel">
+  <form method="post" action="/assets/{{ a.id }}/delete"
+        onsubmit="return confirm('Delete {{ a.name }}? This cannot be undone.')">
+    <button class="link danger">Delete this asset</button>
+  </form>
+  <p class="hint">Deleting removes the asset and its cost from all totals. To hand it back to
+     stock instead, set &ldquo;Assigned to&rdquo; to &mdash; spare &mdash;.</p>
+</div>
+{% endblock %}

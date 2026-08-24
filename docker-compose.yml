@@ -1,0 +1,27 @@
+services:
+  itam:
+    build: .
+    image: itam:latest
+    container_name: itam
+    restart: unless-stopped
+    # Published on the host port from .env; the container always listens on 8000.
+    ports:
+      - "${ITAM_PORT:-8000}:8000"
+    env_file:
+      - .env
+    environment:
+      # Always inside the mounted volume, whatever .env says.
+      ITAM_DB: /data/itam.db
+    volumes:
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=4).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

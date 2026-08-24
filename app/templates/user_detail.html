@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}{{ u.display_name }} &middot; ITAM{% endblock %}
+{% block body %}
+<p class="crumb"><a href="/users">&larr; People</a></p>
+<h1>{{ u.display_name }}
+  {% if not u.account_enabled %}<span class="tag">disabled account</span>{% endif %}</h1>
+<p class="meta mono">{{ u.upn }}</p>
+<p class="meta">{{ u.job_title or 'No job title' }} &middot; {{ u.department or 'No department' }}
+   &middot; source: {{ u.source }}</p>
+
+<div class="cards">
+  <div class="card"><span class="label">Assets assigned</span>
+    <span class="big">{{ u.asset_count }}</span>
+    <span class="sub">{{ currency }} {{ u.asset_total|money }} one-off</span></div>
+  <div class="card"><span class="label">Monthly subscriptions</span>
+    <span class="big">{{ currency }} {{ u.monthly_total|money }}</span>
+    <span class="sub">{{ currency }} {{ (u.monthly_total * 12)|money }} / year</span></div>
+  <div class="card"><span class="label">Total first-year cost</span>
+    <span class="big">{{ currency }} {{ (u.asset_total + u.monthly_total * 12)|money }}</span>
+    <span class="sub">assets + 12 months of licences</span></div>
+</div>
+
+<h2>Assets</h2>
+<table>
+  <thead><tr><th>Name</th><th>Category</th><th>Serial</th><th>Assigned</th>
+    <th class="num">Cost</th><th></th></tr></thead>
+  <tbody>
+  {% for a in assets %}
+    <tr><td>{{ a.name }}</td><td>{{ a.category }}</td>
+        <td class="mono">{{ a.serial or '' }}</td><td>{{ a.assigned_on or '' }}</td>
+        <td class="num">{{ a.cost_cents|money }}</td>
+        <td class="row-actions">
+          <form method="post" action="/assets/{{ a.id }}/unassign">
+            <input type="hidden" name="redirect" value="/users/{{ u.upn }}">
+            <button class="link">Return to spares</button></form></td></tr>
+  {% else %}
+    <tr><td colspan="6" class="empty">Nothing assigned.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<form class="inline-form" method="post" action="/users/{{ u.upn }}/assign-asset">
+  <select name="asset_id" required>
+    <option value="">Assign a spare asset&hellip;</option>
+    {% for a in spare %}
+      <option value="{{ a.id }}">{{ a.category }} &mdash; {{ a.name }}
+        {% if a.serial %}({{ a.serial }}){% endif %} &mdash; {{ a.cost_cents|money }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit">Assign</button>
+  {% if not spare %}<span class="hint">No spare assets in stock.</span>{% endif %}
+</form>
+
+<h2>Subscriptions</h2>
+<table>
+  <thead><tr><th>Subscription</th><th>Vendor</th><th>Since</th>
+    <th class="num">Monthly</th><th class="num">Annual</th><th></th></tr></thead>
+  <tbody>
+  {% for s in subs %}
+    <tr><td><a href="/subscriptions/{{ s.id }}">{{ s.name }}</a></td>
+        <td>{{ s.vendor or '' }}</td><td>{{ s.assigned_on or '' }}</td>
+        <td class="num">{{ s.monthly_cost_cents|money }}</td>
+        <td class="num">{{ (s.monthly_cost_cents * 12)|money }}</td>
+        <td class="row-actions">
+          <form method="post" action="/subscriptions/{{ s.id }}/seats/remove">
+            <input type="hidden" name="upn" value="{{ u.upn }}">
+            <input type="hidden" name="redirect" value="/users/{{ u.upn }}">
+            <button class="link">Revoke</button></form></td></tr>
+  {% else %}
+    <tr><td colspan="6" class="empty">No licences assigned.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<form class="inline-form" method="post" action="/users/{{ u.upn }}/assign-sub">
+  <select name="subscription_id" required>
+    <option value="">Assign a licence&hellip;</option>
+    {% for s in avail_subs %}
+      <option value="{{ s.id }}">{{ s.name }} &mdash; {{ s.monthly_cost_cents|money }}/mo</option>
+    {% endfor %}
+  </select>
+  <button type="submit">Assign</button>
+</form>
+{% endblock %}

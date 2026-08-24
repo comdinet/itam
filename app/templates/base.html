@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}ITAM{% endblock %}</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <a class="brand" href="/">ITAM</a>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/users">People</a>
+    <a href="/assets">Assets</a>
+    <a href="/subscriptions">Subscriptions</a>
+    <a href="/admin">Admin</a>
+    {% if me and me.is_admin %}<a href="/accounts">Accounts</a>{% endif %}
+  </nav>
+  {% if me %}
+  <div class="who">
+    <a href="/account">{{ me.username }}</a>
+    <form method="post" action="/logout"><button class="link">Sign out</button></form>
+  </div>
+  {% endif %}
+</header>
+<main>
+  {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+  {% block body %}{% endblock %}
+</main>
+<footer>Costs in {{ currency }}. Assets are one-off cost; subscriptions are per-seat per-month.</footer>
+</body>
+</html>

@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}{{ s.name }} &middot; ITAM{% endblock %}
+{% block body %}
+<p class="crumb"><a href="/subscriptions">&larr; Subscriptions</a></p>
+<h1>{{ s.name }}</h1>
+<p class="meta">{{ s.vendor or 'No vendor' }} &middot;
+  {{ currency }} {{ s.monthly_cost_cents|money }} per seat / month</p>
+{% if s.notes %}<p class="meta">{{ s.notes }}</p>{% endif %}
+
+<div class="cards">
+  <div class="card"><span class="label">Seats assigned</span><span class="big">{{ seats|length }}</span></div>
+  <div class="card"><span class="label">Monthly</span>
+    <span class="big">{{ currency }} {{ monthly|money }}</span>
+    <span class="sub">{{ currency }} {{ (monthly * 12)|money }} / year</span></div>
+</div>
+
+<h2>Assigned to</h2>
+<table>
+  <thead><tr><th>Name</th><th>UPN</th><th>Department</th><th>Since</th><th></th></tr></thead>
+  <tbody>
+  {% for u in seats %}
+    <tr {% if not u.account_enabled %}class="disabled"{% endif %}>
+      <td><a href="/users/{{ u.upn }}">{{ u.display_name }}</a>
+        {% if not u.account_enabled %}<span class="tag">disabled</span>{% endif %}</td>
+      <td class="mono">{{ u.upn }}</td><td>{{ u.department or '' }}</td>
+      <td>{{ u.assigned_on or '' }}</td>
+      <td class="row-actions">
+        <form method="post" action="/subscriptions/{{ s.id }}/seats/remove">
+          <input type="hidden" name="upn" value="{{ u.upn }}">
+          <button class="link">Revoke</button></form></td></tr>
+  {% else %}
+    <tr><td colspan="5" class="empty">No seats assigned.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<form class="inline-form" method="post" action="/subscriptions/{{ s.id }}/seats/add">
+  <select name="upn" required><option value="">Add a person&hellip;</option>
+    {% for u in avail %}<option value="{{ u.upn }}">{{ u.display_name }}</option>{% endfor %}</select>
+  <button type="submit">Assign seat</button>
+</form>
+
+<details class="panel">
+  <summary>Edit subscription</summary>
+  <form class="grid-form" method="post" action="/subscriptions/{{ s.id }}/edit">
+    <label>Name<input name="name" value="{{ s.name }}" required></label>
+    <label>Vendor<input name="vendor" value="{{ s.vendor or '' }}"></label>
+    <label>Cost per seat / month<input name="monthly_cost" value="{{ s.monthly_cost_cents|money }}"></label>
+    <label class="wide">Notes<input name="notes" value="{{ s.notes or '' }}"></label>
+    <button type="submit">Save</button>
+  </form>
+  <form method="post" action="/subscriptions/{{ s.id }}/delete"
+        onsubmit="return confirm('Delete {{ s.name }} and all {{ seats|length }} seat assignment(s)?')">
+    <button class="link danger">Delete subscription</button></form>
+</details>
+{% endblock %}

@@ -1,0 +1,16 @@
+.venv/
+.env
+data/
+itam.db
+itam.db-wal
+itam.db-shm
+__pycache__/
+*.pyc
+.git/
+.gitignore
+README.md
+setup.sh
+backup.sh
+run.sh
+Dockerfile
+docker-compose.yml

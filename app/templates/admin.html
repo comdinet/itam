@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Admin &middot; ITAM{% endblock %}
+{% block body %}
+<h1>Admin</h1>
+
+<h2>Entra ID user sync</h2>
+{% if cfg.configured %}
+  <p class="ok">Configured for tenant <span class="mono">{{ cfg.tenant_id }}</span>,
+     client <span class="mono">{{ cfg.client_id }}</span>.</p>
+{% else %}
+  <div class="warn">
+    <strong>Not configured</strong> &mdash; the app is running on seeded demo people.
+    Set these environment variables and restart:
+    <pre>ENTRA_TENANT_ID=&lt;your tenant guid&gt;
+ENTRA_CLIENT_ID=&lt;app registration client id&gt;
+ENTRA_CLIENT_SECRET=&lt;client secret&gt;
+# optional: only sync a subset
+ENTRA_USER_FILTER=accountEnabled eq true</pre>
+    The app registration needs the <strong>User.Read.All</strong> Graph
+    <em>application</em> permission with admin consent.
+  </div>
+{% endif %}
+<p class="meta">{{ last.n }} user(s) currently sourced from Entra ID.
+  Last sync: {{ last.last or 'never' }}.</p>
+<form method="post" action="/admin/sync">
+  <button type="submit" {% if not cfg.configured %}disabled{% endif %}>Sync users from Entra ID now</button>
+</form>
+<p class="hint">Sync upserts on UPN. It never deletes: accounts disabled in Entra are flagged
+  here so their assets and licences stay visible for reclaim.</p>
+
+<h2>Demo data</h2>
+{% if seeded %}
+  <p class="meta">{{ seeded }} seeded demo user(s) are still present. Remove them once your
+     real Entra ID users are synced &mdash; their assets return to spares and their licence
+     seats are released.</p>
+  <form method="post" action="/admin/purge-demo"
+        onsubmit="return confirm('Remove {{ seeded }} demo user(s)?')">
+    <button type="submit">Remove demo users</button></form>
+{% else %}
+  <p class="meta">No seeded demo users present.</p>
+{% endif %}
+
+<h2>Data</h2>
+<p class="meta">SQLite database: <span class="mono">{{ db_path }}</span></p>
+<p><a class="btn" href="/export/costs.csv">Export per-person costs (CSV)</a></p>
+{% endblock %}

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}My account &middot; ITAM{% endblock %}
+{% block body %}
+<h1>My account</h1>
+<p class="meta">Signed in as <strong>{{ me.username }}</strong>{% if me.is_admin %} (admin){% endif %}.
+  {% if me.last_login %}Last sign-in {{ me.last_login }}.{% endif %}</p>
+
+{% if me.must_change %}
+<div class="warn"><strong>Set a new password to continue.</strong>
+  This account is still using the password it was created with.</div>
+{% endif %}
+
+<div class="panel">
+  <h2 style="margin-top:0">Change password</h2>
+  <form method="post" action="/account/password" class="stack narrow">
+    {% if not me.must_change %}
+    <label>Current password
+      <input type="password" name="current" autocomplete="current-password" required></label>
+    {% endif %}
+    <label>New password
+      <input type="password" name="new" autocomplete="new-password" minlength="12" required></label>
+    <label>Confirm new password
+      <input type="password" name="confirm" autocomplete="new-password" minlength="12" required></label>
+    <button type="submit">Change password</button>
+  </form>
+  <p class="hint">Minimum 12 characters. Changing it signs out your other sessions.</p>
+</div>
+{% endblock %}

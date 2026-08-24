@@ -1,0 +1,10 @@
+.venv/
+.env
+itam.db
+__pycache__/
+*.pyc
+data/
+itam.db-wal
+itam.db-shm
+backups/
+.DS_Store

@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Assets &middot; ITAM{% endblock %}
+{% block body %}
+<h1>Assets <span class="count">{{ assets|length }}</span></h1>
+<p class="meta">Total value shown: {{ currency }} {{ total|money }}</p>
+
+<form class="filters" method="get" action="/assets">
+  <input type="search" name="q" value="{{ q }}" placeholder="Name or serial">
+  <select name="category"><option value="">All categories</option>
+    {% for c in categories %}<option value="{{ c }}" {% if c == category %}selected{% endif %}>{{ c }}</option>{% endfor %}
+  </select>
+  <select name="state"><option value="">Any state</option>
+    <option value="assigned" {% if state=='assigned' %}selected{% endif %}>Assigned</option>
+    <option value="spare" {% if state=='spare' %}selected{% endif %}>Spare</option>
+  </select>
+  <button type="submit">Filter</button>
+  <a class="btn light" href="/assets">Reset</a>
+</form>
+
+<details class="panel" {% if not assets %}open{% endif %}>
+  <summary>Add an asset</summary>
+  <form class="grid-form" method="post" action="/assets/new">
+    <label>Name<input name="name" required placeholder="MacBook Pro 14 M4"></label>
+    <label>Category<select name="category">
+      {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}</select></label>
+    <label>Cost ({{ currency }})<input name="cost" inputmode="decimal" placeholder="2499.00"></label>
+    <label>Serial<input name="serial" placeholder="optional"></label>
+    <label>Purchased<input type="date" name="purchased_on"></label>
+    <label>Assign to<select name="assigned_upn"><option value="">— spare —</option>
+      {% for u in users %}<option value="{{ u.upn }}">{{ u.display_name }}</option>{% endfor %}</select></label>
+    <label class="wide">Notes<input name="notes" placeholder="optional"></label>
+    <button type="submit">Add asset</button>
+  </form>
+</details>
+
+<table>
+  <thead><tr><th>Name</th><th>Category</th><th>Serial</th><th>Assigned to</th>
+    <th class="num">Cost</th><th></th></tr></thead>
+  <tbody>
+  {% for a in assets %}
+    <tr>
+      <td>{{ a.name }}</td><td>{{ a.category }}</td><td class="mono">{{ a.serial or '' }}</td>
+      <td>{% if a.assigned_upn %}<a href="/users/{{ a.assigned_upn }}">{{ a.display_name }}</a>
+          {% else %}<span class="tag spare">spare</span>{% endif %}</td>
+      <td class="num">{{ a.cost_cents|money }}</td>
+      <td class="row-actions"><a href="/assets/{{ a.id }}">Edit</a></td></tr>
+  {% else %}
+    <tr><td colspan="6" class="empty">No assets match.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
