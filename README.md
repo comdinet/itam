@@ -35,8 +35,8 @@ sudo ./setup.sh
 ```
 
 `setup.sh` does the whole job: installs Docker if it is missing, asks for the
-hostname, the admin username and password, the currency, and optionally your
-Entra ID credentials. It writes `.env` (mode 600), prepares the data directory,
+hostnames, the admin username and password, the currency, and optionally your
+Entra ID credentials. It generates the self-signed certificate on the way. It writes `.env` (mode 600), prepares the data directory,
 builds the image, verifies the container can actually write to the database,
 starts the app behind an HTTPS terminator, waits for the health check, and
 prints the URL and the credentials.
@@ -44,13 +44,12 @@ prints the URL and the credentials.
 Non-interactive, for a scripted rollout:
 
 ```bash
-sudo ./setup.sh --yes --hostname itam.example.com --tls it@example.com \
+sudo ./setup.sh --yes --hostname 'itam.example.com, itam' \
                 --admin-user itadmin --admin-password 'a-long-passphrase'
 ```
 
 Leave `--admin-password` off with `--yes` and it generates one and prints it.
-Other flags: `--currency EUR`, `--tls internal`, `--no-start`, `--reconfigure`,
-`--help`.
+Other flags: `--currency EUR`, `--no-start`, `--reconfigure`, `--help`.
 
 Re-running `setup.sh` later is safe — it offers to keep your existing settings
 and just rebuild.
@@ -75,8 +74,8 @@ Docker service, so the app comes back by itself after a reboot.
 
 ### Open the firewall
 
-Port 443 for the app, and port 80 because Caddy redirects HTTP to HTTPS and
-Let's Encrypt validates over it. Restrict the source range if you can:
+Port 443 for the app, and port 80 because Caddy redirects HTTP to HTTPS.
+Restrict the source range if you can:
 
 ```bash
 sudo ufw allow from 10.0.0.0/8 to any port 443 proto tcp
@@ -85,56 +84,32 @@ sudo ufw allow from 10.0.0.0/8 to any port 80 proto tcp
 
 ### HTTPS
 
-TLS is handled by a bundled Caddy container, configured from `.env`:
+The stack serves HTTPS with a **self-signed certificate**. No ACME, no DNS
+requirements, nothing to reach the internet for.
 
-| | |
-|---|---|
-| `ITAM_SITE_ADDRESS` | every name people type in the browser, comma separated |
-| `ITAM_DEFAULT_SNI` | the first of those names; used when a client sends no SNI |
-| `ITAM_TLS` | `internal`, or a contact email address |
+`./make-cert.sh` builds one certificate covering every name in
+`ITAM_SITE_ADDRESS` plus `localhost` and this host's IP, valid for 10 years.
+Caddy serves that single certificate for **every** request, whatever hostname
+or IP is used, so no request can fail because a name was not configured.
+`setup.sh` runs it for you.
 
-**List every name people will actually use.** The certificate covers only the
-names in `ITAM_SITE_ADDRESS`. Browse a name that is not listed and the TLS
-handshake is aborted — Firefox reports it as
-`SSL_ERROR_INTERNAL_ERROR_ALERT`, Chrome as `ERR_SSL_PROTOCOL_ERROR` — because
-there is no certificate to offer for that name. Include the short name as well
-as the FQDN:
-
-```
-ITAM_SITE_ADDRESS=itam.example.com, itam
-ITAM_DEFAULT_SNI=itam.example.com
-```
-
-Reaching the server by **bare IP** works but warns: an IP is never sent as SNI,
-so `ITAM_DEFAULT_SNI` decides which certificate is presented and its name will
-not match the address typed. That is a warning you can click through, rather
-than a failure you cannot.
-
-Let's Encrypt cannot issue for a bare IP, a name with no dot, or a private
-suffix such as `.local`. If any listed name is one of those, `setup.sh` uses the
-local CA for the whole site — mixing them would make issuance fail and leave
-nothing served.
-
-**`ITAM_TLS=internal`** issues a certificate from Caddy's own local CA. This is
-the right choice for an internal hostname, an IP address, or anything without
-public DNS. Browsers show a warning until you trust that CA — export it once
-and install it on the machines that use the app:
+To add a name later, edit `ITAM_SITE_ADDRESS` in `.env` — it is a value in a
+file, not a shell command — then:
 
 ```bash
-docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./itam-ca.crt
+./make-cert.sh && docker compose restart caddy
 ```
 
-**`ITAM_TLS=you@example.com`** gets a free Let's Encrypt certificate for
-`ITAM_SITE_ADDRESS`, renewed automatically. This needs the hostname to resolve
-publicly to the server and ports 80 and 443 reachable from the internet. If
-either is untrue, issuance fails and Caddy falls back to serving nothing —
-check `docker compose logs caddy`.
+Or pass the names directly:
 
-Certificates live in the `caddy_data` volume and survive restarts, so you are
-not re-issuing (and hitting Let's Encrypt rate limits) on every deploy.
+```bash
+./make-cert.sh itam.example.com itam 10.0.0.20 && docker compose restart caddy
+```
 
-The app container itself is published only on `127.0.0.1:8000`, for local
-debugging. Nothing reaches it from outside except through Caddy.
+Browsers show a warning the first time, because the certificate signs itself.
+Click through it, or install `certs/itam.crt` as a trusted certificate on the
+machines that use the app to stop the warning. `certs/` is gitignored — the
+private key lives only on the server.
 
 ### Back up
 
@@ -166,9 +141,9 @@ falls back to the container's own Python if the host lacks it.
 | Health check never turns healthy | `docker compose logs --tail=50` — the startup error is there |
 | `port is already allocated` | Something else has that port. Change `ITAM_PORT` in `.env` and `docker compose up -d` |
 | `permission denied` on the Docker socket | `sudo usermod -aG docker $USER`, then log out and back in |
-| Browser warns about the certificate | Expected with `ITAM_TLS=internal`. Trust the local CA (see HTTPS above) or switch to Let's Encrypt. |
-| **"Secure Connection Failed" / `SSL_ERROR_INTERNAL_ERROR_ALERT` / `ERR_SSL_PROTOCOL_ERROR`** | Caddy has no certificate for the name you browsed, so it aborts the handshake. Add that name to `ITAM_SITE_ADDRESS` (comma separated), then `docker compose up -d`. Confirm with `openssl s_client -connect HOST:443 -servername THE_NAME` — `alert number 80` is this exact fault. |
-| Let's Encrypt will not issue | `docker compose logs caddy`. The hostname must resolve publicly to this server and ports 80+443 must be open. |
+| Browser warns about the certificate | Expected — it is self-signed. Click through, or install `certs/itam.crt` on the client machines. |
+| **"Secure Connection Failed" / `SSL_ERROR_INTERNAL_ERROR_ALERT`** | Caddy had no certificate to serve. Run `./make-cert.sh && docker compose restart caddy`. Confirm with `openssl s_client -connect HOST:443` — `alert number 80` means no certificate was loaded; check `docker compose logs caddy`. |
+| `itam,: command not found` | An `.env` value was typed at the shell prompt. `ITAM_SITE_ADDRESS=...` belongs **inside** `.env`; editing that file is the only step. |
 | Signed in, but immediately bounced back to the login page | The app is on plain HTTP while `ITAM_COOKIE_SECURE=1`, so the browser refuses to send the session cookie. Use HTTPS, or set it to 0. |
 | Forgot a password | Any other admin can reset it under **Accounts**. `sudo grep ITAM_ADMIN_PASSWORD .env` still shows the original bootstrap password if it was never changed. |
 | Locked out of every admin account | Set a known hash directly, which keeps all your inventory data: `docker compose exec itam python -c "from app import auth; auth.set_password('admin','a-new-long-password')"`. If the account no longer exists, `docker compose exec itam python -c "from app import auth; auth.create_user('admin','a-new-long-password',is_admin=True)"`. |

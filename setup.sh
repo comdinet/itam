@@ -15,7 +15,7 @@ ENV_FILE=".env"
 DATA_DIR="./data"
 
 PORT=""; ADMIN_USER=""; ADMIN_PASSWORD=""; CURRENCY=""
-SITE=""; TLS_MODE=""
+SITE=""
 ASSUME_YES=0; NO_START=0; RECONFIGURE=0
 
 die()  { printf '\n\033[31mError:\033[0m %s\n' "$1" >&2; exit 1; }
@@ -30,7 +30,6 @@ while [ $# -gt 0 ]; do
         --admin-password)  ADMIN_PASSWORD="${2:-}"; shift 2 ;;
         --currency)        CURRENCY="${2:-}"; shift 2 ;;
         --hostname)        SITE="${2:-}"; shift 2 ;;
-        --tls)             TLS_MODE="${2:-}"; shift 2 ;;
         --yes|-y)          ASSUME_YES=1; shift ;;
         --no-start)        NO_START=1; shift ;;
         --reconfigure)     RECONFIGURE=1; shift ;;
@@ -181,57 +180,21 @@ if [ "${KEEP_ENV:-0}" = "0" ]; then
 
     [ -n "$CURRENCY" ] || CURRENCY="$(ask 'Currency label (display only)' "$(get_env_or ITAM_CURRENCY USD)")"
 
-    # HTTPS is the default and is terminated by the bundled Caddy container.
     echo
     info "--- HTTPS ---"
-    echo "  List every name people will type in the browser, comma separated."
-    echo "  A certificate only covers the names listed here, so include the short"
-    echo "  name too if people use it. Reaching the server by bare IP still works"
-    echo "  but shows a name-mismatch warning, since a certificate cannot be"
-    echo "  matched to an address the browser never sends."
-    FQDN="$(hostname -f 2>/dev/null || hostname 2>/dev/null || echo localhost)"
-    SHORTNAME="$(hostname -s 2>/dev/null || echo '')"
+    echo "  Names people will use in the browser, comma separated. A self-signed"
+    echo "  certificate is generated covering all of them plus this host's IP, so"
+    echo "  any of them work. Browsers warn once; that is expected."
+    # Every one of these must tolerate failure: under `set -o pipefail` a
+    # missing flag (hostname -I does not exist everywhere) or a host with no
+    # address would abort the whole script.
+    FQDN="$( (hostname -f 2>/dev/null || hostname 2>/dev/null || echo localhost) | head -1 )"
+    SHORTNAME="$( (hostname -s 2>/dev/null || true) | head -1 )"
+    HOSTIP="$( (hostname -I 2>/dev/null || ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 || true) | awk '{print $1}' )"
     SUGGEST="$FQDN"
     [ -n "$SHORTNAME" ] && [ "$SHORTNAME" != "$FQDN" ] && SUGGEST="$SUGGEST, $SHORTNAME"
+    [ -n "$HOSTIP" ] && SUGGEST="$SUGGEST, $HOSTIP"
     [ -n "$SITE" ] || SITE="$(ask '  Hostname(s)' "$(get_env_or ITAM_SITE_ADDRESS "$SUGGEST")")"
-
-    # Let's Encrypt cannot issue for a bare IP, a name with no dot, or a
-    # private suffix. If any listed name is one of those, the whole site has to
-    # use the local CA - otherwise issuance fails and nothing is served.
-    NEEDS_INTERNAL=0
-    OLDIFS="$IFS"; IFS=','
-    for raw in $SITE; do
-        entry="$(echo "$raw" | tr -d '[:space:]')"
-        [ -z "$entry" ] && continue
-        case "$entry" in
-            localhost|*.local|*.internal|*.lan|*.home|*.corp) NEEDS_INTERNAL=1 ;;
-            *[0-9].[0-9]*[0-9]) NEEDS_INTERNAL=1 ;;   # bare IPv4
-            *.*) : ;;                                  # looks publicly resolvable
-            *) NEEDS_INTERNAL=1 ;;                     # no dot at all
-        esac
-    done
-    IFS="$OLDIFS"
-
-    if [ -z "$TLS_MODE" ]; then
-        if [ "$NEEDS_INTERNAL" = "1" ]; then
-            TLS_MODE="internal"
-            echo "  One or more names cannot get a public certificate (bare IP,"
-            echo "  short name, or private suffix), so the local CA will be used."
-        elif ask_yn "  Get a Let'\''s Encrypt certificate for these names?" y; then
-            FIRST="$(echo "$SITE" | cut -d, -f1 | tr -d '[:space:]')"
-            TLS_MODE="$(ask '  Contact email for the certificate' "$(get_env_or ITAM_TLS admin@$FIRST)")"
-        else
-            TLS_MODE="internal"
-        fi
-    fi
-    if [ "$TLS_MODE" = "internal" ]; then
-        warn "  Using a certificate from Caddy's local CA."
-        warn "  Browsers warn once until you trust that CA (see README)."
-    else
-        echo "  Let's Encrypt needs ports 80 and 443 reachable from the internet"
-        echo "  and every name above resolving to this server, or issuance fails"
-        echo "  and the site will not serve at all."
-    fi
 
     echo
     info "--- Entra ID (optional - skip to run on demo data) ---"
@@ -244,9 +207,6 @@ if [ "${KEEP_ENV:-0}" = "0" ]; then
         fi
         echo "  Needs Graph application permission User.Read.All with admin consent."
     fi
-
-    # First listed name; used for clients that send no SNI.
-    PRIMARY="$(echo "$SITE" | cut -d, -f1 | tr -d '[:space:]')"
 
     umask 077
     cat > "$ENV_FILE" <<ENVEOF
@@ -261,8 +221,6 @@ ITAM_SESSION_HOURS=12
 # Secure-only. Set to 0 only if you deliberately serve plain HTTP.
 ITAM_COOKIE_SECURE=1
 ITAM_SITE_ADDRESS=$SITE
-ITAM_DEFAULT_SNI=$PRIMARY
-ITAM_TLS=$TLS_MODE
 ITAM_HTTP_PORT=80
 ITAM_HTTPS_PORT=443
 
@@ -295,7 +253,14 @@ else
     ok "Data directory $DATA_DIR already owned by uid $DATA_UID"
 fi
 
-# --- 4. Build -----------------------------------------------------------
+[ -f "$ENV_FILE" ] || die "Configuration was not written. Re-run with sh -x ./setup.sh to see where it stopped."
+
+# --- 4. Certificate -----------------------------------------------------
+echo
+info "Generating the self-signed certificate..."
+./make-cert.sh || die "Could not generate the certificate. Is openssl installed?"
+
+# --- 5. Build -----------------------------------------------------------
 echo
 info "Building the image (first time takes a minute)..."
 ${DOCKER_PREFIX}$COMPOSE build || die "Image build failed. The output above says why."
@@ -312,7 +277,7 @@ else
   Then re-run:   ./setup.sh"
 fi
 
-# --- 5. Start -----------------------------------------------------------
+# --- 6. Start -----------------------------------------------------------
 if [ "$NO_START" = "1" ]; then
     ok "Configuration complete. Start it with:  $DOCKER_PREFIX$COMPOSE up -d"
     exit 0

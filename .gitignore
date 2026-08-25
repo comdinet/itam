@@ -8,4 +8,9 @@ itam.db-wal
 itam.db-shm
 backups/
 .DS_Store
-itam-ca.crt
+
+# TLS material - the private key must never be committed.
+certs/
+*.key
+*.crt
+*.pem
