@@ -10,6 +10,8 @@ services:
     environment:
       ITAM_SITE_ADDRESS: ${ITAM_SITE_ADDRESS:-localhost}
       ITAM_TLS: ${ITAM_TLS:-internal}
+      # Falls back to the first listed name for clients that send no SNI.
+      ITAM_DEFAULT_SNI: ${ITAM_DEFAULT_SNI:-localhost}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data        # issued certificates - must persist across restarts

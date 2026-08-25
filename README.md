@@ -85,12 +85,35 @@ sudo ufw allow from 10.0.0.0/8 to any port 80 proto tcp
 
 ### HTTPS
 
-TLS is handled by a bundled Caddy container, configured by two values in `.env`:
+TLS is handled by a bundled Caddy container, configured from `.env`:
 
 | | |
 |---|---|
-| `ITAM_SITE_ADDRESS` | the hostname people type in the browser |
+| `ITAM_SITE_ADDRESS` | every name people type in the browser, comma separated |
+| `ITAM_DEFAULT_SNI` | the first of those names; used when a client sends no SNI |
 | `ITAM_TLS` | `internal`, or a contact email address |
+
+**List every name people will actually use.** The certificate covers only the
+names in `ITAM_SITE_ADDRESS`. Browse a name that is not listed and the TLS
+handshake is aborted — Firefox reports it as
+`SSL_ERROR_INTERNAL_ERROR_ALERT`, Chrome as `ERR_SSL_PROTOCOL_ERROR` — because
+there is no certificate to offer for that name. Include the short name as well
+as the FQDN:
+
+```
+ITAM_SITE_ADDRESS=itam.example.com, itam
+ITAM_DEFAULT_SNI=itam.example.com
+```
+
+Reaching the server by **bare IP** works but warns: an IP is never sent as SNI,
+so `ITAM_DEFAULT_SNI` decides which certificate is presented and its name will
+not match the address typed. That is a warning you can click through, rather
+than a failure you cannot.
+
+Let's Encrypt cannot issue for a bare IP, a name with no dot, or a private
+suffix such as `.local`. If any listed name is one of those, `setup.sh` uses the
+local CA for the whole site — mixing them would make issuance fail and leave
+nothing served.
 
 **`ITAM_TLS=internal`** issues a certificate from Caddy's own local CA. This is
 the right choice for an internal hostname, an IP address, or anything without
@@ -144,6 +167,7 @@ falls back to the container's own Python if the host lacks it.
 | `port is already allocated` | Something else has that port. Change `ITAM_PORT` in `.env` and `docker compose up -d` |
 | `permission denied` on the Docker socket | `sudo usermod -aG docker $USER`, then log out and back in |
 | Browser warns about the certificate | Expected with `ITAM_TLS=internal`. Trust the local CA (see HTTPS above) or switch to Let's Encrypt. |
+| **"Secure Connection Failed" / `SSL_ERROR_INTERNAL_ERROR_ALERT` / `ERR_SSL_PROTOCOL_ERROR`** | Caddy has no certificate for the name you browsed, so it aborts the handshake. Add that name to `ITAM_SITE_ADDRESS` (comma separated), then `docker compose up -d`. Confirm with `openssl s_client -connect HOST:443 -servername THE_NAME` — `alert number 80` is this exact fault. |
 | Let's Encrypt will not issue | `docker compose logs caddy`. The hostname must resolve publicly to this server and ports 80+443 must be open. |
 | Signed in, but immediately bounced back to the login page | The app is on plain HTTP while `ITAM_COOKIE_SECURE=1`, so the browser refuses to send the session cookie. Use HTTPS, or set it to 0. |
 | Forgot a password | Any other admin can reset it under **Accounts**. `sudo grep ITAM_ADMIN_PASSWORD .env` still shows the original bootstrap password if it was never changed. |

@@ -184,33 +184,53 @@ if [ "${KEEP_ENV:-0}" = "0" ]; then
     # HTTPS is the default and is terminated by the bundled Caddy container.
     echo
     info "--- HTTPS ---"
-    echo "  The hostname people will use in the browser. A public DNS name gets a"
-    echo "  free Let's Encrypt certificate automatically; anything else (internal"
-    echo "  name, IP, localhost) gets a certificate from Caddy's own local CA."
-    [ -n "$SITE" ] || SITE="$(ask '  Hostname' "$(get_env_or ITAM_SITE_ADDRESS "$(hostname -f 2>/dev/null || echo localhost)")")"
+    echo "  List every name people will type in the browser, comma separated."
+    echo "  A certificate only covers the names listed here, so include the short"
+    echo "  name too if people use it. Reaching the server by bare IP still works"
+    echo "  but shows a name-mismatch warning, since a certificate cannot be"
+    echo "  matched to an address the browser never sends."
+    FQDN="$(hostname -f 2>/dev/null || hostname 2>/dev/null || echo localhost)"
+    SHORTNAME="$(hostname -s 2>/dev/null || echo '')"
+    SUGGEST="$FQDN"
+    [ -n "$SHORTNAME" ] && [ "$SHORTNAME" != "$FQDN" ] && SUGGEST="$SUGGEST, $SHORTNAME"
+    [ -n "$SITE" ] || SITE="$(ask '  Hostname(s)' "$(get_env_or ITAM_SITE_ADDRESS "$SUGGEST")")"
+
+    # Let's Encrypt cannot issue for a bare IP, a name with no dot, or a
+    # private suffix. If any listed name is one of those, the whole site has to
+    # use the local CA - otherwise issuance fails and nothing is served.
+    NEEDS_INTERNAL=0
+    OLDIFS="$IFS"; IFS=','
+    for raw in $SITE; do
+        entry="$(echo "$raw" | tr -d '[:space:]')"
+        [ -z "$entry" ] && continue
+        case "$entry" in
+            localhost|*.local|*.internal|*.lan|*.home|*.corp) NEEDS_INTERNAL=1 ;;
+            *[0-9].[0-9]*[0-9]) NEEDS_INTERNAL=1 ;;   # bare IPv4
+            *.*) : ;;                                  # looks publicly resolvable
+            *) NEEDS_INTERNAL=1 ;;                     # no dot at all
+        esac
+    done
+    IFS="$OLDIFS"
 
     if [ -z "$TLS_MODE" ]; then
-        case "$SITE" in
-            localhost|127.0.0.1|*.local|*.internal|*.lan)
-                TLS_MODE="internal" ;;
-            *[0-9].[0-9]*)   # bare IPv4
-                TLS_MODE="internal" ;;
-            *.*)
-                if ask_yn "  '$SITE' looks public. Get a Let's Encrypt certificate for it?" y; then
-                    TLS_MODE="$(ask '  Contact email for the certificate' "$(get_env_or ITAM_TLS admin@$SITE)")"
-                else
-                    TLS_MODE="internal"
-                fi ;;
-            *)
-                TLS_MODE="internal" ;;
-        esac
+        if [ "$NEEDS_INTERNAL" = "1" ]; then
+            TLS_MODE="internal"
+            echo "  One or more names cannot get a public certificate (bare IP,"
+            echo "  short name, or private suffix), so the local CA will be used."
+        elif ask_yn "  Get a Let'\''s Encrypt certificate for these names?" y; then
+            FIRST="$(echo "$SITE" | cut -d, -f1 | tr -d '[:space:]')"
+            TLS_MODE="$(ask '  Contact email for the certificate' "$(get_env_or ITAM_TLS admin@$FIRST)")"
+        else
+            TLS_MODE="internal"
+        fi
     fi
     if [ "$TLS_MODE" = "internal" ]; then
-        warn "  Using a self-signed certificate from Caddy's local CA."
-        warn "  Browsers will warn once until you trust that CA (see README)."
+        warn "  Using a certificate from Caddy's local CA."
+        warn "  Browsers warn once until you trust that CA (see README)."
     else
         echo "  Let's Encrypt needs ports 80 and 443 reachable from the internet"
-        echo "  and $SITE resolving to this server, or issuance will fail."
+        echo "  and every name above resolving to this server, or issuance fails"
+        echo "  and the site will not serve at all."
     fi
 
     echo
@@ -225,6 +245,9 @@ if [ "${KEEP_ENV:-0}" = "0" ]; then
         echo "  Needs Graph application permission User.Read.All with admin consent."
     fi
 
+    # First listed name; used for clients that send no SNI.
+    PRIMARY="$(echo "$SITE" | cut -d, -f1 | tr -d '[:space:]')"
+
     umask 077
     cat > "$ENV_FILE" <<ENVEOF
 # Written by setup.sh - plain KEY=value, no "export".
@@ -238,6 +261,7 @@ ITAM_SESSION_HOURS=12
 # Secure-only. Set to 0 only if you deliberately serve plain HTTP.
 ITAM_COOKIE_SECURE=1
 ITAM_SITE_ADDRESS=$SITE
+ITAM_DEFAULT_SNI=$PRIMARY
 ITAM_TLS=$TLS_MODE
 ITAM_HTTP_PORT=80
 ITAM_HTTPS_PORT=443
@@ -301,7 +325,8 @@ ${DOCKER_PREFIX}$COMPOSE up -d
 echo
 info "Waiting for the app to come up..."
 HTTPS_PORT="$(get_env_or ITAM_HTTPS_PORT 443)"
-URL="https://$SITE$( [ "$HTTPS_PORT" = "443" ] && echo "" || echo ":$HTTPS_PORT" )"
+PRIMARY_NAME="$(echo "$SITE" | cut -d, -f1 | tr -d '[:space:]')"
+URL="https://$PRIMARY_NAME$( [ "$HTTPS_PORT" = "443" ] && echo "" || echo ":$HTTPS_PORT" )"
 for _ in $(seq 1 60); do
     # -k: the local CA cert is not in this shell's trust store.
     if curl -fsSk -o /dev/null "$URL/healthz" 2>/dev/null \

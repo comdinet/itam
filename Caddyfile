@@ -1,7 +1,33 @@
+{
+    # Which certificate to present when the client sends no SNI - which is what
+    # happens when someone browses a bare IP address. Without this Caddy cannot
+    # choose a certificate and aborts the handshake with "internal error"; with
+    # it, the browser gets a real certificate and at worst a name-mismatch
+    # warning it can act on.
+    default_sni {$ITAM_DEFAULT_SNI}
+
+    servers {
+        # HTTP/1.1 and HTTP/2 only. With HTTP/3 enabled Caddy sends
+        # "Alt-Svc: h3=:443", which tells browsers to switch to QUIC over UDP
+        # 443 - a port this deployment does not publish and most internal
+        # firewalls do not open. Browsers then fail the handshake rather than
+        # falling back cleanly, and they cache that instruction for 30 days.
+        protocols h1 h2
+    }
+}
+
 # TLS terminator in front of the app.
+#
 #   ITAM_TLS=internal        -> certificate from Caddy's own local CA
 #                               (internal hostnames, IP addresses, localhost)
 #   ITAM_TLS=you@example.com -> automatic Let's Encrypt for a public domain
+#
+# ITAM_SITE_ADDRESS may list several names, comma separated, e.g.
+#   itam.example.com, itam, 10.0.0.20
+# List every name people will actually type. A certificate only covers the
+# names listed here; browsing any other name or a bare IP makes Caddy abort
+# the handshake with "internal error" (Firefox: SSL_ERROR_INTERNAL_ERROR_ALERT),
+# because it has no certificate to offer for that name.
 {$ITAM_SITE_ADDRESS} {
     tls {$ITAM_TLS}
     encode gzip
