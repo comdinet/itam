@@ -28,7 +28,7 @@
         <td class="num">{{ s.monthly|money }}</td>
         <td class="num">{{ (s.monthly * 12)|money }}</td></tr>
   {% else %}
-    <tr><td colspan="6" class="empty">No subscriptions yet.</td></tr>
+    <tr><td colspan="6" class="empty">No subscriptions yet &mdash; add your first one above.</td></tr>
   {% endfor %}
   </tbody>
 </table>

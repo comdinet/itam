@@ -14,7 +14,8 @@ from . import db
 
 COOKIE = "itam_session"
 SESSION_HOURS = int(os.environ.get("ITAM_SESSION_HOURS") or 12)
-COOKIE_SECURE = (os.environ.get("ITAM_COOKIE_SECURE") or "").lower() in ("1", "true", "yes")
+# Defaults to on: the shipped deployment terminates TLS in front of the app.
+COOKIE_SECURE = (os.environ.get("ITAM_COOKIE_SECURE") or "1").lower() in ("1", "true", "yes")
 ITERATIONS = 400_000
 MAX_FAILURES = 8            # per username, per process
 LOCKOUT_MINUTES = 15

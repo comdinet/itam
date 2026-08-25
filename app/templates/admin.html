@@ -9,7 +9,7 @@
      client <span class="mono">{{ cfg.client_id }}</span>.</p>
 {% else %}
   <div class="warn">
-    <strong>Not configured</strong> &mdash; the app is running on seeded demo people.
+    <strong>Not configured</strong> &mdash; no users can be synced yet.
     Set these environment variables and restart:
     <pre>ENTRA_TENANT_ID=&lt;your tenant guid&gt;
 ENTRA_CLIENT_ID=&lt;app registration client id&gt;
@@ -27,18 +27,6 @@ ENTRA_USER_FILTER=accountEnabled eq true</pre>
 </form>
 <p class="hint">Sync upserts on UPN. It never deletes: accounts disabled in Entra are flagged
   here so their assets and licences stay visible for reclaim.</p>
-
-<h2>Demo data</h2>
-{% if seeded %}
-  <p class="meta">{{ seeded }} seeded demo user(s) are still present. Remove them once your
-     real Entra ID users are synced &mdash; their assets return to spares and their licence
-     seats are released.</p>
-  <form method="post" action="/admin/purge-demo"
-        onsubmit="return confirm('Remove {{ seeded }} demo user(s)?')">
-    <button type="submit">Remove demo users</button></form>
-{% else %}
-  <p class="meta">No seeded demo users present.</p>
-{% endif %}
 
 <h2>Data</h2>
 <p class="meta">SQLite database: <span class="mono">{{ db_path }}</span></p>

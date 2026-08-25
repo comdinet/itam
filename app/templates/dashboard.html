@@ -2,6 +2,15 @@
 {% block title %}Dashboard &middot; ITAM{% endblock %}
 {% block body %}
 <h1>Dashboard</h1>
+
+{% if t.users == 0 %}
+<div class="warn">
+  <strong>Nothing tracked yet.</strong>
+  Start by pulling your people in from Entra ID under <a href="/admin">Admin</a>,
+  then add hardware under <a href="/assets">Assets</a> and licences under
+  <a href="/subscriptions">Subscriptions</a>.
+</div>
+{% endif %}
 <div class="cards">
   <div class="card"><span class="label">Monthly SaaS run-rate</span>
     <span class="big">{{ currency }} {{ t.monthly|money }}</span>
@@ -52,6 +61,8 @@
         <td class="num">{{ d.asset_total|money }}</td>
         <td class="num">{{ d.monthly_total|money }}</td>
         <td class="num">{{ (d.monthly_total * 12)|money }}</td></tr>
+  {% else %}
+    <tr><td colspan="5" class="empty">No people yet.</td></tr>
   {% endfor %}
   </tbody>
 </table>

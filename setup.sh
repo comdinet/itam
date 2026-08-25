@@ -14,7 +14,8 @@ DATA_UID=10001          # must match the USER in the Dockerfile
 ENV_FILE=".env"
 DATA_DIR="./data"
 
-PORT=""; ADMIN_USER=""; ADMIN_PASSWORD=""; CURRENCY=""; HTTPS=""
+PORT=""; ADMIN_USER=""; ADMIN_PASSWORD=""; CURRENCY=""
+SITE=""; TLS_MODE=""
 ASSUME_YES=0; NO_START=0; RECONFIGURE=0
 
 die()  { printf '\n\033[31mError:\033[0m %s\n' "$1" >&2; exit 1; }
@@ -28,8 +29,8 @@ while [ $# -gt 0 ]; do
         --admin-user)      ADMIN_USER="${2:-}"; shift 2 ;;
         --admin-password)  ADMIN_PASSWORD="${2:-}"; shift 2 ;;
         --currency)        CURRENCY="${2:-}"; shift 2 ;;
-        --https)           HTTPS="1"; shift ;;
-        --no-https)        HTTPS="0"; shift ;;
+        --hostname)        SITE="${2:-}"; shift 2 ;;
+        --tls)             TLS_MODE="${2:-}"; shift 2 ;;
         --yes|-y)          ASSUME_YES=1; shift ;;
         --no-start)        NO_START=1; shift ;;
         --reconfigure)     RECONFIGURE=1; shift ;;
@@ -145,7 +146,7 @@ if [ "${KEEP_ENV:-0}" = "0" ]; then
     echo
     info "--- Settings ---"
 
-    [ -n "$PORT" ] || PORT="$(ask 'Host port to serve on' "$(get_env_or ITAM_PORT 8000)")"
+    [ -n "$PORT" ] || PORT="$(ask 'Loopback port for the app itself (HTTPS is served on 443)' "$(get_env_or ITAM_PORT 8000)")"
     [[ "$PORT" =~ ^[0-9]+$ ]] && [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] \
         || die "Invalid port: $PORT"
     if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -qE "[:.]${PORT}\b"; then
@@ -180,8 +181,36 @@ if [ "${KEEP_ENV:-0}" = "0" ]; then
 
     [ -n "$CURRENCY" ] || CURRENCY="$(ask 'Currency label (display only)' "$(get_env_or ITAM_CURRENCY USD)")"
 
-    if [ -z "$HTTPS" ]; then
-        if ask_yn "Will this be served over HTTPS (behind a reverse proxy)?" n; then HTTPS=1; else HTTPS=0; fi
+    # HTTPS is the default and is terminated by the bundled Caddy container.
+    echo
+    info "--- HTTPS ---"
+    echo "  The hostname people will use in the browser. A public DNS name gets a"
+    echo "  free Let's Encrypt certificate automatically; anything else (internal"
+    echo "  name, IP, localhost) gets a certificate from Caddy's own local CA."
+    [ -n "$SITE" ] || SITE="$(ask '  Hostname' "$(get_env_or ITAM_SITE_ADDRESS "$(hostname -f 2>/dev/null || echo localhost)")")"
+
+    if [ -z "$TLS_MODE" ]; then
+        case "$SITE" in
+            localhost|127.0.0.1|*.local|*.internal|*.lan)
+                TLS_MODE="internal" ;;
+            *[0-9].[0-9]*)   # bare IPv4
+                TLS_MODE="internal" ;;
+            *.*)
+                if ask_yn "  '$SITE' looks public. Get a Let's Encrypt certificate for it?" y; then
+                    TLS_MODE="$(ask '  Contact email for the certificate' "$(get_env_or ITAM_TLS admin@$SITE)")"
+                else
+                    TLS_MODE="internal"
+                fi ;;
+            *)
+                TLS_MODE="internal" ;;
+        esac
+    fi
+    if [ "$TLS_MODE" = "internal" ]; then
+        warn "  Using a self-signed certificate from Caddy's local CA."
+        warn "  Browsers will warn once until you trust that CA (see README)."
+    else
+        echo "  Let's Encrypt needs ports 80 and 443 reachable from the internet"
+        echo "  and $SITE resolving to this server, or issuance will fail."
     fi
 
     echo
@@ -204,7 +233,14 @@ ITAM_PORT=$PORT
 ITAM_ADMIN_USER=$ADMIN_USER
 ITAM_ADMIN_PASSWORD=$ADMIN_PASSWORD
 ITAM_SESSION_HOURS=12
-ITAM_COOKIE_SECURE=$HTTPS
+
+# Served over HTTPS by the bundled Caddy container, so session cookies are
+# Secure-only. Set to 0 only if you deliberately serve plain HTTP.
+ITAM_COOKIE_SECURE=1
+ITAM_SITE_ADDRESS=$SITE
+ITAM_TLS=$TLS_MODE
+ITAM_HTTP_PORT=80
+ITAM_HTTPS_PORT=443
 
 ENTRA_TENANT_ID=$TENANT
 ENTRA_CLIENT_ID=$CLIENT
@@ -264,9 +300,12 @@ ${DOCKER_PREFIX}$COMPOSE up -d
 
 echo
 info "Waiting for the app to come up..."
-URL="http://127.0.0.1:$PORT"
+HTTPS_PORT="$(get_env_or ITAM_HTTPS_PORT 443)"
+URL="https://$SITE$( [ "$HTTPS_PORT" = "443" ] && echo "" || echo ":$HTTPS_PORT" )"
 for _ in $(seq 1 60); do
-    if curl -fsS -o /dev/null "$URL/healthz" 2>/dev/null; then
+    # -k: the local CA cert is not in this shell's trust store.
+    if curl -fsSk -o /dev/null "$URL/healthz" 2>/dev/null \
+       || curl -fsS -o /dev/null "http://127.0.0.1:$PORT/healthz" 2>/dev/null; then
         HEALTHY=1; break
     fi
     sleep 1
@@ -292,7 +331,8 @@ if [ "${HEALTHY:-0}" = "1" ]; then
     echo "  Backup:   ./backup.sh"
     echo
     if command -v ufw >/dev/null 2>&1 && $SUDO ufw status 2>/dev/null | grep -q "Status: active"; then
-        warn "  ufw is active. To reach this from other machines:  sudo ufw allow $PORT/tcp"
+        warn "  ufw is active. To reach this from other machines:"
+        warn "    sudo ufw allow 80/tcp && sudo ufw allow 443/tcp"
     fi
     if [ "$(get_env ENTRA_TENANT_ID)" = "" ]; then
         echo "  Entra ID is not configured - the app is running on demo data."

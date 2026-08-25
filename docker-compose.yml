@@ -1,12 +1,33 @@
 services:
+  # TLS terminator. Everything reaches the app through here.
+  caddy:
+    image: caddy:2-alpine
+    container_name: itam-caddy
+    restart: unless-stopped
+    ports:
+      - "${ITAM_HTTP_PORT:-80}:80"     # needed for ACME challenges and the redirect to HTTPS
+      - "${ITAM_HTTPS_PORT:-443}:443"
+    environment:
+      ITAM_SITE_ADDRESS: ${ITAM_SITE_ADDRESS:-localhost}
+      ITAM_TLS: ${ITAM_TLS:-internal}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data        # issued certificates - must persist across restarts
+      - caddy_config:/config
+    depends_on:
+      itam:
+        # Wait for the app to pass its health check, so the first request
+        # after a deploy never lands on a 502.
+        condition: service_healthy
+
   itam:
     build: .
     image: itam:latest
     container_name: itam
     restart: unless-stopped
-    # Published on the host port from .env; the container always listens on 8000.
+    # Bound to loopback only: the outside world comes in via Caddy over HTTPS.
     ports:
-      - "${ITAM_PORT:-8000}:8000"
+      - "127.0.0.1:${ITAM_PORT:-8000}:8000"
     env_file:
       - .env
     environment:
@@ -25,3 +46,7 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  caddy_data:
+  caddy_config:

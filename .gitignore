@@ -8,3 +8,4 @@ itam.db-wal
 itam.db-shm
 backups/
 .DS_Store
+itam-ca.crt

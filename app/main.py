@@ -11,12 +11,11 @@ from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import auth, db, entra, seed
+from . import auth, db, entra
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
-    seed.seed_if_empty()
     auth.purge_expired()
     creds = auth.bootstrap()
     if creds:
@@ -498,9 +497,9 @@ def seat_remove(sub_id: int, upn: str = Form(...), redirect: str = Form("")):
 @app.get("/admin", response_class=HTMLResponse)
 def admin(request: Request):
     last = db.q1("SELECT MAX(synced_at) AS last, COUNT(*) AS n FROM users WHERE source='entra'")
-    seeded = db.q1("SELECT COUNT(*) c FROM users WHERE source = 'seed'")["c"]
+    people = db.q1("SELECT COUNT(*) c FROM users")["c"]
     return render(request, "admin.html", cfg=entra.config_status(), last=last,
-                  db_path=db.DB_PATH, seeded=seeded)
+                  db_path=db.DB_PATH, people=people)
 
 
 @app.post("/admin/sync")
@@ -512,15 +511,6 @@ def admin_sync():
     except Exception as exc:  # surface the Graph error rather than a 500 page
         return back("/admin", f"Sync failed: {type(exc).__name__}: {exc}"[:300])
     return back("/admin", f"Synced {r['fetched']} users ({r['created']} new, {r['updated']} updated)")
-
-
-@app.post("/admin/purge-demo")
-def admin_purge_demo():
-    """Drop the seeded demo people once real Entra users are in.
-    Their assets fall back to spares; their licence seats are released."""
-    n = db.q1("SELECT COUNT(*) c FROM users WHERE source = 'seed'")["c"]
-    db.execute("DELETE FROM users WHERE source = 'seed'")
-    return back("/admin", f"Removed {n} demo user(s); their assets returned to spares")
 
 
 @app.get("/export/costs.csv")

@@ -45,7 +45,9 @@
       <td class="num">{{ a.cost_cents|money }}</td>
       <td class="row-actions"><a href="/assets/{{ a.id }}">Edit</a></td></tr>
   {% else %}
-    <tr><td colspan="6" class="empty">No assets match.</td></tr>
+    <tr><td colspan="6" class="empty">
+      {% if q or category or state %}No assets match those filters.
+      {% else %}No assets yet &mdash; add your first one above.{% endif %}</td></tr>
   {% endfor %}
   </tbody>
 </table>

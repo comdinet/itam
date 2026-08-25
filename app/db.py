@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS users (
     department     TEXT,
     entra_id       TEXT,
     account_enabled INTEGER NOT NULL DEFAULT 1,
-    source         TEXT NOT NULL DEFAULT 'seed',
+    source         TEXT NOT NULL DEFAULT 'manual',
     synced_at      TEXT
 );
 

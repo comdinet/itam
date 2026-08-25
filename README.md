@@ -10,7 +10,11 @@ People come from **Entra ID**, keyed on **UPN**. Two kinds of cost:
 
 Stack: FastAPI + SQLite + server-rendered HTML. No build step, no JavaScript
 framework, no external services. One file for the database (`itam.db`).
-Access is protected by **local username + password sign-in**.
+Access is protected by **local username + password sign-in**, and the deployment
+**serves HTTPS out of the box**.
+
+A fresh install starts empty. People come from an Entra ID sync; hardware and
+licences you enter yourself. There is no demo or sample data.
 
 ## Deploy on Ubuntu
 
@@ -29,20 +33,22 @@ sudo ./setup.sh
 ```
 
 `setup.sh` does the whole job: installs Docker if it is missing, asks for the
-port, the admin username and password, the currency, whether you are behind
-HTTPS, and optionally your Entra ID credentials. It writes `.env` (mode 600),
-prepares the data directory, builds the image, verifies the container can
-actually write to the database, starts everything, waits for the health check,
-and prints the URL and the credentials.
+hostname, the admin username and password, the currency, and optionally your
+Entra ID credentials. It writes `.env` (mode 600), prepares the data directory,
+builds the image, verifies the container can actually write to the database,
+starts the app behind an HTTPS terminator, waits for the health check, and
+prints the URL and the credentials.
 
 Non-interactive, for a scripted rollout:
 
 ```bash
-sudo ./setup.sh --yes --port 8080 --admin-user itadmin --admin-password 'a-long-passphrase'
+sudo ./setup.sh --yes --hostname itam.example.com --tls it@example.com \
+                --admin-user itadmin --admin-password 'a-long-passphrase'
 ```
 
 Leave `--admin-password` off with `--yes` and it generates one and prints it.
-Other flags: `--currency EUR`, `--https`, `--no-start`, `--reconfigure`, `--help`.
+Other flags: `--currency EUR`, `--tls internal`, `--no-start`, `--reconfigure`,
+`--help`.
 
 Re-running `setup.sh` later is safe — it offers to keep your existing settings
 and just rebuild.
@@ -67,39 +73,43 @@ Docker service, so the app comes back by itself after a reboot.
 
 ### Open the firewall
 
-Only if you need to reach it from other machines, and only from where you
-actually need:
+Port 443 for the app, and port 80 because Caddy redirects HTTP to HTTPS and
+Let's Encrypt validates over it. Restrict the source range if you can:
 
 ```bash
-sudo ufw allow from 10.0.0.0/8 to any port 8080 proto tcp
+sudo ufw allow from 10.0.0.0/8 to any port 443 proto tcp
+sudo ufw allow from 10.0.0.0/8 to any port 80 proto tcp
 ```
 
-### Serve it over HTTPS
+### HTTPS
 
-The app speaks plain HTTP; put a reverse proxy in front. Set
-`ITAM_COOKIE_SECURE=1` in `.env` and `docker compose up -d` so session cookies
-are HTTPS-only. This nginx config was verified against a running instance:
+TLS is handled by a bundled Caddy container, configured by two values in `.env`:
 
-```nginx
-server {
-    listen 443 ssl;
-    server_name itam.example.com;
+| | |
+|---|---|
+| `ITAM_SITE_ADDRESS` | the hostname people type in the browser |
+| `ITAM_TLS` | `internal`, or a contact email address |
 
-    ssl_certificate     /etc/letsencrypt/live/itam.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/itam.example.com/privkey.pem;
+**`ITAM_TLS=internal`** issues a certificate from Caddy's own local CA. This is
+the right choice for an internal hostname, an IP address, or anything without
+public DNS. Browsers show a warning until you trust that CA — export it once
+and install it on the machines that use the app:
 
-    location / {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_set_header Host              $host;
-        proxy_set_header X-Real-IP         $remote_addr;
-        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
+```bash
+docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./itam-ca.crt
 ```
 
-`X-Forwarded-Proto` matters: without it the app builds redirects with the wrong
-scheme after sign-in. Any proxy works as long as it sets these headers.
+**`ITAM_TLS=you@example.com`** gets a free Let's Encrypt certificate for
+`ITAM_SITE_ADDRESS`, renewed automatically. This needs the hostname to resolve
+publicly to the server and ports 80 and 443 reachable from the internet. If
+either is untrue, issuance fails and Caddy falls back to serving nothing —
+check `docker compose logs caddy`.
+
+Certificates live in the `caddy_data` volume and survive restarts, so you are
+not re-issuing (and hitting Let's Encrypt rate limits) on every deploy.
+
+The app container itself is published only on `127.0.0.1:8000`, for local
+debugging. Nothing reaches it from outside except through Caddy.
 
 ### Back up
 
@@ -131,6 +141,9 @@ falls back to the container's own Python if the host lacks it.
 | Health check never turns healthy | `docker compose logs --tail=50` — the startup error is there |
 | `port is already allocated` | Something else has that port. Change `ITAM_PORT` in `.env` and `docker compose up -d` |
 | `permission denied` on the Docker socket | `sudo usermod -aG docker $USER`, then log out and back in |
+| Browser warns about the certificate | Expected with `ITAM_TLS=internal`. Trust the local CA (see HTTPS above) or switch to Let's Encrypt. |
+| Let's Encrypt will not issue | `docker compose logs caddy`. The hostname must resolve publicly to this server and ports 80+443 must be open. |
+| Signed in, but immediately bounced back to the login page | The app is on plain HTTP while `ITAM_COOKIE_SECURE=1`, so the browser refuses to send the session cookie. Use HTTPS, or set it to 0. |
 | Forgot a password | Any other admin can reset it under **Accounts**. `sudo grep ITAM_ADMIN_PASSWORD .env` still shows the original bootstrap password if it was never changed. |
 | Locked out of every admin account | Set a known hash directly, which keeps all your inventory data: `docker compose exec itam python -c "from app import auth; auth.set_password('admin','a-new-long-password')"`. If the account no longer exists, `docker compose exec itam python -c "from app import auth; auth.create_user('admin','a-new-long-password',is_admin=True)"`. |
 | Sign-in says "too many attempts" | Deliberate: 8 failures locks that username for 15 minutes. `docker compose restart` clears it immediately. |
@@ -147,8 +160,10 @@ python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt
 ./run.sh
 ```
 
-Serves on <http://127.0.0.1:8000> with auto-reload, and keeps the database next
-to the code as `itam.db` instead of in the container volume.
+Serves on <http://127.0.0.1:8000> with auto-reload, keeps the database next to
+the code as `itam.db` instead of in the container volume, and turns Secure
+cookies off — that path is plain HTTP, so leaving them on would break sign-in
+from anything but localhost.
 
 On first run the app creates an `admin` account. If `ITAM_ADMIN_PASSWORD` is not
 set it generates a password, prints it to the console, and forces a change at
@@ -161,10 +176,6 @@ first sign-in:
   You will be asked to set a new password immediately.
 ==================================================================
 ```
-
-First start also seeds demo people, assets and subscriptions so the app isn't
-empty — clear them from **Admin → Remove demo users** once real users are
-synced.
 
 ## Sign-in and accounts
 
@@ -206,7 +217,7 @@ docker compose up -d
 
 5. Open **Admin → Sync users from Entra ID now**.
 
-Credentials can be added at any time; until then the app runs on demo data.
+Credentials can be added at any time; until then the app simply has no people.
 
 Sync behaviour:
 
@@ -231,7 +242,7 @@ Sync behaviour:
   edit assets, assign on creation.
 - **Subscriptions** — per-seat cost, seat count, monthly and annual spend;
   manage seats per subscription.
-- **Admin** — Entra sync, demo-data removal, CSV export.
+- **Admin** — Entra sync, CSV export.
 - **Accounts** (admins only) — create, delete, and reset local sign-in accounts.
 - **My account** — change your own password.
 

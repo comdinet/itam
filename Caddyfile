@@ -1,0 +1,14 @@
+# TLS terminator in front of the app.
+#   ITAM_TLS=internal        -> certificate from Caddy's own local CA
+#                               (internal hostnames, IP addresses, localhost)
+#   ITAM_TLS=you@example.com -> automatic Let's Encrypt for a public domain
+{$ITAM_SITE_ADDRESS} {
+    tls {$ITAM_TLS}
+    encode gzip
+
+    # Real client IP and scheme, so the app builds correct redirects.
+    reverse_proxy itam:8000 {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+}
