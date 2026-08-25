@@ -1,0 +1,33 @@
+{% extends "admin_base.html" %}
+{% block title %}Admin &middot; ITAM{% endblock %}
+{% block admin %}
+<h2>What's in here</h2>
+<div class="cards">
+  <div class="card"><span class="label">People</span><span class="big">{{ counts.people }}</span>
+    <span class="sub">from Entra ID</span></div>
+  <div class="card"><span class="label">Assets</span><span class="big">{{ counts.assets }}</span></div>
+  <div class="card"><span class="label">Subscriptions</span><span class="big">{{ counts.subs }}</span></div>
+  <div class="card"><span class="label">Sign-in accounts</span><span class="big">{{ counts.logins }}</span>
+    <span class="sub">{{ counts.api_keys }} active API key(s)</span></div>
+</div>
+
+<h2>Current settings</h2>
+<p class="meta">Read-only here. These come from the environment, so change them in
+  <span class="mono">.env</span> and restart with
+  <span class="mono">docker compose up -d</span>.</p>
+<table>
+  <thead><tr><th>Setting</th><th>Value</th><th>Variable</th><th>Notes</th></tr></thead>
+  <tbody>
+  {% for label, value, var, note in settings %}
+    <tr><td><strong>{{ label }}</strong></td>
+        <td class="mono">{{ value }}</td>
+        <td class="mono">{{ var }}</td>
+        <td class="meta">{{ note }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2>Data</h2>
+<p><a class="btn" href="/export/costs.csv">Export per-person costs (CSV)</a></p>
+<p class="hint">Back up the database with <span class="mono">./backup.sh</span> on the host.</p>
+{% endblock %}

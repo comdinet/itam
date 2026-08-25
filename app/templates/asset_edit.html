@@ -9,7 +9,7 @@
   <form class="grid-form" method="post" action="/assets/{{ a.id }}/edit">
     <label>Name<input name="name" value="{{ a.name }}" required></label>
     <label>Category<select name="category">
-      {% for c in categories %}<option value="{{ c }}" {% if c == a.category %}selected{% endif %}>{{ c }}</option>{% endfor %}
+      {% for c in categories() %}<option value="{{ c }}" {% if c == a.category %}selected{% endif %}>{{ c }}</option>{% endfor %}
     </select></label>
     <label>Cost ({{ currency }})<input name="cost" inputmode="decimal" value="{{ a.cost_cents|money }}"></label>
     <label>Serial<input name="serial" value="{{ a.serial or '' }}"></label>

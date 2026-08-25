@@ -1,0 +1,134 @@
+{% extends "admin_base.html" %}
+{% block title %}API &middot; ITAM{% endblock %}
+{% block admin %}
+
+{% if new_token %}
+<div class="warn">
+  <strong>Copy this token now &mdash; it is not shown again.</strong>
+  <pre>{{ new_token }}</pre>
+  Only its hash is stored, so it cannot be recovered. Lost it? Delete the key
+  and make a new one.
+</div>
+{% endif %}
+
+<h2>API keys <span class="count">{{ keys|length }}</span></h2>
+<p class="meta">For machine-to-machine calls, such as a webhook from Frappe when
+  hardware is approved. Keys authenticate with a bearer token, separately from
+  the browser sign-in.</p>
+
+<table>
+  <thead><tr><th>Name</th><th>Token</th><th>Can create</th><th>Can assign</th>
+    <th>Last used</th><th>State</th><th></th></tr></thead>
+  <tbody>
+  {% for k in keys %}
+    <tr {% if not k.active %}class="disabled"{% endif %}>
+      <td><strong>{{ k.name }}</strong></td>
+      <td class="mono">{{ k.prefix }}&hellip;</td>
+      <td>{{ 'yes' if k.can_create_assets else 'no' }}</td>
+      <td>{{ 'yes' if k.can_assign else 'no' }}</td>
+      <td>{{ (k.last_used_at or 'never')[:16].replace('T',' ') }}</td>
+      <td>{% if k.active %}active{% else %}<span class="tag">disabled</span>{% endif %}</td>
+      <td class="row-actions">
+        <form method="post" action="/admin/api/keys/{{ k.id }}/toggle">
+          <input type="hidden" name="active" value="{{ '' if k.active else '1' }}">
+          <button class="link">{{ 'Disable' if k.active else 'Enable' }}</button></form>
+        <form method="post" action="/admin/api/keys/{{ k.id }}/delete"
+              onsubmit="return confirm('Delete key {{ k.name }}? Anything using it stops working.')">
+          <button class="link danger">Delete</button></form></td></tr>
+  {% else %}
+    <tr><td colspan="7" class="empty">No API keys yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<details class="panel" {% if not keys %}open{% endif %}>
+  <summary>Create an API key</summary>
+  <form class="grid-form" method="post" action="/admin/api/keys/new">
+    <label>Name<input name="name" required placeholder="Frappe HW approval"></label>
+    <label>Create assets<select name="can_create_assets">
+      <option value="1" selected>allowed</option><option value="">not allowed</option></select></label>
+    <label>Assign to people<select name="can_assign">
+      <option value="1" selected>allowed</option><option value="">not allowed</option></select></label>
+    <button type="submit">Create key</button>
+  </form>
+  <p class="hint">A key with &ldquo;assign&rdquo; not allowed can still create assets, but they
+     land in spares for someone to hand out manually.</p>
+</details>
+
+<h2>Field mapping</h2>
+<p class="meta">Left is the field name in the incoming payload, right is the ITAM
+  asset field it fills. Anything not listed here is ignored and reported back in
+  the response, so a wrong webhook config is visible rather than silent.</p>
+
+<table>
+  <thead><tr><th>Incoming field</th><th></th><th>ITAM field</th><th></th></tr></thead>
+  <tbody>
+  {% for m in mapping %}
+    <tr><td class="mono">{{ m.source_field }}</td>
+        <td class="meta">&rarr;</td>
+        <td class="mono">{{ m.target_field }}</td>
+        <td class="row-actions">
+          <form method="post" action="/admin/api/mapping/delete">
+            <input type="hidden" name="source_field" value="{{ m.source_field }}">
+            <button class="link danger">Remove</button></form></td></tr>
+  {% else %}
+    <tr><td colspan="4" class="empty">No mappings.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<form class="inline-form" method="post" action="/admin/api/mapping">
+  <input name="source_field" placeholder="incoming field, e.g. item_group" required>
+  <span class="meta">&rarr;</span>
+  <select name="target_field" required>
+    {% for f in asset_fields %}<option value="{{ f }}">{{ f }}</option>{% endfor %}
+  </select>
+  <button type="submit">Add mapping</button>
+</form>
+<p class="hint"><span class="mono">name</span> is required to create an asset.
+  <span class="mono">assigned_upn</span> must match a synced user's UPN.
+  <span class="mono">external_id</span> is what makes retries safe: send your
+  Frappe document name and a repeated webhook returns the existing asset instead
+  of creating a duplicate.</p>
+
+<h2>Sending a webhook</h2>
+<p class="meta">In Frappe, add a Webhook on your approval doctype pointing here,
+  with <span class="mono">Authorization: Bearer &lt;your token&gt;</span> as a header.</p>
+<pre>POST https://{{ site }}/api/v1/assets
+Authorization: Bearer itam_...
+Content-Type: application/json
+
+{
+  "item_group": "Overhead headphones",
+  "item_name": "ULT900",
+  "employee_email": "grace.hopper@yourcompany.com",
+  "serial_no": "SN-12345",
+  "rate": 129.00,
+  "doc_name": "HR-AST-2026-00042"
+}</pre>
+<p class="hint">With mappings <span class="mono">item_group&rarr;category</span>,
+  <span class="mono">item_name&rarr;name</span>,
+  <span class="mono">employee_email&rarr;assigned_upn</span>,
+  <span class="mono">serial_no&rarr;serial</span>,
+  <span class="mono">rate&rarr;cost</span> and
+  <span class="mono">doc_name&rarr;external_id</span>, that creates an
+  &ldquo;Overhead headphones&rdquo; asset named ULT900 assigned to Grace.
+  Test a token first with <span class="mono">GET /api/v1/ping</span>.</p>
+
+<h2>Recent API calls <span class="count">{{ log|length }}</span></h2>
+<table>
+  <thead><tr><th>When</th><th>Key</th><th>Endpoint</th><th>Status</th><th>Result</th></tr></thead>
+  <tbody>
+  {% for l in log %}
+    <tr {% if l.status >= 400 %}class="disabled"{% endif %}>
+      <td class="mono">{{ (l.at or '')[:19].replace('T',' ') }}</td>
+      <td>{{ l.key_name or '&mdash;'|safe }}</td>
+      <td class="mono">{{ l.endpoint }}</td>
+      <td class="num">{{ l.status }}</td>
+      <td class="meta">{{ l.message }}</td></tr>
+  {% else %}
+    <tr><td colspan="5" class="empty">No API calls yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

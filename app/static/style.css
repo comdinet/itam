@@ -100,3 +100,13 @@ body.centered { display: flex; align-items: center; justify-content: center; min
 .stack.narrow { max-width: 360px; }
 .stack label { display: flex; flex-direction: column; gap: 5px;
                font-size: 13px; color: var(--muted); }
+
+/* --- admin subsections -------------------------------------------------- */
+.subnav { display: flex; gap: 4px; flex-wrap: wrap; margin: 14px 0 22px;
+          border-bottom: 1px solid var(--line); }
+.subnav a { padding: 7px 14px; text-decoration: none; color: var(--muted);
+            border: 1px solid transparent; border-bottom: none;
+            border-radius: 8px 8px 0 0; margin-bottom: -1px; font-weight: 500; }
+.subnav a:hover { color: var(--accent); }
+.subnav a.on { color: var(--ink); background: var(--panel);
+               border-color: var(--line); border-bottom: 1px solid var(--panel); }

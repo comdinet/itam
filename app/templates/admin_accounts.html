@@ -1,7 +1,7 @@
-{% extends "base.html" %}
+{% extends "admin_base.html" %}
 {% block title %}Local accounts &middot; ITAM{% endblock %}
-{% block body %}
-<h1>Local accounts <span class="count">{{ accounts|length }}</span></h1>
+{% block admin %}
+<h2>Local accounts <span class="count">{{ accounts|length }}</span></h2>
 <p class="meta">These are sign-in accounts for this app. They are separate from the
   people synced out of Entra ID &mdash; those are inventory records, not logins.</p>
 
@@ -20,7 +20,7 @@
           {% else %}active{% endif %}</td>
       <td class="row-actions">
         {% if a.username != me.username %}
-        <form method="post" action="/accounts/delete"
+        <form method="post" action="/admin/accounts/delete"
               onsubmit="return confirm('Delete account {{ a.username }}?')">
           <input type="hidden" name="username" value="{{ a.username }}">
           <button class="link danger">Delete</button></form>
@@ -32,7 +32,7 @@
 
 <details class="panel">
   <summary>Add an account</summary>
-  <form class="grid-form" method="post" action="/accounts/new">
+  <form class="grid-form" method="post" action="/admin/accounts/new">
     <label>Username<input name="username" required placeholder="e.dawson"></label>
     <label>Initial password<input type="password" name="password" minlength="12" required
            autocomplete="new-password"></label>
@@ -46,7 +46,7 @@
 
 <details class="panel">
   <summary>Reset someone's password</summary>
-  <form class="grid-form" method="post" action="/accounts/reset">
+  <form class="grid-form" method="post" action="/admin/accounts/reset">
     <label>Account<select name="username" required>
       {% for a in accounts %}<option value="{{ a.username }}">{{ a.username }}</option>{% endfor %}
     </select></label>

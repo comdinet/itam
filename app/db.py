@@ -8,7 +8,11 @@ DB_PATH = os.environ.get("ITAM_DB") or os.path.join(
     os.path.dirname(os.path.dirname(__file__)), "itam.db")
 CURRENCY = os.environ.get("ITAM_CURRENCY") or "USD"
 
-CATEGORIES = ["Laptop", "Desktop", "Monitor", "Phone", "Peripheral", "Software", "Other"]
+DEFAULT_CATEGORIES = ["Laptop", "Desktop", "Monitor", "Phone", "Peripheral", "Software", "Other"]
+
+# Fields an incoming webhook payload is allowed to populate.
+ASSET_FIELDS = ["name", "category", "cost", "serial", "purchased_on", "notes",
+                "assigned_upn", "external_id"]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -48,9 +52,39 @@ CREATE TABLE IF NOT EXISTS assets (
     purchased_on TEXT,
     notes        TEXT,
     assigned_upn TEXT REFERENCES users(upn) ON DELETE SET NULL,
-    assigned_on  TEXT
+    assigned_on  TEXT,
+    external_id  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_assets_upn ON assets(assigned_upn);
+
+CREATE TABLE IF NOT EXISTS api_keys (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    name              TEXT NOT NULL,
+    token_hash        TEXT NOT NULL UNIQUE,
+    prefix            TEXT NOT NULL,
+    can_create_assets INTEGER NOT NULL DEFAULT 1,
+    can_assign        INTEGER NOT NULL DEFAULT 1,
+    active            INTEGER NOT NULL DEFAULT 1,
+    created_at        TEXT,
+    last_used_at      TEXT
+);
+
+-- Maps a field name in the incoming payload to an ITAM asset field.
+CREATE TABLE IF NOT EXISTS api_field_map (
+    source_field TEXT PRIMARY KEY,
+    target_field TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS api_log (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    at       TEXT NOT NULL,
+    key_name TEXT,
+    endpoint TEXT,
+    status   INTEGER,
+    message  TEXT,
+    payload  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_api_log_at ON api_log(at DESC);
 
 CREATE TABLE IF NOT EXISTS subscriptions (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -89,9 +123,38 @@ def cursor():
         conn.close()
 
 
+DEFAULT_FIELD_MAP = {f: f for f in ASSET_FIELDS}
+
+
 def init_db():
     with cursor() as conn:
         conn.executescript(SCHEMA)
+
+        # Migration: databases created before the API existed have no
+        # assets.external_id. Add it, then index it - in that order, which is
+        # why the index is not part of SCHEMA above.
+        cols = [r["name"] for r in conn.execute("PRAGMA table_info(assets)")]
+        if "external_id" not in cols:
+            conn.execute("ALTER TABLE assets ADD COLUMN external_id TEXT")
+        # NULLs repeat freely in a SQLite unique index, so only real ids are
+        # constrained - which is what makes webhook retries idempotent.
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_assets_external "
+                     "ON assets(external_id)")
+
+        if not conn.execute("SELECT 1 FROM api_field_map LIMIT 1").fetchone():
+            conn.executemany("INSERT INTO api_field_map (source_field, target_field) VALUES (?,?)",
+                             DEFAULT_FIELD_MAP.items())
+
+
+def categories() -> list[str]:
+    """Built-in categories plus anything the API or a user has introduced."""
+    seen = {r["category"] for r in q("SELECT DISTINCT category FROM assets") if r["category"]}
+    return sorted(seen | set(DEFAULT_CATEGORIES))
+
+
+def field_map() -> dict:
+    return {r["source_field"]: r["target_field"] for r in
+            q("SELECT * FROM api_field_map ORDER BY source_field")}
 
 
 def q(sql, params=()):

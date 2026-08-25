@@ -242,11 +242,121 @@ Sync behaviour:
   edit assets, assign on creation.
 - **Subscriptions** — per-seat cost, seat count, monthly and annual spend;
   manage seats per subscription.
-- **Admin** — Entra sync, CSV export.
-- **Accounts** (admins only) — create, delete, and reset local sign-in accounts.
+- **Admin** — four subsections:
+  - **General** — counts, plus every current setting and the environment
+    variable behind it. Read-only; change these in `.env` and restart.
+  - **Entra ID** — configuration status and the sync button.
+  - **Accounts** (admins only) — create, delete, and reset local sign-in accounts.
+  - **API** (admins only) — API keys, field mapping, and the recent call log.
 - **My account** — change your own password.
 
 `/export/costs.csv` gives per-person costs for finance.
+
+## API for webhooks
+
+Other systems can create assets in ITAM over HTTP — for example a Frappe
+webhook that fires when hardware is approved for someone. This is separate from
+the browser sign-in: callers authenticate with a bearer token.
+
+Set it up under **Admin → API**.
+
+### 1. Create a key
+
+Give it a name and choose what it may do:
+
+| Permission | Meaning |
+|---|---|
+| Create assets | may add assets at all |
+| Assign to people | may set the holder. Without it, assets land in spares |
+
+The token is shown **once**. Only a SHA-256 of it is stored, so a lost token
+means deleting the key and issuing a new one. Disabling a key revokes it
+immediately.
+
+Check a token before wiring anything up:
+
+```bash
+curl -H "Authorization: Bearer itam_..." https://itam.example.com/api/v1/ping
+```
+
+### 2. Map the fields
+
+Your system's field names almost certainly differ from ITAM's. The mapping
+table translates them — left is the incoming field, right is the ITAM field.
+ITAM's own field names are mapped to themselves out of the box; add your
+system's on top.
+
+The eight fields an asset can take: `name`, `category`, `cost`, `serial`,
+`purchased_on`, `notes`, `assigned_upn`, `external_id`.
+
+- `name` is required.
+- `assigned_upn` must match a synced user's UPN. It is lowercased, so
+  `Grace.Hopper@Company.com` matches fine.
+- `category` is free text. A category ITAM has not seen before is accepted and
+  starts appearing in the dropdowns.
+- `cost` accepts `129.00`, `129,00` and `1 299,50` alike.
+- `external_id` is what makes retries safe — see below.
+
+Anything **not** mapped is ignored and listed back in the response as
+`ignored_fields`, so a wrong webhook config shows up instead of silently
+dropping data.
+
+### 3. Point the webhook at it
+
+```
+POST https://itam.example.com/api/v1/assets
+Authorization: Bearer itam_...
+Content-Type: application/json
+
+{
+  "item_group": "Overhead headphones",
+  "item_name": "ULT900",
+  "employee_email": "grace.hopper@yourcompany.com",
+  "serial_no": "SN-ULT900-77",
+  "rate": 129.00,
+  "doc_name": "HR-AST-2026-00042"
+}
+```
+
+With `item_group→category`, `item_name→name`, `employee_email→assigned_upn`,
+`serial_no→serial`, `rate→cost` and `doc_name→external_id`, that returns:
+
+```json
+{
+  "status": "created",
+  "asset_id": 1,
+  "name": "ULT900",
+  "category": "Overhead headphones",
+  "assigned_upn": "grace.hopper@yourcompany.com",
+  "cost": "129.00",
+  "currency": "USD",
+  "ignored_fields": ["approved_by", "workflow_state"]
+}
+```
+
+### Retries are safe
+
+Send your source document's identifier as `external_id`. A repeat of the same
+webhook returns `200` with `"status": "already_exists"` and the original asset
+id, instead of creating a second row. Without an `external_id`, every delivery
+creates a new asset — so map it if your sender retries at all.
+
+### Responses
+
+| Code | Meaning |
+|---|---|
+| `201` | asset created |
+| `200` | this `external_id` already existed; nothing changed |
+| `400` | body was not a JSON object, or no `name` after mapping |
+| `401` | token missing, wrong, or disabled |
+| `403` | the key lacks that permission |
+| `422` | `assigned_upn` matches no known user — sync Entra ID first |
+| `500` | unexpected failure; the reason is in the call log |
+
+Every call is recorded under **Admin → API**, most recent first, with the
+status and outcome — the first place to look when a webhook "didn't work". The
+last 200 calls are kept.
+
 
 ## Notes
 

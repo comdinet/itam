@@ -7,7 +7,7 @@
 <form class="filters" method="get" action="/assets">
   <input type="search" name="q" value="{{ q }}" placeholder="Name or serial">
   <select name="category"><option value="">All categories</option>
-    {% for c in categories %}<option value="{{ c }}" {% if c == category %}selected{% endif %}>{{ c }}</option>{% endfor %}
+    {% for c in categories() %}<option value="{{ c }}" {% if c == category %}selected{% endif %}>{{ c }}</option>{% endfor %}
   </select>
   <select name="state"><option value="">Any state</option>
     <option value="assigned" {% if state=='assigned' %}selected{% endif %}>Assigned</option>
@@ -22,7 +22,7 @@
   <form class="grid-form" method="post" action="/assets/new">
     <label>Name<input name="name" required placeholder="MacBook Pro 14 M4"></label>
     <label>Category<select name="category">
-      {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}</select></label>
+      {% for c in categories() %}<option value="{{ c }}">{{ c }}</option>{% endfor %}</select></label>
     <label>Cost ({{ currency }})<input name="cost" inputmode="decimal" placeholder="2499.00"></label>
     <label>Serial<input name="serial" placeholder="optional"></label>
     <label>Purchased<input type="date" name="purchased_on"></label>

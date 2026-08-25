@@ -2,16 +2,17 @@
 import csv
 import datetime
 import io
+import os
 from contextlib import asynccontextmanager
 
 from urllib.parse import quote, urlparse
 
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import auth, db, entra
+from . import api, auth, db, entra
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -32,11 +33,11 @@ app = FastAPI(title="ITAM", lifespan=lifespan)
 templates = Jinja2Templates(directory="app/templates")
 templates.env.filters["money"] = db.money
 templates.env.globals["currency"] = db.CURRENCY
-templates.env.globals["categories"] = db.CATEGORIES
+templates.env.globals["categories"] = db.categories
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 
-PUBLIC_PATHS = ("/login", "/static", "/favicon.ico", "/healthz")
+PUBLIC_PATHS = ("/login", "/static", "/favicon.ico", "/healthz", "/api/")
 
 
 @app.middleware("http")
@@ -179,65 +180,109 @@ def change_password(request: Request, current: str = Form(""), new: str = Form("
     return resp
 
 
-# --- local accounts (admin only) ----------------------------------------
+# --- shared authorisation helper -----------------------------------------
 
 def require_admin(request: Request) -> bool:
     return bool(request.state.user["is_admin"])
 
 
-@app.get("/accounts", response_class=HTMLResponse)
-def accounts_page(request: Request):
-    if not require_admin(request):
-        return HTMLResponse("<h1>403</h1><p>Admin accounts only.</p>", status_code=403)
-    return render(request, "accounts.html", accounts=auth.list_users())
-
-
-@app.post("/accounts/new")
+@app.post("/admin/accounts/new")
 def account_new(request: Request, username: str = Form(...), password: str = Form(""),
                 is_admin: str = Form("")):
     if not require_admin(request):
-        return back("/accounts", "Admin accounts only")
+        return back("/admin/accounts", "Admin accounts only")
     username = username.strip().lower()
     if not username.isascii() or not username.replace(".", "").replace("-", "").replace("_", "").isalnum():
-        return back("/accounts", "Username may only contain letters, digits, dot, dash, underscore")
+        return back("/admin/accounts", "Username may only contain letters, digits, dot, dash, underscore")
     if auth.get_user(username):
-        return back("/accounts", "That username already exists")
+        return back("/admin/accounts", "That username already exists")
     problem = auth.password_problem(password)
     if problem:
-        return back("/accounts", problem)
+        return back("/admin/accounts", problem)
     auth.create_user(username, password, is_admin=bool(is_admin), must_change=True)
-    return back("/accounts", f"Account '{username}' created - it must set a new password at first sign-in")
+    return back("/admin/accounts", f"Account '{username}' created - it must set a new password at first sign-in")
 
 
-@app.post("/accounts/delete")
+@app.post("/admin/accounts/delete")
 def account_delete(request: Request, username: str = Form(...)):
     if not require_admin(request):
-        return back("/accounts", "Admin accounts only")
+        return back("/admin/accounts", "Admin accounts only")
     username = username.strip().lower()
     if username == request.state.user["username"]:
-        return back("/accounts", "You cannot delete the account you are signed in with")
+        return back("/admin/accounts", "You cannot delete the account you are signed in with")
     admins = [u for u in auth.list_users() if u["is_admin"]]
     target = auth.get_user(username)
     if target and target["is_admin"] and len(admins) <= 1:
-        return back("/accounts", "Cannot delete the last admin account")
+        return back("/admin/accounts", "Cannot delete the last admin account")
     auth.delete_user(username)
-    return back("/accounts", f"Account '{username}' deleted")
+    return back("/admin/accounts", f"Account '{username}' deleted")
 
 
-@app.post("/accounts/reset")
+@app.post("/admin/accounts/reset")
 def account_reset(request: Request, username: str = Form(...), password: str = Form("")):
     if not require_admin(request):
-        return back("/accounts", "Admin accounts only")
+        return back("/admin/accounts", "Admin accounts only")
     problem = auth.password_problem(password)
     if problem:
-        return back("/accounts", problem)
+        return back("/admin/accounts", problem)
     username = username.strip().lower()
     if not auth.get_user(username):
-        return back("/accounts", "No such account")
+        return back("/admin/accounts", "No such account")
     auth.set_password(username, password)
     db.execute("UPDATE auth_users SET must_change = 1 WHERE username = ?", (username,))
     auth.revoke_all(username)
-    return back("/accounts", f"Password reset for '{username}'; their sessions were signed out")
+    return back("/admin/accounts", f"Password reset for '{username}'; their sessions were signed out")
+
+
+# --- machine API (bearer token, no session) -------------------------------
+
+def _api_key(request: Request):
+    return api.authenticate(
+        request.headers.get("authorization") or request.headers.get("x-api-key"))
+
+
+@app.get("/api/v1/ping")
+async def api_ping(request: Request):
+    """Lets an integrator confirm the token works before wiring up a webhook."""
+    key = _api_key(request)
+    if not key:
+        api.log(None, "GET /api/v1/ping", 401, "Missing or invalid token")
+        return JSONResponse({"error": "Invalid or missing API token."}, status_code=401)
+    return {"status": "ok", "key": key["name"],
+            "can_create_assets": bool(key["can_create_assets"]),
+            "can_assign": bool(key["can_assign"])}
+
+
+@app.post("/api/v1/assets")
+async def api_create_asset(request: Request):
+    """Create an asset from a webhook payload. Idempotent on external_id."""
+    endpoint = "POST /api/v1/assets"
+    key = _api_key(request)
+    if not key:
+        api.log(None, endpoint, 401, "Missing or invalid token")
+        return JSONResponse({"error": "Invalid or missing API token."}, status_code=401)
+    try:
+        payload = await request.json()
+    except Exception:
+        api.log(key["name"], endpoint, 400, "Body was not valid JSON")
+        return JSONResponse({"error": "Request body must be JSON."}, status_code=400)
+    if not isinstance(payload, dict):
+        api.log(key["name"], endpoint, 400, "Body was not a JSON object")
+        return JSONResponse({"error": "Request body must be a JSON object."}, status_code=400)
+
+    try:
+        result = api.create_asset(key, payload)
+    except api.ApiError as exc:
+        api.log(key["name"], endpoint, exc.status, exc.message, payload)
+        return JSONResponse({"error": exc.message}, status_code=exc.status)
+    except Exception as exc:
+        api.log(key["name"], endpoint, 500, f"{type(exc).__name__}: {exc}", payload)
+        return JSONResponse({"error": "Internal error creating the asset."}, status_code=500)
+
+    status = 200 if result["status"] == "already_exists" else 201
+    api.log(key["name"], endpoint, status,
+            f"{result['status']}: {result['name']} (asset {result['asset_id']})", payload)
+    return JSONResponse(result, status_code=status)
 
 
 # --- dashboard -----------------------------------------------------------
@@ -494,23 +539,129 @@ def seat_remove(sub_id: int, upn: str = Form(...), redirect: str = Form("")):
 
 # --- admin / Entra sync --------------------------------------------------
 
+# --- admin: general ------------------------------------------------------
+
 @app.get("/admin", response_class=HTMLResponse)
-def admin(request: Request):
+def admin_general(request: Request):
+    counts = db.q1(
+        """SELECT (SELECT COUNT(*) FROM users)         AS people,
+                  (SELECT COUNT(*) FROM assets)        AS assets,
+                  (SELECT COUNT(*) FROM subscriptions) AS subs,
+                  (SELECT COUNT(*) FROM auth_users)    AS logins,
+                  (SELECT COUNT(*) FROM api_keys WHERE active = 1) AS api_keys"""
+    )
+    settings = [
+        ("Currency", db.CURRENCY, "ITAM_CURRENCY", "Display label only; no conversion is done."),
+        ("Site address", os.environ.get("ITAM_SITE_ADDRESS") or "(not set)", "ITAM_SITE_ADDRESS",
+         "Hostname the HTTPS certificate is issued for."),
+        ("TLS mode", os.environ.get("ITAM_TLS") or "internal", "ITAM_TLS",
+         "'internal' uses Caddy's local CA; an email address uses Let's Encrypt."),
+        ("Secure cookies", "on" if auth.COOKIE_SECURE else "off", "ITAM_COOKIE_SECURE",
+         "Must be on when served over HTTPS, off on plain HTTP."),
+        ("Session length", f"{auth.SESSION_HOURS} hours", "ITAM_SESSION_HOURS",
+         "How long a sign-in lasts before it expires."),
+        ("Database", db.DB_PATH, "ITAM_DB", "SQLite file. Back it up with ./backup.sh."),
+    ]
+    return render(request, "admin_general.html", counts=counts, settings=settings,
+                  section="general")
+
+
+# --- admin: Entra ID ----------------------------------------------------
+
+@app.get("/admin/entra", response_class=HTMLResponse)
+def admin_entra(request: Request):
     last = db.q1("SELECT MAX(synced_at) AS last, COUNT(*) AS n FROM users WHERE source='entra'")
     people = db.q1("SELECT COUNT(*) c FROM users")["c"]
-    return render(request, "admin.html", cfg=entra.config_status(), last=last,
-                  db_path=db.DB_PATH, people=people)
+    return render(request, "admin_entra.html", cfg=entra.config_status(), last=last,
+                  people=people, section="entra")
 
 
-@app.post("/admin/sync")
+@app.post("/admin/entra/sync")
 def admin_sync():
     if not entra.is_configured():
-        return back("/admin", "Entra ID is not configured - set the environment variables first")
+        return back("/admin/entra", "Entra ID is not configured - set the environment variables first")
     try:
         r = entra.sync()
     except Exception as exc:  # surface the Graph error rather than a 500 page
-        return back("/admin", f"Sync failed: {type(exc).__name__}: {exc}"[:300])
-    return back("/admin", f"Synced {r['fetched']} users ({r['created']} new, {r['updated']} updated)")
+        return back("/admin/entra", f"Sync failed: {type(exc).__name__}: {exc}"[:300])
+    return back("/admin/entra", f"Synced {r['fetched']} users ({r['created']} new, {r['updated']} updated)")
+
+
+# --- admin: local accounts ----------------------------------------------
+
+@app.get("/accounts")
+def accounts_moved():
+    return RedirectResponse("/admin/accounts", status_code=308)
+
+
+@app.get("/admin/accounts", response_class=HTMLResponse)
+def accounts_page(request: Request):
+    if not require_admin(request):
+        return HTMLResponse("<h1>403</h1><p>Admin accounts only.</p>", status_code=403)
+    return render(request, "admin_accounts.html", accounts=auth.list_users(),
+                  section="accounts")
+
+
+# --- admin: API keys and field mapping ----------------------------------
+
+@app.get("/admin/api", response_class=HTMLResponse)
+def admin_api(request: Request):
+    if not require_admin(request):
+        return HTMLResponse("<h1>403</h1><p>Admin accounts only.</p>", status_code=403)
+    new_token = request.query_params.get("token")
+    return render(request, "admin_api.html", keys=api.list_keys(),
+                  mapping=db.q("SELECT * FROM api_field_map ORDER BY source_field"),
+                  asset_fields=db.ASSET_FIELDS, log=api.recent_log(),
+                  new_token=new_token, site=os.environ.get("ITAM_SITE_ADDRESS") or "your-itam-host",
+                  section="api")
+
+
+@app.post("/admin/api/keys/new")
+def api_key_new(request: Request, name: str = Form(...), can_create_assets: str = Form(""),
+                can_assign: str = Form("")):
+    if not require_admin(request):
+        return back("/admin/api", "Admin accounts only")
+    if not name.strip():
+        return back("/admin/api", "Give the key a name")
+    token = api.create_key(name, bool(can_create_assets), bool(can_assign))
+    # Shown once, via the redirect, then never again.
+    return RedirectResponse(f"/admin/api?token={quote(token, safe='')}", status_code=303)
+
+
+@app.post("/admin/api/keys/{key_id}/delete")
+def api_key_delete(request: Request, key_id: int):
+    if not require_admin(request):
+        return back("/admin/api", "Admin accounts only")
+    api.delete_key(key_id)
+    return back("/admin/api", "API key deleted")
+
+
+@app.post("/admin/api/keys/{key_id}/toggle")
+def api_key_toggle(request: Request, key_id: int, active: str = Form("")):
+    if not require_admin(request):
+        return back("/admin/api", "Admin accounts only")
+    api.set_key_active(key_id, bool(active))
+    return back("/admin/api", "API key updated")
+
+
+@app.post("/admin/api/mapping")
+def api_mapping_set(request: Request, source_field: str = Form(...), target_field: str = Form(...)):
+    if not require_admin(request):
+        return back("/admin/api", "Admin accounts only")
+    if target_field not in db.ASSET_FIELDS:
+        return back("/admin/api", "Unknown target field")
+    if not source_field.strip():
+        return back("/admin/api", "Give the incoming field a name")
+    api.set_mapping(source_field, target_field)
+    return back("/admin/api", f"Mapped '{source_field.strip()}' to '{target_field}'")
+
+
+@app.post("/admin/api/mapping/delete")
+def api_mapping_delete(request: Request, source_field: str = Form(...)):
+    if not require_admin(request):
+        return back("/admin/api", "Admin accounts only")
+    api.delete_mapping(source_field)
+    return back("/admin/api", "Mapping removed")
 
 
 @app.get("/export/costs.csv")
