@@ -55,10 +55,14 @@ def set_active(rule_id: int, active: bool) -> None:
 
 def evaluate(rule) -> list[dict]:
     """Per-member holdings versus the rule. Positive gap means short."""
-    members = db.q(
-        """SELECT u.upn, u.display_name, u.account_enabled
-           FROM group_members gm JOIN users u ON u.upn = gm.upn
-           WHERE gm.group_id = ? ORDER BY u.display_name""", (rule["group_id"],))
+    if rule["group_id"] == db.ALL_USERS_GROUP:
+        members = db.q(
+            "SELECT upn, display_name, account_enabled FROM users ORDER BY display_name")
+    else:
+        members = db.q(
+            """SELECT u.upn, u.display_name, u.account_enabled
+               FROM group_members gm JOIN users u ON u.upn = gm.upn
+               WHERE gm.group_id = ? ORDER BY u.display_name""", (rule["group_id"],))
     out = []
     for m in members:
         if rule["kind"] == "asset":

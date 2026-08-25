@@ -2,13 +2,50 @@
 {% block title %}Rules &middot; ITAM{% endblock %}
 {% block admin %}
 <h2>Entitlement rules <span class="count">{{ overview|length }}</span></h2>
-<p class="meta">A rule says what members of an Entra group should have &mdash;
+<p class="meta">A rule says what a group of people should have &mdash;
   &ldquo;everyone in Design gets 2 monitors&rdquo;. ITAM reports who is short.
   Applying a rule hands out what you actually have in spares; it never invents
   hardware you do not own.</p>
 
+<details class="panel" open>
+  <summary>Add a rule</summary>
+  <form class="grid-form" method="post" action="/settings/rules/new">
+    <label>Name<input name="name" required placeholder="Designers get two monitors"></label>
+    <label>Applies to<select name="group_id" required>
+      {% for g in groups %}
+        <option value="{{ g.id }}">{{ g.display_name }}{% if g.id != all_users_group %} ({{ g.member_count }} in Entra){% endif %}</option>
+      {% endfor %}
+    </select></label>
+    <label>Grants<select name="kind" required>
+      <option value="asset">an asset category</option>
+      <option value="subscription">a subscription licence</option></select></label>
+    <label>Asset category<select name="category">
+      <option value="">&mdash; choose &mdash;</option>
+      {% for c in categories() %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+    </select></label>
+    <label>Subscription<select name="subscription_id">
+      <option value="">&mdash; choose &mdash;</option>
+      {% for s in subs %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}
+    </select></label>
+    <label>Quantity each<input name="quantity" type="number" min="1" value="1"></label>
+    <button type="submit">Create rule</button>
+  </form>
+  <p class="hint">Fill in the category for an asset rule, or the subscription for a
+     licence rule &mdash; whichever matches what the rule grants. Licences are one
+     per person, so quantity only applies to assets.</p>
+  {% if groups|length <= 1 %}
+    <p class="hint">Only <strong>{{ groups[0].display_name if groups else 'Everyone' }}</strong>
+       is available so far. <a href="/settings/groups">Sync your Entra groups</a> to
+       target specific teams.</p>
+  {% endif %}
+  {% if not people %}
+    <p class="hint">There are no people yet, so a rule has nobody to apply to until
+       you <a href="/settings/entra">sync users from Entra ID</a>.</p>
+  {% endif %}
+</details>
+
 <table>
-  <thead><tr><th>Rule</th><th>Group</th><th>Grants</th><th class="num">Each</th>
+  <thead><tr><th>Rule</th><th>Applies to</th><th>Grants</th><th class="num">Each</th>
     <th class="num">Compliant</th><th class="num">Short</th><th class="num">Needed</th>
     <th class="num">Spare</th><th></th></tr></thead>
   <tbody>
@@ -16,7 +53,8 @@
     <tr {% if not o.rule.active %}class="disabled"{% endif %}>
       <td><a href="/settings/rules/{{ o.rule.id }}"><strong>{{ o.rule.name }}</strong></a>
         {% if not o.rule.active %}<span class="tag">paused</span>{% endif %}</td>
-      <td><a href="/settings/groups/{{ o.rule.group_id }}">{{ o.rule.group_name }}</a></td>
+      <td>{% if o.rule.group_id == all_users_group %}{{ o.rule.group_name }}
+          {% else %}<a href="/settings/groups/{{ o.rule.group_id }}">{{ o.rule.group_name }}</a>{% endif %}</td>
       <td>{% if o.rule.kind == 'asset' %}{{ o.rule.category }}
           {% else %}{{ o.rule.subscription_name }} <span class="meta">(licence)</span>{% endif %}</td>
       <td class="num">{{ o.rule.quantity }}</td>
@@ -26,7 +64,8 @@
         <td class="num">{{ o.summary.needed }}</td>
         <td class="num">{% if o.rule.kind == 'asset' %}{{ o.summary.available }}{% else %}&mdash;{% endif %}</td>
       {% else %}
-        <td class="num meta" colspan="4">paused</td>
+        <td class="num meta">&mdash;</td><td class="num meta">&mdash;</td>
+        <td class="num meta">&mdash;</td><td class="num meta">&mdash;</td>
       {% endif %}
       <td class="row-actions">
         {% if o.summary and o.summary.needed %}
@@ -41,38 +80,8 @@
               onsubmit="return confirm('Delete rule {{ o.rule.name }}?')">
           <button class="link danger">Delete</button></form></td></tr>
   {% else %}
-    <tr><td colspan="9" class="empty">No rules yet.</td></tr>
+    <tr><td colspan="9" class="empty">No rules yet &mdash; add one above.</td></tr>
   {% endfor %}
   </tbody>
 </table>
-
-<details class="panel" {% if not overview %}open{% endif %}>
-  <summary>Add a rule</summary>
-  {% if not groups %}
-    <p class="meta">Sync your <a href="/settings/groups">groups</a> first &mdash; a rule
-       needs a group to apply to.</p>
-  {% else %}
-  <form class="grid-form" method="post" action="/settings/rules/new">
-    <label>Name<input name="name" required placeholder="Designers get two monitors"></label>
-    <label>Group<select name="group_id" required>
-      {% for g in groups %}<option value="{{ g.id }}">{{ g.display_name }}</option>{% endfor %}
-    </select></label>
-    <label>Grants<select name="kind" required>
-      <option value="asset">an asset category</option>
-      <option value="subscription">a subscription licence</option></select></label>
-    <label>Asset category<select name="category">
-      <option value="">&mdash;</option>
-      {% for c in categories() %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
-    </select></label>
-    <label>Subscription<select name="subscription_id">
-      <option value="">&mdash;</option>
-      {% for s in subs %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}
-    </select></label>
-    <label>Quantity each<input name="quantity" type="number" min="1" value="1"></label>
-    <button type="submit">Create rule</button>
-  </form>
-  <p class="hint">Fill in the category for an asset rule, or the subscription for a
-     licence rule &mdash; whichever matches what the rule grants.</p>
-  {% endif %}
-</details>
 {% endblock %}

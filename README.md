@@ -306,9 +306,13 @@ v1.0 equivalent.
 
 ### Rules
 
-**Settings → Rules** holds entitlement rules: what members of a group should
+**Settings → Rules** holds entitlement rules: what a group of people should
 have. "Everyone in Design gets 2 monitors" is a group, an asset category, and a
 quantity.
+
+Rules can target a synced Entra group, or the built-in **Everyone (all users)**
+target, which needs no group sync at all — useful for "everyone gets a laptop"
+and for getting going before `Group.Read.All` is consented.
 
 A rule reports rather than acts. The Rules page shows, per rule, how many
 members are compliant, how many are short, how many items that adds up to, and

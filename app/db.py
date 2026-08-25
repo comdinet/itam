@@ -185,6 +185,11 @@ def cursor():
 
 DEFAULT_FIELD_MAP = {f: f for f in ASSET_FIELDS}
 
+# A reserved pseudo-group so rules can target everyone without waiting for a
+# group sync. It satisfies the rules.group_id foreign key like any other row.
+ALL_USERS_GROUP = "__all_users__"
+ALL_USERS_LABEL = "Everyone (all users)"
+
 
 def init_db():
     with cursor() as conn:
@@ -200,6 +205,13 @@ def init_db():
         # constrained - which is what makes webhook retries idempotent.
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_assets_external "
                      "ON assets(external_id)")
+
+        conn.execute(
+            """INSERT INTO groups (id, display_name, description, member_count, synced_at)
+               VALUES (?,?,?,0,NULL)
+               ON CONFLICT(id) DO UPDATE SET display_name = excluded.display_name""",
+            (ALL_USERS_GROUP, ALL_USERS_LABEL,
+             "Built in: every synced user, no Entra group needed"))
 
         if not conn.execute("SELECT 1 FROM api_field_map LIMIT 1").fetchone():
             conn.executemany("INSERT INTO api_field_map (source_field, target_field) VALUES (?,?)",

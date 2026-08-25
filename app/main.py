@@ -545,7 +545,7 @@ def seat_remove(sub_id: int, upn: str = Form(...), redirect: str = Form("")):
 def settings_groups(request: Request):
     groups = db.q(
         """SELECT g.*, (SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.id) AS known
-           FROM groups g ORDER BY g.display_name""")
+           FROM groups g WHERE g.id != ? ORDER BY g.display_name""", (db.ALL_USERS_GROUP,))
     last = db.q1("SELECT MAX(synced_at) AS last FROM groups")
     return render(request, "settings_groups.html", groups=groups, last=last,
                   cfg=entra.config_status(), section="groups")
@@ -665,7 +665,12 @@ def device_create_asset(device_id: str):
 def settings_rules(request: Request):
     return render(request, "settings_rules.html",
                   overview=rules.compliance_overview(),
-                  groups=db.q("SELECT * FROM groups ORDER BY display_name"),
+                  groups=db.q(
+                      """SELECT * FROM groups
+                         ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, display_name""",
+                      (db.ALL_USERS_GROUP,)),
+                  all_users_group=db.ALL_USERS_GROUP,
+                  people=db.q1("SELECT COUNT(*) c FROM users")["c"],
                   subs=db.q("SELECT * FROM subscriptions ORDER BY name"),
                   section="rules")
 
@@ -727,7 +732,8 @@ def rule_detail(request: Request, rule_id: int):
     if not rule:
         return HTMLResponse("<h1>404</h1><p>No such rule.</p>", status_code=404)
     return render(request, "settings_rule_detail.html", r=rule,
-                  s=rules.summarise(rule), section="rules")
+                  s=rules.summarise(rule), all_users_group=db.ALL_USERS_GROUP,
+                  section="rules")
 
 
 # --- settings: general ---------------------------------------------------
