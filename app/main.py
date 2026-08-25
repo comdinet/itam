@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import api, auth, db, entra
+from . import api, auth, db, entra, rules
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -186,52 +186,52 @@ def require_admin(request: Request) -> bool:
     return bool(request.state.user["is_admin"])
 
 
-@app.post("/admin/accounts/new")
+@app.post("/settings/accounts/new")
 def account_new(request: Request, username: str = Form(...), password: str = Form(""),
                 is_admin: str = Form("")):
     if not require_admin(request):
-        return back("/admin/accounts", "Admin accounts only")
+        return back("/settings/accounts", "Admin accounts only")
     username = username.strip().lower()
     if not username.isascii() or not username.replace(".", "").replace("-", "").replace("_", "").isalnum():
-        return back("/admin/accounts", "Username may only contain letters, digits, dot, dash, underscore")
+        return back("/settings/accounts", "Username may only contain letters, digits, dot, dash, underscore")
     if auth.get_user(username):
-        return back("/admin/accounts", "That username already exists")
+        return back("/settings/accounts", "That username already exists")
     problem = auth.password_problem(password)
     if problem:
-        return back("/admin/accounts", problem)
+        return back("/settings/accounts", problem)
     auth.create_user(username, password, is_admin=bool(is_admin), must_change=True)
-    return back("/admin/accounts", f"Account '{username}' created - it must set a new password at first sign-in")
+    return back("/settings/accounts", f"Account '{username}' created - it must set a new password at first sign-in")
 
 
-@app.post("/admin/accounts/delete")
+@app.post("/settings/accounts/delete")
 def account_delete(request: Request, username: str = Form(...)):
     if not require_admin(request):
-        return back("/admin/accounts", "Admin accounts only")
+        return back("/settings/accounts", "Admin accounts only")
     username = username.strip().lower()
     if username == request.state.user["username"]:
-        return back("/admin/accounts", "You cannot delete the account you are signed in with")
+        return back("/settings/accounts", "You cannot delete the account you are signed in with")
     admins = [u for u in auth.list_users() if u["is_admin"]]
     target = auth.get_user(username)
     if target and target["is_admin"] and len(admins) <= 1:
-        return back("/admin/accounts", "Cannot delete the last admin account")
+        return back("/settings/accounts", "Cannot delete the last admin account")
     auth.delete_user(username)
-    return back("/admin/accounts", f"Account '{username}' deleted")
+    return back("/settings/accounts", f"Account '{username}' deleted")
 
 
-@app.post("/admin/accounts/reset")
+@app.post("/settings/accounts/reset")
 def account_reset(request: Request, username: str = Form(...), password: str = Form("")):
     if not require_admin(request):
-        return back("/admin/accounts", "Admin accounts only")
+        return back("/settings/accounts", "Admin accounts only")
     problem = auth.password_problem(password)
     if problem:
-        return back("/admin/accounts", problem)
+        return back("/settings/accounts", problem)
     username = username.strip().lower()
     if not auth.get_user(username):
-        return back("/admin/accounts", "No such account")
+        return back("/settings/accounts", "No such account")
     auth.set_password(username, password)
     db.execute("UPDATE auth_users SET must_change = 1 WHERE username = ?", (username,))
     auth.revoke_all(username)
-    return back("/admin/accounts", f"Password reset for '{username}'; their sessions were signed out")
+    return back("/settings/accounts", f"Password reset for '{username}'; their sessions were signed out")
 
 
 # --- machine API (bearer token, no session) -------------------------------
@@ -539,16 +539,210 @@ def seat_remove(sub_id: int, upn: str = Form(...), redirect: str = Form("")):
 
 # --- admin / Entra sync --------------------------------------------------
 
-# --- admin: general ------------------------------------------------------
+# --- settings: groups ----------------------------------------------------
 
-@app.get("/admin", response_class=HTMLResponse)
+@app.get("/settings/groups", response_class=HTMLResponse)
+def settings_groups(request: Request):
+    groups = db.q(
+        """SELECT g.*, (SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.id) AS known
+           FROM groups g ORDER BY g.display_name""")
+    last = db.q1("SELECT MAX(synced_at) AS last FROM groups")
+    return render(request, "settings_groups.html", groups=groups, last=last,
+                  cfg=entra.config_status(), section="groups")
+
+
+@app.post("/settings/groups/sync")
+def settings_groups_sync():
+    if not entra.is_configured():
+        return back("/settings/groups", "Entra ID is not configured yet")
+    try:
+        r = entra.sync_groups()
+    except Exception as exc:
+        return back("/settings/groups", f"Sync failed: {type(exc).__name__}: {exc}"[:300])
+    msg = (f"Synced {r['groups']} group(s); {r['members_linked']} membership(s) linked")
+    if r["members_unknown"]:
+        msg += f", {r['members_unknown']} member(s) not known here - sync users first"
+    return back("/settings/groups", msg)
+
+
+@app.get("/settings/groups/{group_id}", response_class=HTMLResponse)
+def group_detail(request: Request, group_id: str):
+    group = db.q1("SELECT * FROM groups WHERE id = ?", (group_id,))
+    if not group:
+        return HTMLResponse("<h1>404</h1><p>No such group.</p>", status_code=404)
+    members = db.q(
+        """SELECT u.* FROM group_members gm JOIN users u ON u.upn = gm.upn
+           WHERE gm.group_id = ? ORDER BY u.display_name""", (group_id,))
+    group_rules = db.q("SELECT * FROM rules WHERE group_id = ?", (group_id,))
+    return render(request, "settings_group_detail.html", g=group, members=members,
+                  group_rules=group_rules, section="groups")
+
+
+# --- settings: devices (Intune) -----------------------------------------
+
+@app.get("/settings/devices", response_class=HTMLResponse)
+def settings_devices(request: Request, q: str = "", os_filter: str = ""):
+    sql = """SELECT d.*, a.name AS asset_name FROM devices d
+             LEFT JOIN assets a ON a.id = d.asset_id"""
+    where, params = [], []
+    if q:
+        where.append("(COALESCE(d.device_name,'') LIKE ? OR COALESCE(d.serial_number,'') LIKE ?"
+                     " OR COALESCE(d.primary_upn,'') LIKE ?)")
+        params += [f"%{q}%", f"%{q}%", f"%{q}%"]
+    if os_filter:
+        where.append("COALESCE(d.os,'') = ?")
+        params.append(os_filter)
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY d.device_name"
+    devices = db.q(sql, params)
+    oses = db.q("SELECT DISTINCT COALESCE(os,'') o FROM devices ORDER BY o")
+    attrs = {}
+    for row in db.q("SELECT device_id, name, value FROM device_attributes ORDER BY name"):
+        attrs.setdefault(row["device_id"], []).append(row)
+    last = db.q1("SELECT MAX(synced_at) AS last FROM devices")
+    counts = db.q1(
+        """SELECT COUNT(*) AS total,
+                  SUM(CASE WHEN asset_id IS NULL THEN 1 ELSE 0 END) AS unlinked,
+                  (SELECT COUNT(*) FROM device_attributes) AS attributes
+           FROM devices""")
+    return render(request, "settings_devices.html", devices=devices, attrs=attrs,
+                  oses=oses, q=q, os_filter=os_filter, last=last, counts=counts,
+                  cfg=entra.config_status(), section="devices")
+
+
+@app.post("/settings/devices/sync")
+def settings_devices_sync():
+    if not entra.is_configured():
+        return back("/settings/devices", "Entra ID is not configured yet")
+    try:
+        r = entra.sync_devices()
+    except Exception as exc:
+        return back("/settings/devices", f"Device sync failed: {type(exc).__name__}: {exc}"[:300])
+    return back("/settings/devices",
+                f"Synced {r['devices']} device(s); {r['linked_to_assets']} matched an asset by serial")
+
+
+@app.post("/settings/devices/sync-attributes")
+def settings_devices_sync_attrs():
+    if not entra.is_configured():
+        return back("/settings/devices", "Entra ID is not configured yet")
+    try:
+        r = entra.sync_custom_attributes()
+    except Exception as exc:
+        return back("/settings/devices",
+                    f"Attribute sync failed: {type(exc).__name__}: {exc}"[:300])
+    msg = f"Read {r['scripts']} custom attribute script(s); stored {r['attributes_stored']} value(s)"
+    if r["skipped"]:
+        msg += f", skipped {r['skipped']} without a value or a known device"
+    return back("/settings/devices", msg)
+
+
+@app.post("/settings/devices/{device_id}/create-asset")
+def device_create_asset(device_id: str):
+    """Turn an Intune device into a tracked asset, keeping them linked."""
+    d = db.q1("SELECT * FROM devices WHERE id = ?", (device_id,))
+    if not d:
+        return back("/settings/devices", "No such device")
+    if d["asset_id"]:
+        return back("/settings/devices", "That device is already linked to an asset")
+    category = "Laptop" if (d["os"] or "").lower() in ("macos", "windows") else "Other"
+    upn = d["primary_upn"] if d["primary_upn"] and db.q1(
+        "SELECT 1 FROM users WHERE upn = ?", (d["primary_upn"],)) else None
+    asset_id = db.execute(
+        """INSERT INTO assets (name, category, cost_cents, serial, notes, assigned_upn, assigned_on)
+           VALUES (?,?,0,?,?,?,?)""",
+        (d["device_name"] or d["model"] or "Device", category, d["serial_number"],
+         f"Created from Intune device {d['model'] or ''}".strip(), upn,
+         today() if upn else None))
+    db.execute("UPDATE devices SET asset_id = ? WHERE id = ?", (asset_id, device_id))
+    return back("/settings/devices", "Asset created and linked - set its cost on the Assets page")
+
+
+# --- settings: rules -----------------------------------------------------
+
+@app.get("/settings/rules", response_class=HTMLResponse)
+def settings_rules(request: Request):
+    return render(request, "settings_rules.html",
+                  overview=rules.compliance_overview(),
+                  groups=db.q("SELECT * FROM groups ORDER BY display_name"),
+                  subs=db.q("SELECT * FROM subscriptions ORDER BY name"),
+                  section="rules")
+
+
+@app.post("/settings/rules/new")
+def rule_new(name: str = Form(...), group_id: str = Form(...), kind: str = Form(...),
+             quantity: str = Form("1"), category: str = Form(""),
+             subscription_id: str = Form("")):
+    if kind not in ("asset", "subscription"):
+        return back("/settings/rules", "Pick what the rule grants")
+    if not db.q1("SELECT 1 FROM groups WHERE id = ?", (group_id,)):
+        return back("/settings/rules", "Unknown group - sync groups first")
+    try:
+        qty = max(1, int(quantity))
+    except ValueError:
+        return back("/settings/rules", "Quantity must be a whole number")
+    if kind == "asset":
+        if not category.strip():
+            return back("/settings/rules", "Choose an asset category")
+        rules.create(name, group_id, "asset", qty, category=category.strip())
+    else:
+        if not subscription_id.isdigit():
+            return back("/settings/rules", "Choose a subscription")
+        # One seat per person, regardless of what was typed.
+        rules.create(name, group_id, "subscription", 1,
+                     subscription_id=int(subscription_id))
+    return back("/settings/rules", "Rule created")
+
+
+@app.post("/settings/rules/{rule_id}/delete")
+def rule_delete(rule_id: int):
+    rules.delete(rule_id)
+    return back("/settings/rules", "Rule deleted")
+
+
+@app.post("/settings/rules/{rule_id}/toggle")
+def rule_toggle(rule_id: int, active: str = Form("")):
+    rules.set_active(rule_id, bool(active))
+    return back("/settings/rules", "Rule updated")
+
+
+@app.post("/settings/rules/{rule_id}/apply")
+def rule_apply(rule_id: int):
+    rule = rules.get(rule_id)
+    if not rule:
+        return back("/settings/rules", "No such rule")
+    r = rules.apply(rule)
+    msg = f"Assigned {r['granted']} item(s)"
+    if r["shortfall"]:
+        names = ", ".join(u["display_name"] for u in r["shortfall"][:3])
+        more = "" if len(r["shortfall"]) <= 3 else f" and {len(r['shortfall']) - 3} more"
+        msg += f"; no spares left for {names}{more}"
+    return back("/settings/rules", msg)
+
+
+@app.get("/settings/rules/{rule_id}", response_class=HTMLResponse)
+def rule_detail(request: Request, rule_id: int):
+    rule = rules.get(rule_id)
+    if not rule:
+        return HTMLResponse("<h1>404</h1><p>No such rule.</p>", status_code=404)
+    return render(request, "settings_rule_detail.html", r=rule,
+                  s=rules.summarise(rule), section="rules")
+
+
+# --- settings: general ---------------------------------------------------
+
+@app.get("/settings", response_class=HTMLResponse)
 def admin_general(request: Request):
     counts = db.q1(
         """SELECT (SELECT COUNT(*) FROM users)         AS people,
                   (SELECT COUNT(*) FROM assets)        AS assets,
                   (SELECT COUNT(*) FROM subscriptions) AS subs,
                   (SELECT COUNT(*) FROM auth_users)    AS logins,
-                  (SELECT COUNT(*) FROM api_keys WHERE active = 1) AS api_keys"""
+                  (SELECT COUNT(*) FROM api_keys WHERE active = 1) AS api_keys,
+                  (SELECT COUNT(*) FROM groups)  AS groups,
+                  (SELECT COUNT(*) FROM devices) AS devices,
+                  (SELECT COUNT(*) FROM rules WHERE active = 1) AS rules"""
     )
     settings = [
         ("Currency", db.CURRENCY, "ITAM_CURRENCY", "Display label only; no conversion is done."),
@@ -561,107 +755,120 @@ def admin_general(request: Request):
         ("Session length", f"{auth.SESSION_HOURS} hours", "ITAM_SESSION_HOURS",
          "How long a sign-in lasts before it expires."),
         ("Database", db.DB_PATH, "ITAM_DB", "SQLite file. Back it up with ./backup.sh."),
+        ("Entra user filter", os.environ.get("ENTRA_USER_FILTER") or "(all users)",
+         "ENTRA_USER_FILTER", "Optional OData filter narrowing the user sync."),
+        ("Entra group filter", os.environ.get("ENTRA_GROUP_FILTER") or "(all groups)",
+         "ENTRA_GROUP_FILTER", "Optional OData filter narrowing the group sync."),
+        ("Intune device filter", os.environ.get("INTUNE_DEVICE_FILTER") or "(all devices)",
+         "INTUNE_DEVICE_FILTER", "Optional OData filter narrowing the device sync."),
     ]
-    return render(request, "admin_general.html", counts=counts, settings=settings,
+    return render(request, "settings_general.html", counts=counts, settings=settings,
                   section="general")
 
 
-# --- admin: Entra ID ----------------------------------------------------
+# --- settings: Entra ID -------------------------------------------------
 
-@app.get("/admin/entra", response_class=HTMLResponse)
+@app.get("/settings/entra", response_class=HTMLResponse)
 def admin_entra(request: Request):
     last = db.q1("SELECT MAX(synced_at) AS last, COUNT(*) AS n FROM users WHERE source='entra'")
     people = db.q1("SELECT COUNT(*) c FROM users")["c"]
-    return render(request, "admin_entra.html", cfg=entra.config_status(), last=last,
+    return render(request, "settings_entra.html", cfg=entra.config_status(), last=last,
                   people=people, section="entra")
 
 
-@app.post("/admin/entra/sync")
+@app.post("/settings/entra/sync")
 def admin_sync():
     if not entra.is_configured():
-        return back("/admin/entra", "Entra ID is not configured - set the environment variables first")
+        return back("/settings/entra", "Entra ID is not configured - set the environment variables first")
     try:
         r = entra.sync()
     except Exception as exc:  # surface the Graph error rather than a 500 page
-        return back("/admin/entra", f"Sync failed: {type(exc).__name__}: {exc}"[:300])
-    return back("/admin/entra", f"Synced {r['fetched']} users ({r['created']} new, {r['updated']} updated)")
+        return back("/settings/entra", f"Sync failed: {type(exc).__name__}: {exc}"[:300])
+    return back("/settings/entra", f"Synced {r['fetched']} users ({r['created']} new, {r['updated']} updated)")
 
 
-# --- admin: local accounts ----------------------------------------------
+# --- settings: local accounts -------------------------------------------
 
 @app.get("/accounts")
 def accounts_moved():
-    return RedirectResponse("/admin/accounts", status_code=308)
+    return RedirectResponse("/settings/accounts", status_code=308)
 
 
-@app.get("/admin/accounts", response_class=HTMLResponse)
+@app.get("/admin")
+@app.get("/admin/{rest:path}")
+def admin_renamed(rest: str = ""):
+    """Admin was renamed to Settings; keep old links and bookmarks working."""
+    return RedirectResponse(f"/settings{'/' + rest if rest else ''}", status_code=308)
+
+
+@app.get("/settings/accounts", response_class=HTMLResponse)
 def accounts_page(request: Request):
     if not require_admin(request):
         return HTMLResponse("<h1>403</h1><p>Admin accounts only.</p>", status_code=403)
-    return render(request, "admin_accounts.html", accounts=auth.list_users(),
+    return render(request, "settings_accounts.html", accounts=auth.list_users(),
                   section="accounts")
 
 
-# --- admin: API keys and field mapping ----------------------------------
+# --- settings: API keys and field mapping -------------------------------
 
-@app.get("/admin/api", response_class=HTMLResponse)
+@app.get("/settings/api", response_class=HTMLResponse)
 def admin_api(request: Request):
     if not require_admin(request):
         return HTMLResponse("<h1>403</h1><p>Admin accounts only.</p>", status_code=403)
     new_token = request.query_params.get("token")
-    return render(request, "admin_api.html", keys=api.list_keys(),
+    return render(request, "settings_api.html", keys=api.list_keys(),
                   mapping=db.q("SELECT * FROM api_field_map ORDER BY source_field"),
                   asset_fields=db.ASSET_FIELDS, log=api.recent_log(),
                   new_token=new_token, site=os.environ.get("ITAM_SITE_ADDRESS") or "your-itam-host",
                   section="api")
 
 
-@app.post("/admin/api/keys/new")
+@app.post("/settings/api/keys/new")
 def api_key_new(request: Request, name: str = Form(...), can_create_assets: str = Form(""),
                 can_assign: str = Form("")):
     if not require_admin(request):
-        return back("/admin/api", "Admin accounts only")
+        return back("/settings/api", "Admin accounts only")
     if not name.strip():
-        return back("/admin/api", "Give the key a name")
+        return back("/settings/api", "Give the key a name")
     token = api.create_key(name, bool(can_create_assets), bool(can_assign))
     # Shown once, via the redirect, then never again.
-    return RedirectResponse(f"/admin/api?token={quote(token, safe='')}", status_code=303)
+    return RedirectResponse(f"/settings/api?token={quote(token, safe='')}", status_code=303)
 
 
-@app.post("/admin/api/keys/{key_id}/delete")
+@app.post("/settings/api/keys/{key_id}/delete")
 def api_key_delete(request: Request, key_id: int):
     if not require_admin(request):
-        return back("/admin/api", "Admin accounts only")
+        return back("/settings/api", "Admin accounts only")
     api.delete_key(key_id)
-    return back("/admin/api", "API key deleted")
+    return back("/settings/api", "API key deleted")
 
 
-@app.post("/admin/api/keys/{key_id}/toggle")
+@app.post("/settings/api/keys/{key_id}/toggle")
 def api_key_toggle(request: Request, key_id: int, active: str = Form("")):
     if not require_admin(request):
-        return back("/admin/api", "Admin accounts only")
+        return back("/settings/api", "Admin accounts only")
     api.set_key_active(key_id, bool(active))
-    return back("/admin/api", "API key updated")
+    return back("/settings/api", "API key updated")
 
 
-@app.post("/admin/api/mapping")
+@app.post("/settings/api/mapping")
 def api_mapping_set(request: Request, source_field: str = Form(...), target_field: str = Form(...)):
     if not require_admin(request):
-        return back("/admin/api", "Admin accounts only")
+        return back("/settings/api", "Admin accounts only")
     if target_field not in db.ASSET_FIELDS:
-        return back("/admin/api", "Unknown target field")
+        return back("/settings/api", "Unknown target field")
     if not source_field.strip():
-        return back("/admin/api", "Give the incoming field a name")
+        return back("/settings/api", "Give the incoming field a name")
     api.set_mapping(source_field, target_field)
-    return back("/admin/api", f"Mapped '{source_field.strip()}' to '{target_field}'")
+    return back("/settings/api", f"Mapped '{source_field.strip()}' to '{target_field}'")
 
 
-@app.post("/admin/api/mapping/delete")
+@app.post("/settings/api/mapping/delete")
 def api_mapping_delete(request: Request, source_field: str = Form(...)):
     if not require_admin(request):
-        return back("/admin/api", "Admin accounts only")
+        return back("/settings/api", "Admin accounts only")
     api.delete_mapping(source_field)
-    return back("/admin/api", "Mapping removed")
+    return back("/settings/api", "Mapping removed")
 
 
 @app.get("/export/costs.csv")

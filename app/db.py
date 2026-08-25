@@ -57,6 +57,66 @@ CREATE TABLE IF NOT EXISTS assets (
 );
 CREATE INDEX IF NOT EXISTS idx_assets_upn ON assets(assigned_upn);
 
+-- Entra ID groups and their membership.
+CREATE TABLE IF NOT EXISTS groups (
+    id           TEXT PRIMARY KEY,        -- Entra group object id
+    display_name TEXT NOT NULL,
+    description  TEXT,
+    member_count INTEGER NOT NULL DEFAULT 0,
+    synced_at    TEXT
+);
+
+CREATE TABLE IF NOT EXISTS group_members (
+    group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    upn      TEXT NOT NULL REFERENCES users(upn) ON DELETE CASCADE,
+    PRIMARY KEY (group_id, upn)
+);
+CREATE INDEX IF NOT EXISTS idx_group_members_upn ON group_members(upn);
+
+-- Devices from Intune. Kept separate from assets: a device is what Intune
+-- reports, an asset is what you paid for. They are linked by serial number.
+CREATE TABLE IF NOT EXISTS devices (
+    id               TEXT PRIMARY KEY,   -- Intune managedDevice id
+    device_name      TEXT,
+    serial_number    TEXT,
+    manufacturer     TEXT,
+    model            TEXT,
+    os               TEXT,
+    os_version       TEXT,
+    primary_upn      TEXT,
+    compliance_state TEXT,
+    enrolled_at      TEXT,
+    last_contact     TEXT,
+    storage_total    INTEGER,
+    storage_free     INTEGER,
+    synced_at        TEXT,
+    asset_id         INTEGER REFERENCES assets(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_devices_serial ON devices(serial_number);
+CREATE INDEX IF NOT EXISTS idx_devices_upn ON devices(primary_upn);
+
+-- Intune custom attributes (macOS shell script results), merged onto a device.
+CREATE TABLE IF NOT EXISTS device_attributes (
+    device_id    TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    name         TEXT NOT NULL,
+    value        TEXT,
+    collected_at TEXT,
+    PRIMARY KEY (device_id, name)
+);
+
+-- Entitlement rules: what members of a group should have.
+CREATE TABLE IF NOT EXISTS rules (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT NOT NULL,
+    group_id        TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    kind            TEXT NOT NULL,       -- 'asset' or 'subscription'
+    category        TEXT,                -- asset category, when kind='asset'
+    subscription_id INTEGER REFERENCES subscriptions(id) ON DELETE CASCADE,
+    quantity        INTEGER NOT NULL DEFAULT 1,
+    active          INTEGER NOT NULL DEFAULT 1,
+    created_at      TEXT
+);
+
 CREATE TABLE IF NOT EXISTS api_keys (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     name              TEXT NOT NULL,

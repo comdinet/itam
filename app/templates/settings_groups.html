@@ -1,0 +1,38 @@
+{% extends "settings_base.html" %}
+{% block title %}Groups &middot; ITAM{% endblock %}
+{% block admin %}
+<h2>Entra ID groups <span class="count">{{ groups|length }}</span></h2>
+<p class="meta">Groups drive the entitlement rules under
+  <a href="/settings/rules">Rules</a>. Last sync: {{ last.last or 'never' }}.</p>
+
+{% if not cfg.configured %}
+<div class="warn"><strong>Entra ID is not configured</strong> &mdash; set the
+  credentials under <a href="/settings/entra">Entra ID</a> first.</div>
+{% endif %}
+
+<form method="post" action="/settings/groups/sync" class="inline-form">
+  <button type="submit" {% if not cfg.configured %}disabled{% endif %}>Sync groups from Entra ID</button>
+  <span class="hint">Needs the <span class="mono">Group.Read.All</span> application permission.</span>
+</form>
+
+<table>
+  <thead><tr><th>Group</th><th>Description</th><th class="num">Members in Entra</th>
+    <th class="num">Known here</th><th>Synced</th></tr></thead>
+  <tbody>
+  {% for g in groups %}
+    <tr><td><a href="/settings/groups/{{ g.id }}">{{ g.display_name }}</a></td>
+        <td class="meta">{{ g.description or '' }}</td>
+        <td class="num">{{ g.member_count }}</td>
+        <td class="num">{{ g.known }}
+          {% if g.known < g.member_count %}<span class="tag">{{ g.member_count - g.known }} unmatched</span>{% endif %}</td>
+        <td class="mono">{{ (g.synced_at or '')[:16].replace('T',' ') }}</td></tr>
+  {% else %}
+    <tr><td colspan="5" class="empty">No groups yet &mdash; run a sync.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="hint">&ldquo;Unmatched&rdquo; members exist in the group but not in ITAM, usually
+  because they are not users (nested groups, service principals) or the user sync
+  has not run since they joined. Sync users under
+  <a href="/settings/entra">Entra ID</a> first.</p>
+{% endblock %}

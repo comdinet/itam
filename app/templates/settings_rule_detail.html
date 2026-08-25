@@ -1,0 +1,57 @@
+{% extends "settings_base.html" %}
+{% block title %}{{ r.name }} &middot; ITAM{% endblock %}
+{% block admin %}
+<p class="crumb"><a href="/settings/rules">&larr; Rules</a></p>
+<h2>{{ r.name }}</h2>
+<p class="meta">Everyone in <a href="/settings/groups/{{ r.group_id }}">{{ r.group_name }}</a>
+  should have <strong>{{ r.quantity }}</strong>
+  {% if r.kind == 'asset' %}&times; {{ r.category }}{% else %}&times; {{ r.subscription_name }} licence{% endif %}.
+  {% if not r.active %}<span class="tag">paused</span>{% endif %}</p>
+
+<div class="cards">
+  <div class="card"><span class="label">Compliant</span>
+    <span class="big">{{ s.compliant }} / {{ s.members }}</span></div>
+  <div class="card"><span class="label">Short</span><span class="big">{{ s.short }}</span>
+    <span class="sub">{{ s.needed }} item(s) needed</span></div>
+  <div class="card"><span class="label">Over-provisioned</span><span class="big">{{ s.over }}</span>
+    <span class="sub">more than the rule asks for</span></div>
+  {% if r.kind == 'asset' %}
+  <div class="card"><span class="label">Spares available</span><span class="big">{{ s.available }}</span>
+    <span class="sub">unassigned {{ r.category }}</span></div>
+  {% endif %}
+</div>
+
+{% if s.needed %}
+<form method="post" action="/settings/rules/{{ r.id }}/apply" class="inline-form"
+      onsubmit="return confirm('Assign up to {{ s.needed }} item(s)?')">
+  <button type="submit">Apply this rule</button>
+  <span class="hint">
+    {% if r.kind == 'asset' %}
+      Assigns spare {{ r.category }} to whoever is short. Stops when the spares run out.
+    {% else %}
+      Grants the licence to everyone missing it, which adds to the monthly cost.
+    {% endif %}</span>
+</form>
+{% endif %}
+
+<h2>Members</h2>
+<table>
+  <thead><tr><th>Name</th><th>UPN</th><th class="num">Has</th>
+    <th class="num">Should have</th><th>Status</th></tr></thead>
+  <tbody>
+  {% for m in s.rows %}
+    <tr {% if not m.account_enabled %}class="disabled"{% endif %}>
+      <td><a href="/users/{{ m.upn }}">{{ m.display_name }}</a>
+        {% if not m.account_enabled %}<span class="tag">disabled</span>{% endif %}</td>
+      <td class="mono">{{ m.upn }}</td>
+      <td class="num">{{ m.have }}</td>
+      <td class="num">{{ m.want }}</td>
+      <td>{% if m.gap > 0 %}<span class="tag">short {{ m.gap }}</span>
+          {% elif m.gap < 0 %}<span class="meta">{{ -m.gap }} over</span>
+          {% else %}<span class="ok">ok</span>{% endif %}</td></tr>
+  {% else %}
+    <tr><td colspan="5" class="empty">This group has no members known to ITAM.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

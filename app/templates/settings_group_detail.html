@@ -1,0 +1,28 @@
+{% extends "settings_base.html" %}
+{% block title %}{{ g.display_name }} &middot; ITAM{% endblock %}
+{% block admin %}
+<p class="crumb"><a href="/settings/groups">&larr; Groups</a></p>
+<h2>{{ g.display_name }}</h2>
+<p class="meta">{{ g.description or 'No description' }} &middot;
+  {{ members|length }} member(s) known here of {{ g.member_count }} in Entra &middot;
+  <span class="mono">{{ g.id }}</span></p>
+
+{% if group_rules %}
+<p class="meta">{{ group_rules|length }} rule(s) apply to this group &mdash;
+  see <a href="/settings/rules">Rules</a>.</p>
+{% endif %}
+
+<table>
+  <thead><tr><th>Name</th><th>UPN</th><th>Department</th></tr></thead>
+  <tbody>
+  {% for m in members %}
+    <tr {% if not m.account_enabled %}class="disabled"{% endif %}>
+      <td><a href="/users/{{ m.upn }}">{{ m.display_name }}</a>
+        {% if not m.account_enabled %}<span class="tag">disabled</span>{% endif %}</td>
+      <td class="mono">{{ m.upn }}</td><td>{{ m.department or '' }}</td></tr>
+  {% else %}
+    <tr><td colspan="3" class="empty">No members matched to ITAM users.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

@@ -1,0 +1,78 @@
+{% extends "settings_base.html" %}
+{% block title %}Devices &middot; ITAM{% endblock %}
+{% block admin %}
+<h2>Intune devices <span class="count">{{ devices|length }}</span></h2>
+
+<div class="cards">
+  <div class="card"><span class="label">Managed devices</span>
+    <span class="big">{{ counts.total or 0 }}</span>
+    <span class="sub">last sync {{ (last.last or 'never')[:16].replace('T',' ') }}</span></div>
+  <div class="card"><span class="label">Not linked to an asset</span>
+    <span class="big">{{ counts.unlinked or 0 }}</span>
+    <span class="sub">matched on serial number</span></div>
+  <div class="card"><span class="label">Custom attributes</span>
+    <span class="big">{{ counts.attributes or 0 }}</span>
+    <span class="sub">values merged onto devices</span></div>
+</div>
+
+{% if not cfg.configured %}
+<div class="warn"><strong>Entra ID is not configured</strong> &mdash; set the
+  credentials under <a href="/settings/entra">Entra ID</a> first. Intune uses the
+  same app registration.</div>
+{% endif %}
+
+<div class="inline-form">
+  <form method="post" action="/settings/devices/sync">
+    <button type="submit" {% if not cfg.configured %}disabled{% endif %}>Sync devices from Intune</button></form>
+  <form method="post" action="/settings/devices/sync-attributes">
+    <button type="submit" {% if not cfg.configured %}disabled{% endif %}>Sync macOS custom attributes</button></form>
+</div>
+<p class="hint">Devices need <span class="mono">DeviceManagementManagedDevices.Read.All</span>;
+  custom attributes need <span class="mono">DeviceManagementConfiguration.Read.All</span>.
+  Custom attributes are macOS shell scripts in Intune &mdash; whatever the script
+  prints is stored against the device, so an attribute reporting CPU and RAM
+  shows up below.</p>
+
+<form class="filters" method="get" action="/settings/devices">
+  <input type="search" name="q" value="{{ q }}" placeholder="Name, serial or user">
+  <select name="os_filter"><option value="">Any OS</option>
+    {% for o in oses %}{% if o.o %}<option value="{{ o.o }}" {% if o.o == os_filter %}selected{% endif %}>{{ o.o }}</option>{% endif %}{% endfor %}
+  </select>
+  <button type="submit">Filter</button>
+  <a class="btn light" href="/settings/devices">Reset</a>
+</form>
+
+<table>
+  <thead><tr><th>Device</th><th>OS</th><th>Model</th><th>Serial</th>
+    <th>Primary user</th><th>Compliance</th><th>Asset</th></tr></thead>
+  <tbody>
+  {% for d in devices %}
+    <tr>
+      <td><strong>{{ d.device_name or '(unnamed)' }}</strong>
+        {% if attrs.get(d.id) %}
+          <div class="attrs">
+            {% for a in attrs[d.id] %}
+              <span class="attr"><span class="attr-k">{{ a.name }}:</span>{{ a.value }}</span>
+            {% endfor %}
+          </div>
+        {% endif %}</td>
+      <td>{{ d.os or '' }} {{ d.os_version or '' }}</td>
+      <td>{{ d.model or '' }}</td>
+      <td class="mono">{{ d.serial_number or '' }}</td>
+      <td>{% if d.primary_upn %}<a href="/users/{{ d.primary_upn }}">{{ d.primary_upn }}</a>{% endif %}</td>
+      <td>{% if d.compliance_state == 'compliant' %}<span class="ok">compliant</span>
+          {% elif d.compliance_state %}<span class="tag">{{ d.compliance_state }}</span>{% endif %}</td>
+      <td class="row-actions">
+        {% if d.asset_id %}<a href="/assets/{{ d.asset_id }}">{{ d.asset_name }}</a>
+        {% else %}
+          <form method="post" action="/settings/devices/{{ d.id }}/create-asset">
+            <button class="link">Create asset</button></form>
+        {% endif %}</td></tr>
+  {% else %}
+    <tr><td colspan="7" class="empty">
+      {% if q or os_filter %}No devices match those filters.
+      {% else %}No devices yet &mdash; run a sync.{% endif %}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

@@ -206,8 +206,18 @@ Set `ITAM_COOKIE_SECURE=1` when you put this behind HTTPS.
 1. In the Entra admin centre: **App registrations → New registration**
    (single tenant, no redirect URI needed — this is app-only).
 2. **Certificates & secrets → New client secret**; copy the value.
-3. **API permissions → Add → Microsoft Graph → Application permissions →
-   `User.Read.All`**, then **Grant admin consent**.
+3. **API permissions → Add → Microsoft Graph → Application permissions**, then
+   **Grant admin consent**. One registration covers everything:
+
+   | Permission | Enables |
+   |---|---|
+   | `User.Read.All` | people |
+   | `Group.Read.All` | groups and membership |
+   | `DeviceManagementManagedDevices.Read.All` | Intune devices |
+   | `DeviceManagementConfiguration.Read.All` | macOS custom attributes |
+
+   Only `User.Read.All` is required. Add the others when you want groups,
+   devices, or attributes.
 4. Put the three values in `.env` — `setup.sh` prompts for them, or edit the
    file directly — and restart so the container picks them up:
 
@@ -215,7 +225,7 @@ Set `ITAM_COOKIE_SECURE=1` when you put this behind HTTPS.
 docker compose up -d
 ```
 
-5. Open **Admin → Sync users from Entra ID now**.
+5. Open **Settings → Entra ID users from Entra ID now**.
 
 Credentials can be added at any time; until then the app simply has no people.
 
@@ -242,15 +252,85 @@ Sync behaviour:
   edit assets, assign on creation.
 - **Subscriptions** — per-seat cost, seat count, monthly and annual spend;
   manage seats per subscription.
-- **Admin** — four subsections:
+- **Settings** — subsections:
   - **General** — counts, plus every current setting and the environment
     variable behind it. Read-only; change these in `.env` and restart.
-  - **Entra ID** — configuration status and the sync button.
+  - **Entra ID** — configuration status and the user sync.
+  - **Groups** — Entra groups and their membership; the basis for rules.
+  - **Devices** — Intune devices, their macOS custom attributes, and the link
+    to assets.
+  - **Rules** — entitlement rules and who is short against them.
   - **Accounts** (admins only) — create, delete, and reset local sign-in accounts.
   - **API** (admins only) — API keys, field mapping, and the recent call log.
 - **My account** — change your own password.
 
 `/export/costs.csv` gives per-person costs for finance.
+
+
+## Groups, devices and rules
+
+### Groups
+
+**Settings → Groups** syncs Entra groups and their membership. Run the user
+sync first: only people already in ITAM can be linked, and the group list shows
+how many members it could not match (nested groups, service principals, or
+someone who joined since the last user sync).
+
+Membership is replaced on every sync, so someone removed from a group in Entra
+stops counting here too.
+
+### Devices
+
+**Settings → Devices** pulls managed devices from Intune. A device is what
+Intune reports; an asset is what you paid for. They are matched on **serial
+number** — where a serial matches, the device links to that asset. A link made
+by hand survives later syncs even if the serial never matches.
+
+For a device with no asset, **Create asset** makes one from the device details
+and links them, leaving you to fill in the cost.
+
+**macOS custom attributes** are shell scripts in Intune whose output Intune
+stores per device. *Sync macOS custom attributes* reads those results and merges
+them onto the device, so an attribute reporting CPU and RAM shows up on the
+device row:
+
+```
+HEDY-MBP    CPU and RAM: Apple M4 Pro / 36 GB
+```
+
+Whatever the script prints is stored under the script's display name, so
+anything you already collect this way carries over without configuration. This
+uses the Graph **beta** endpoint, because custom attribute shell scripts have no
+v1.0 equivalent.
+
+### Rules
+
+**Settings → Rules** holds entitlement rules: what members of a group should
+have. "Everyone in Design gets 2 monitors" is a group, an asset category, and a
+quantity.
+
+A rule reports rather than acts. The Rules page shows, per rule, how many
+members are compliant, how many are short, how many items that adds up to, and
+how many spares you have to cover it. The rule's own page lists every member
+with what they have against what they should.
+
+**Apply** closes the gaps it can:
+
+- **Assets** are only ever taken from existing spares. ITAM will not invent
+  hardware — an asset record for kit nobody owns is worse than no record. If
+  there are fewer spares than the rule needs, it assigns what exists and names
+  who was left short.
+- **Licences** are granted outright, since a seat is just a record. This adds
+  to the monthly run-rate, so the number of seats it will grant is shown before
+  you click.
+
+Members are served in name order, so with stock too short for everyone the
+earlier names are filled first and the rest are reported. Nothing is ever
+un-assigned: someone holding more than a rule asks for is flagged as
+over-provisioned and left alone, for you to reclaim by hand.
+
+Rules can be paused, which keeps them without evaluating them. Deleting a group
+deletes its rules.
 
 ## API for webhooks
 
@@ -258,7 +338,7 @@ Other systems can create assets in ITAM over HTTP — for example a Frappe
 webhook that fires when hardware is approved for someone. This is separate from
 the browser sign-in: callers authenticate with a bearer token.
 
-Set it up under **Admin → API**.
+Set it up under **Settings → API**.
 
 ### 1. Create a key
 
@@ -353,7 +433,7 @@ creates a new asset — so map it if your sender retries at all.
 | `422` | `assigned_upn` matches no known user — sync Entra ID first |
 | `500` | unexpected failure; the reason is in the call log |
 
-Every call is recorded under **Admin → API**, most recent first, with the
+Every call is recorded under **Settings → API**, most recent first, with the
 status and outcome — the first place to look when a webhook "didn't work". The
 last 200 calls are kept.
 

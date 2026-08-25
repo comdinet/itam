@@ -1,4 +1,4 @@
-{% extends "admin_base.html" %}
+{% extends "settings_base.html" %}
 {% block title %}API &middot; ITAM{% endblock %}
 {% block admin %}
 
@@ -29,10 +29,10 @@
       <td>{{ (k.last_used_at or 'never')[:16].replace('T',' ') }}</td>
       <td>{% if k.active %}active{% else %}<span class="tag">disabled</span>{% endif %}</td>
       <td class="row-actions">
-        <form method="post" action="/admin/api/keys/{{ k.id }}/toggle">
+        <form method="post" action="/settings/api/keys/{{ k.id }}/toggle">
           <input type="hidden" name="active" value="{{ '' if k.active else '1' }}">
           <button class="link">{{ 'Disable' if k.active else 'Enable' }}</button></form>
-        <form method="post" action="/admin/api/keys/{{ k.id }}/delete"
+        <form method="post" action="/settings/api/keys/{{ k.id }}/delete"
               onsubmit="return confirm('Delete key {{ k.name }}? Anything using it stops working.')">
           <button class="link danger">Delete</button></form></td></tr>
   {% else %}
@@ -43,7 +43,7 @@
 
 <details class="panel" {% if not keys %}open{% endif %}>
   <summary>Create an API key</summary>
-  <form class="grid-form" method="post" action="/admin/api/keys/new">
+  <form class="grid-form" method="post" action="/settings/api/keys/new">
     <label>Name<input name="name" required placeholder="Frappe HW approval"></label>
     <label>Create assets<select name="can_create_assets">
       <option value="1" selected>allowed</option><option value="">not allowed</option></select></label>
@@ -68,7 +68,7 @@
         <td class="meta">&rarr;</td>
         <td class="mono">{{ m.target_field }}</td>
         <td class="row-actions">
-          <form method="post" action="/admin/api/mapping/delete">
+          <form method="post" action="/settings/api/mapping/delete">
             <input type="hidden" name="source_field" value="{{ m.source_field }}">
             <button class="link danger">Remove</button></form></td></tr>
   {% else %}
@@ -77,7 +77,7 @@
   </tbody>
 </table>
 
-<form class="inline-form" method="post" action="/admin/api/mapping">
+<form class="inline-form" method="post" action="/settings/api/mapping">
   <input name="source_field" placeholder="incoming field, e.g. item_group" required>
   <span class="meta">&rarr;</span>
   <select name="target_field" required>

@@ -1,5 +1,5 @@
-{% extends "admin_base.html" %}
-{% block title %}Admin &middot; ITAM{% endblock %}
+{% extends "settings_base.html" %}
+{% block title %}Settings &middot; ITAM{% endblock %}
 {% block admin %}
 <h2>What's in here</h2>
 <div class="cards">
@@ -7,6 +7,9 @@
     <span class="sub">from Entra ID</span></div>
   <div class="card"><span class="label">Assets</span><span class="big">{{ counts.assets }}</span></div>
   <div class="card"><span class="label">Subscriptions</span><span class="big">{{ counts.subs }}</span></div>
+  <div class="card"><span class="label">Groups</span><span class="big">{{ counts.groups }}</span>
+    <span class="sub">{{ counts.rules }} active rule(s)</span></div>
+  <div class="card"><span class="label">Intune devices</span><span class="big">{{ counts.devices }}</span></div>
   <div class="card"><span class="label">Sign-in accounts</span><span class="big">{{ counts.logins }}</span>
     <span class="sub">{{ counts.api_keys }} active API key(s)</span></div>
 </div>

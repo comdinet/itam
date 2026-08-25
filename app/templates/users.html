@@ -30,7 +30,7 @@
       <td class="num">{{ u.monthly_total|money }}</td>
       <td class="num">{{ (u.monthly_total * 12)|money }}</td></tr>
   {% else %}
-    <tr><td colspan="8" class="empty">No people yet &mdash; run an Entra ID sync from <a href="/admin">Admin</a>.</td></tr>
+    <tr><td colspan="8" class="empty">No people yet &mdash; run an Entra ID sync from <a href="/settings/entra">Settings</a>.</td></tr>
   {% endfor %}
   </tbody>
 </table>

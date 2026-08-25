@@ -1,4 +1,4 @@
-{% extends "admin_base.html" %}
+{% extends "settings_base.html" %}
 {% block title %}Entra ID &middot; ITAM{% endblock %}
 {% block admin %}
 <h2>Entra ID user sync</h2>
@@ -20,7 +20,7 @@ ENTRA_USER_FILTER=accountEnabled eq true</pre>
 {% endif %}
 <p class="meta">{{ last.n }} user(s) sourced from Entra ID, {{ people }} in total.
   Last sync: {{ last.last or 'never' }}.</p>
-<form method="post" action="/admin/entra/sync">
+<form method="post" action="/settings/entra/sync">
   <button type="submit" {% if not cfg.configured %}disabled{% endif %}>Sync users from Entra ID now</button>
 </form>
 <p class="hint">Sync upserts on UPN. It never deletes: accounts disabled in Entra are
