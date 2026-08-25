@@ -33,7 +33,9 @@ def config_status() -> dict:
         "tenant_id": os.environ.get("ENTRA_TENANT_ID", ""),
         "client_id": os.environ.get("ENTRA_CLIENT_ID", ""),
         "secret_set": bool(os.environ.get("ENTRA_CLIENT_SECRET")),
-        "filter": os.environ.get("ENTRA_USER_FILTER", ""),
+        "filter": (os.environ.get("ENTRA_USER_FILTER") or "").strip(),
+        "group_filter": (os.environ.get("ENTRA_GROUP_FILTER") or "").strip(),
+        "device_filter": (os.environ.get("INTUNE_DEVICE_FILTER") or "").strip(),
     }
 
 
@@ -53,10 +55,20 @@ def _token() -> str:
     return resp.json()["access_token"]
 
 
-def _get_all(path: str, params: dict | None = None, base: str = GRAPH) -> list[dict]:
-    """GET a Graph collection, following @odata.nextLink to the end."""
+def _get_all(path: str, params: dict | None = None, base: str = GRAPH,
+             advanced: bool = False) -> list[dict]:
+    """GET a Graph collection, following @odata.nextLink to the end.
+
+    `advanced` opts into Graph's advanced query capabilities. Several directory
+    filters need it - userType, ne, not, startsWith and endsWith among them -
+    and it costs nothing for the simple ones, so any configured filter uses it.
+    """
     token = _token()
     headers = {"Authorization": f"Bearer {token}"}
+    if advanced:
+        headers["ConsistencyLevel"] = "eventual"
+        params = dict(params or {})
+        params["$count"] = "true"
     url = f"{base}{path}"
     out: list[dict] = []
     with httpx.Client(timeout=60) as client:
@@ -73,10 +85,10 @@ def _get_all(path: str, params: dict | None = None, base: str = GRAPH) -> list[d
 def fetch_users() -> list[dict]:
     """Page through all users in the tenant."""
     params = {"$select": SELECT, "$top": "999"}
-    user_filter = os.environ.get("ENTRA_USER_FILTER")
+    user_filter = (os.environ.get("ENTRA_USER_FILTER") or "").strip()
     if user_filter:
         params["$filter"] = user_filter
-    return _get_all("/users", params)
+    return _get_all("/users", params, advanced=bool(user_filter))
 
 
 def sync() -> dict:
@@ -129,11 +141,11 @@ def sync_groups() -> dict:
     Needs the Graph application permission Group.Read.All (plus the existing
     User.Read.All) with admin consent.
     """
-    group_filter = os.environ.get("ENTRA_GROUP_FILTER")
+    group_filter = (os.environ.get("ENTRA_GROUP_FILTER") or "").strip()
     params = {"$select": "id,displayName,description", "$top": "999"}
     if group_filter:
         params["$filter"] = group_filter
-    groups = _get_all("/groups", params)
+    groups = _get_all("/groups", params, advanced=bool(group_filter))
 
     now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     created = updated = members_linked = skipped_members = 0
@@ -196,9 +208,10 @@ def sync_devices() -> dict:
     DeviceManagementManagedDevices.Read.All with admin consent.
     """
     params = {"$select": DEVICE_SELECT, "$top": "999"}
-    device_filter = os.environ.get("INTUNE_DEVICE_FILTER")
+    device_filter = (os.environ.get("INTUNE_DEVICE_FILTER") or "").strip()
     if device_filter:
         params["$filter"] = device_filter
+    # Intune's managedDevices does not support advanced query, so no opt-in here.
     devices = _get_all("/deviceManagement/managedDevices", params)
 
     now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")

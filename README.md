@@ -237,8 +237,25 @@ Sync behaviour:
 - **Never deletes.** Accounts disabled in Entra are flagged `disabled` here, so
   their assets and licences stay visible for reclaim — the dashboard calls out
   licences still assigned to disabled accounts.
-- `ENTRA_USER_FILTER` optionally narrows the sync, e.g.
-  `accountEnabled eq true`, or a department filter for a pilot rollout.
+- `ENTRA_USER_FILTER` optionally narrows the sync. For real staff only —
+  no disabled accounts, no guests:
+
+  ```
+  ENTRA_USER_FILTER=accountEnabled eq true and userType eq 'Member'
+  ```
+
+  That line goes **inside `.env`**. Values may contain spaces and quotes exactly
+  as written; do not wrap the whole value in quotes. Then
+  `docker compose up -d`.
+
+  Whenever a filter is set, the sync sends Graph's advanced query headers
+  (`ConsistencyLevel: eventual` and `$count=true`), because several directory
+  filters — `userType`, `ne`, `not`, `startsWith` — are rejected without them.
+  `ENTRA_GROUP_FILTER` works the same way. `INTUNE_DEVICE_FILTER` does not:
+  Intune's `managedDevices` has no advanced query support, so keep those
+  filters simple, e.g. `operatingSystem eq 'macOS'`.
+
+  The filters currently in effect are shown on **Settings → Entra ID**.
 
 ## What each screen does
 

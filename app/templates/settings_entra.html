@@ -20,6 +20,18 @@ ENTRA_USER_FILTER=accountEnabled eq true</pre>
 {% endif %}
 <p class="meta">{{ last.n }} user(s) sourced from Entra ID, {{ people }} in total.
   Last sync: {{ last.last or 'never' }}.</p>
+
+<table>
+  <thead><tr><th>Sync</th><th>Filter in effect</th></tr></thead>
+  <tbody>
+    <tr><td>Users</td><td class="mono">{{ cfg.filter or 'none - every user in the tenant' }}</td></tr>
+    <tr><td>Groups</td><td class="mono">{{ cfg.group_filter or 'none - every group' }}</td></tr>
+    <tr><td>Devices</td><td class="mono">{{ cfg.device_filter or 'none - every managed device' }}</td></tr>
+  </tbody>
+</table>
+<p class="hint">To sync only real staff and leave out guests and service accounts:
+  <span class="mono">ENTRA_USER_FILTER=accountEnabled eq true and userType eq 'Member'</span>
+  in <span class="mono">.env</span>, then <span class="mono">docker compose up -d</span>.</p>
 <form method="post" action="/settings/entra/sync">
   <button type="submit" {% if not cfg.configured %}disabled{% endif %}>Sync users from Entra ID now</button>
 </form>
