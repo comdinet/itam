@@ -8,6 +8,8 @@ People come from **Entra ID**, keyed on **UPN**. Two kinds of cost:
 | **Assets** | Laptops, monitors, phones, peripherals, perpetual software | one-off purchase cost |
 | **Subscriptions** | SaaS licences (M365, GitHub, Slack, …) | cost per seat, per month |
 
+Repository: <https://github.com/comdinet/itam>
+
 Stack: FastAPI + SQLite + server-rendered HTML. No build step, no JavaScript
 framework, no external services. One file for the database (`itam.db`).
 Access is protected by **local username + password sign-in**, and the deployment
@@ -25,7 +27,7 @@ sudo apt-get update && sudo apt-get install -y git
 ```
 
 ```bash
-git clone <your-repo-url> /opt/itam && cd /opt/itam
+git clone https://github.com/comdinet/itam.git /opt/itam && cd /opt/itam
 ```
 
 ```bash
