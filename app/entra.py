@@ -16,7 +16,37 @@ from . import db
 GRAPH = "https://graph.microsoft.com/v1.0"
 # Intune custom attribute shell scripts are only exposed on the beta endpoint.
 GRAPH_BETA = "https://graph.microsoft.com/beta"
-SELECT = "id,userPrincipalName,displayName,jobTitle,department,accountEnabled"
+SELECT = ("id,userPrincipalName,displayName,jobTitle,department,accountEnabled,"
+          "country,usageLocation")
+
+# Friendly names keyed on skuPartNumber, the stable string id. Published GUID
+# lists disagree with one another, so nothing here is keyed on a GUID, and the
+# tenant's own /subscribedSkus is the source of truth for what exists.
+SKU_NAMES = {
+    "SPB": "Microsoft 365 Business Premium",
+    "SPB_NOTEAMS": "Microsoft 365 Business Premium (no Teams)",
+    "O365_BUSINESS_ESSENTIALS": "Microsoft 365 Business Basic",
+    "O365_BUSINESS_PREMIUM": "Microsoft 365 Business Standard",
+    "SPE_E3": "Microsoft 365 E3",
+    "SPE_E5": "Microsoft 365 E5",
+    "ENTERPRISEPACK": "Office 365 E3",
+    "ENTERPRISEPREMIUM": "Office 365 E5",
+    "EXCHANGESTANDARD": "Exchange Online (Plan 1)",
+    "EXCHANGEENTERPRISE": "Exchange Online (Plan 2)",
+    "AAD_PREMIUM": "Microsoft Entra ID P1",
+    "AAD_PREMIUM_P2": "Microsoft Entra ID P2",
+    "POWER_BI_PRO": "Power BI Pro",
+    "PROJECTPROFESSIONAL": "Project Plan 3",
+    "VISIOCLIENT": "Visio Plan 2",
+    "FLOW_FREE": "Power Automate Free",
+    "TEAMS_EXPLORATORY": "Microsoft Teams Exploratory",
+}
+
+
+def sku_display_name(part_number: str | None) -> str:
+    if not part_number:
+        return "(unknown SKU)"
+    return SKU_NAMES.get(part_number, part_number)
 
 DEVICE_SELECT = ("id,deviceName,serialNumber,manufacturer,model,operatingSystem,"
                  "osVersion,userPrincipalName,complianceState,enrolledDateTime,"
@@ -106,14 +136,17 @@ def sync() -> dict:
             exists = conn.execute("SELECT 1 FROM users WHERE upn = ?", (upn,)).fetchone()
             conn.execute(
                 """INSERT INTO users (upn, display_name, job_title, department, entra_id,
-                                      account_enabled, source, synced_at)
-                   VALUES (?,?,?,?,?,?,'entra',?)
+                                      account_enabled, country, usage_location,
+                                      source, synced_at)
+                   VALUES (?,?,?,?,?,?,?,?,'entra',?)
                    ON CONFLICT(upn) DO UPDATE SET
                        display_name=excluded.display_name,
                        job_title=excluded.job_title,
                        department=excluded.department,
                        entra_id=excluded.entra_id,
                        account_enabled=excluded.account_enabled,
+                       country=excluded.country,
+                       usage_location=excluded.usage_location,
                        source='entra',
                        synced_at=excluded.synced_at""",
                 (
@@ -123,6 +156,8 @@ def sync() -> dict:
                     u.get("department"),
                     u.get("id"),
                     1 if u.get("accountEnabled", True) else 0,
+                    u.get("country"),
+                    u.get("usageLocation"),
                     now,
                 ),
             )
@@ -315,3 +350,76 @@ def sync_custom_attributes() -> dict:
                 stored += 1
 
     return {"scripts": len(scripts), "attributes_stored": stored, "skipped": skipped}
+
+
+# --- licences ------------------------------------------------------------
+
+def sync_licenses() -> dict:
+    """Pull the tenant's licence SKUs and who holds them.
+
+    Needs Organization.Read.All (or Directory.Read.All) for /subscribedSkus,
+    alongside the existing User.Read.All for the per-user assignments.
+
+    The tenant is the source of truth for which SKUs exist: nothing is matched
+    against a hardcoded GUID, only against what Entra reports.
+    """
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+
+    skus = _get_all("/subscribedSkus",
+                    {"$select": "skuId,skuPartNumber,prepaidUnits,consumedUnits"})
+    with db.cursor() as conn:
+        for sku in skus:
+            sku_id = sku.get("skuId")
+            if not sku_id:
+                continue
+            part = sku.get("skuPartNumber")
+            prepaid = (sku.get("prepaidUnits") or {}).get("enabled") or 0
+            conn.execute(
+                """INSERT INTO licenses (sku_id, sku_part_number, display_name,
+                                         prepaid, consumed, synced_at)
+                   VALUES (?,?,?,?,?,?)
+                   ON CONFLICT(sku_id) DO UPDATE SET
+                       sku_part_number=excluded.sku_part_number,
+                       display_name=excluded.display_name,
+                       prepaid=excluded.prepaid,
+                       consumed=excluded.consumed,
+                       synced_at=excluded.synced_at""",
+                (sku_id, part, sku_display_name(part), _int_or_none(prepaid) or 0,
+                 _int_or_none(sku.get("consumedUnits")) or 0, now))
+
+    # Per-user assignments. The same filter as the user sync, so the two views
+    # cannot disagree about who is in scope.
+    params = {"$select": "userPrincipalName,assignedLicenses", "$top": "999"}
+    user_filter = (os.environ.get("ENTRA_USER_FILTER") or "").strip()
+    if user_filter:
+        params["$filter"] = user_filter
+    people = _get_all("/users", params, advanced=bool(user_filter))
+
+    assigned = unknown_user = unknown_sku = 0
+    known_skus = {r["sku_id"] for r in db.q("SELECT sku_id FROM licenses")}
+    with db.cursor() as conn:
+        conn.execute("DELETE FROM user_licenses")
+        for person in people:
+            upn = (person.get("userPrincipalName") or "").strip().lower()
+            if not upn:
+                continue
+            if not conn.execute("SELECT 1 FROM users WHERE upn = ?", (upn,)).fetchone():
+                # Licensed in Entra but not synced here - usually a filter
+                # difference. Counted so it is visible rather than silent.
+                if person.get("assignedLicenses"):
+                    unknown_user += 1
+                continue
+            for lic in person.get("assignedLicenses") or []:
+                sku_id = lic.get("skuId")
+                if not sku_id:
+                    continue
+                if sku_id not in known_skus:
+                    unknown_sku += 1
+                    continue
+                conn.execute(
+                    "INSERT OR IGNORE INTO user_licenses (upn, sku_id) VALUES (?,?)",
+                    (upn, sku_id))
+                assigned += 1
+
+    return {"skus": len(skus), "assignments": assigned,
+            "licensed_not_synced": unknown_user, "unknown_skus": unknown_sku}

@@ -88,7 +88,8 @@ def back(url: str, msg: str | None = None):
 # --- cost queries --------------------------------------------------------
 
 USER_COSTS = """
-SELECT u.upn, u.display_name, u.job_title, u.department, u.account_enabled, u.source,
+SELECT u.upn, u.display_name, u.job_title, u.department, u.country,
+       u.usage_location, u.account_enabled, u.source,
        COALESCE(a.asset_total, 0)   AS asset_total,
        COALESCE(a.asset_count, 0)   AS asset_count,
        COALESCE(s.monthly_total, 0) AS monthly_total,
@@ -337,7 +338,7 @@ def dashboard(request: Request):
 # --- users ---------------------------------------------------------------
 
 @app.get("/users", response_class=HTMLResponse)
-def users_list(request: Request, q: str = "", dept: str = ""):
+def users_list(request: Request, q: str = "", dept: str = "", country: str = ""):
     sql = USER_COSTS
     where, params = [], []
     if q:
@@ -346,12 +347,17 @@ def users_list(request: Request, q: str = "", dept: str = ""):
     if dept:
         where.append("COALESCE(u.department,'') = ?")
         params.append(dept)
+    if country:
+        where.append("COALESCE(u.country,'') = ?")
+        params.append(country)
     if where:
         sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY u.display_name"
     rows = db.q(sql, params)
     depts = db.q("SELECT DISTINCT COALESCE(department,'') d FROM users ORDER BY d")
-    return render(request, "users.html", users=rows, q=q, dept=dept, depts=depts)
+    countries = db.q("SELECT DISTINCT COALESCE(country,'') c FROM users ORDER BY c")
+    return render(request, "users.html", users=rows, q=q, dept=dept, depts=depts,
+                  country=country, countries=countries)
 
 
 @app.get("/users/{upn}", response_class=HTMLResponse)
@@ -370,8 +376,11 @@ def user_detail(request: Request, upn: str):
         """SELECT * FROM subscriptions WHERE id NOT IN
              (SELECT subscription_id FROM subscription_seats WHERE upn = ?)
            ORDER BY name""", (upn,))
+    entra_licences = db.q(
+        """SELECT l.* FROM user_licenses ul JOIN licenses l ON l.sku_id = ul.sku_id
+           WHERE ul.upn = ? ORDER BY l.display_name""", (upn,))
     return render(request, "user_detail.html", u=user, assets=assets, subs=subs,
-                  spare=spare, avail_subs=avail_subs)
+                  spare=spare, avail_subs=avail_subs, entra_licences=entra_licences)
 
 
 @app.post("/users/{upn}/assign-asset")
@@ -657,6 +666,60 @@ def device_create_asset(device_id: str):
          today() if upn else None))
     db.execute("UPDATE devices SET asset_id = ? WHERE id = ?", (asset_id, device_id))
     return back("/settings/devices", "Asset created and linked - set its cost on the Assets page")
+
+
+# --- settings: licences (from Entra) ------------------------------------
+
+@app.get("/settings/licences", response_class=HTMLResponse)
+def settings_licences(request: Request):
+    rows = db.q(
+        """SELECT l.*, (SELECT COUNT(*) FROM user_licenses ul WHERE ul.sku_id = l.sku_id) AS held_here
+           FROM licenses l ORDER BY l.display_name""")
+    last = db.q1("SELECT MAX(synced_at) AS last FROM licenses")
+    totals = db.q1(
+        """SELECT COALESCE(SUM(prepaid),0) AS prepaid,
+                  COALESCE(SUM(consumed),0) AS consumed FROM licenses""")
+    # Licences held by accounts that are disabled in Entra: money being spent
+    # on people who cannot sign in.
+    reclaimable = db.q(
+        """SELECT l.display_name, u.upn, u.display_name AS person
+           FROM user_licenses ul
+           JOIN licenses l ON l.sku_id = ul.sku_id
+           JOIN users u ON u.upn = ul.upn
+           WHERE u.account_enabled = 0
+           ORDER BY l.display_name, u.display_name""")
+    return render(request, "settings_licences.html", licences=rows, last=last,
+                  totals=totals, reclaimable=reclaimable,
+                  cfg=entra.config_status(), section="licences")
+
+
+@app.post("/settings/licences/sync")
+def settings_licences_sync():
+    if not entra.is_configured():
+        return back("/settings/licences", "Entra ID is not configured yet")
+    try:
+        r = entra.sync_licenses()
+    except Exception as exc:
+        return back("/settings/licences", f"Licence sync failed: {type(exc).__name__}: {exc}"[:300])
+    msg = f"Synced {r['skus']} SKU(s) and {r['assignments']} assignment(s)"
+    if r["licensed_not_synced"]:
+        msg += f"; {r['licensed_not_synced']} licensed account(s) are not synced here"
+    if r["unknown_skus"]:
+        msg += f"; {r['unknown_skus']} assignment(s) referenced an unknown SKU"
+    return back("/settings/licences", msg)
+
+
+@app.get("/settings/licences/{sku_id}", response_class=HTMLResponse)
+def licence_detail(request: Request, sku_id: str):
+    lic = db.q1("SELECT * FROM licenses WHERE sku_id = ?", (sku_id,))
+    if not lic:
+        return HTMLResponse("<h1>404</h1><p>No such licence.</p>", status_code=404)
+    holders = db.q(
+        """SELECT u.upn, u.display_name, u.department, u.country, u.account_enabled
+           FROM user_licenses ul JOIN users u ON u.upn = ul.upn
+           WHERE ul.sku_id = ? ORDER BY u.display_name""", (sku_id,))
+    return render(request, "settings_licence_detail.html", l=lic, holders=holders,
+                  section="licences")
 
 
 # --- settings: rules -----------------------------------------------------

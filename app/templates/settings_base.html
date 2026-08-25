@@ -6,6 +6,7 @@
   <a href="/settings/entra" {% if section == 'entra' %}class="on"{% endif %}>Entra ID</a>
   <a href="/settings/groups" {% if section == 'groups' %}class="on"{% endif %}>Groups</a>
   <a href="/settings/devices" {% if section == 'devices' %}class="on"{% endif %}>Devices</a>
+  <a href="/settings/licences" {% if section == 'licences' %}class="on"{% endif %}>Licences</a>
   <a href="/settings/rules" {% if section == 'rules' %}class="on"{% endif %}>Rules</a>
   {% if me and me.is_admin %}
     <a href="/settings/accounts" {% if section == 'accounts' %}class="on"{% endif %}>Accounts</a>

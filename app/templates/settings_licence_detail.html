@@ -1,0 +1,33 @@
+{% extends "settings_base.html" %}
+{% block title %}{{ l.display_name }} &middot; ITAM{% endblock %}
+{% block admin %}
+<p class="crumb"><a href="/settings/licences">&larr; Licences</a></p>
+<h2>{{ l.display_name }}</h2>
+<p class="meta"><span class="mono">{{ l.sku_part_number }}</span> &middot;
+  <span class="mono">{{ l.sku_id }}</span></p>
+
+<div class="cards">
+  <div class="card"><span class="label">Purchased</span><span class="big">{{ l.prepaid }}</span></div>
+  <div class="card"><span class="label">Assigned (tenant)</span><span class="big">{{ l.consumed }}</span></div>
+  <div class="card"><span class="label">Unused</span><span class="big">{{ l.prepaid - l.consumed }}</span></div>
+  <div class="card"><span class="label">Held by synced people</span><span class="big">{{ holders|length }}</span></div>
+</div>
+
+<h2>Who holds it</h2>
+<table>
+  <thead><tr><th>Name</th><th>UPN</th><th>Department</th><th>Country</th><th>Status</th></tr></thead>
+  <tbody>
+  {% for h in holders %}
+    <tr {% if not h.account_enabled %}class="disabled"{% endif %}>
+      <td><a href="/users/{{ h.upn }}">{{ h.display_name }}</a></td>
+      <td class="mono">{{ h.upn }}</td>
+      <td>{{ h.department or '' }}</td>
+      <td>{{ h.country or '' }}</td>
+      <td>{% if h.account_enabled %}<span class="ok">active</span>
+          {% else %}<span class="tag">disabled &mdash; reclaim</span>{% endif %}</td></tr>
+  {% else %}
+    <tr><td colspan="5" class="empty">Nobody synced here holds this licence.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

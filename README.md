@@ -213,6 +213,7 @@ Set `ITAM_COOKIE_SECURE=1` when you put this behind HTTPS.
    | Permission | Enables |
    |---|---|
    | `User.Read.All` | people |
+   | `Organization.Read.All` | licence SKUs the tenant owns |
    | `Group.Read.All` | groups and membership |
    | `DeviceManagementManagedDevices.Read.All` | Intune devices |
    | `DeviceManagementConfiguration.Read.All` | macOS custom attributes |
@@ -284,6 +285,57 @@ Sync behaviour:
 
 `/export/costs.csv` gives per-person costs for finance.
 
+
+## Licences
+
+**Settings → Licences** reads what the tenant owns from Entra
+(`/subscribedSkus`) and who holds each SKU, and shows purchased vs assigned vs
+unused per licence.
+
+Nothing is matched against a hardcoded product GUID. Published GUID lists
+disagree with one another, so the tenant's own `/subscribedSkus` is the source
+of truth for which SKUs exist, and friendly names are keyed on the stable
+string ID:
+
+| String ID | Shown as |
+|---|---|
+| `SPB` | Microsoft 365 Business Premium |
+| `SPB_NOTEAMS` | Microsoft 365 Business Premium (no Teams) |
+
+Any SKU not in that map is listed under its raw string ID rather than hidden,
+so nothing goes missing.
+
+Two numbers are worth watching:
+
+- **Unused** — purchased minus assigned, straight from Entra. Seats you pay for
+  and nobody has.
+- **On disabled accounts** — licences held by people whose Entra account is
+  disabled. Reclaimable immediately, and called out at the top of the page.
+
+Licence assignment uses the same `ENTRA_USER_FILTER` as the user sync, so the
+two cannot disagree about who is in scope. Where Entra's tenant-wide "assigned"
+count exceeds "held by synced people", the difference is licensed accounts your
+filter excludes — usually guests and service accounts.
+
+## Scheduled syncs
+
+`./sync.sh` runs the syncs in dependency order — users first, then groups,
+licences, devices, and custom attributes:
+
+```bash
+./sync.sh              # everything
+./sync.sh licences     # just one
+```
+
+Nightly at 03:00 (`crontab -e`):
+
+```
+0 3 * * * cd /opt/itam && ./sync.sh >> /var/log/itam-sync.log 2>&1
+```
+
+Every job is safe to re-run: syncs upsert and never delete inventory. Each line
+of output says what changed, and the exit status is non-zero if any job failed,
+so cron reports real failures instead of swallowing them.
 
 ## Groups, devices and rules
 

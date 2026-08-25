@@ -10,11 +10,17 @@
       <option value="{{ d.d }}" {% if d.d == dept %}selected{% endif %}>{{ d.d or '(none)' }}</option>
     {% endfor %}
   </select>
+  <select name="country">
+    <option value="">All countries</option>
+    {% for c in countries %}
+      <option value="{{ c.c }}" {% if c.c == country %}selected{% endif %}>{{ c.c or '(none)' }}</option>
+    {% endfor %}
+  </select>
   <button type="submit">Filter</button>
   <a class="btn light" href="/users">Reset</a>
 </form>
 <table>
-  <thead><tr><th>Name</th><th>UPN</th><th>Department</th>
+  <thead><tr><th>Name</th><th>UPN</th><th>Department</th><th>Country</th>
     <th class="num">Assets</th><th class="num">Asset value</th>
     <th class="num">Licences</th><th class="num">Monthly</th><th class="num">Annual</th></tr></thead>
   <tbody>
@@ -24,13 +30,14 @@
           {% if not u.account_enabled %}<span class="tag">disabled</span>{% endif %}</td>
       <td class="mono">{{ u.upn }}</td>
       <td>{{ u.department or '' }}</td>
+      <td>{{ u.country or '' }}</td>
       <td class="num">{{ u.asset_count }}</td>
       <td class="num">{{ u.asset_total|money }}</td>
       <td class="num">{{ u.sub_count }}</td>
       <td class="num">{{ u.monthly_total|money }}</td>
       <td class="num">{{ (u.monthly_total * 12)|money }}</td></tr>
   {% else %}
-    <tr><td colspan="8" class="empty">No people yet &mdash; run an Entra ID sync from <a href="/settings/entra">Settings</a>.</td></tr>
+    <tr><td colspan="9" class="empty">No people yet &mdash; run an Entra ID sync from <a href="/settings/entra">Settings</a>.</td></tr>
   {% endfor %}
   </tbody>
 </table>

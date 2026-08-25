@@ -1,0 +1,62 @@
+{% extends "settings_base.html" %}
+{% block title %}Licences &middot; ITAM{% endblock %}
+{% block admin %}
+<h2>Entra ID licences <span class="count">{{ licences|length }}</span></h2>
+<p class="meta">What the tenant owns and who holds it, read straight from Entra.
+  Last sync: {{ (last.last or 'never')[:16].replace('T',' ') }}.</p>
+
+<div class="cards">
+  <div class="card"><span class="label">Seats purchased</span>
+    <span class="big">{{ totals.prepaid }}</span></div>
+  <div class="card"><span class="label">Seats assigned</span>
+    <span class="big">{{ totals.consumed }}</span>
+    <span class="sub">{{ totals.prepaid - totals.consumed }} unused</span></div>
+  <div class="card"><span class="label">On disabled accounts</span>
+    <span class="big">{{ reclaimable|length }}</span>
+    <span class="sub">reclaimable straight away</span></div>
+</div>
+
+{% if not cfg.configured %}
+<div class="warn"><strong>Entra ID is not configured</strong> &mdash; set the
+  credentials under <a href="/settings/entra">Entra ID</a> first.</div>
+{% endif %}
+
+<form method="post" action="/settings/licences/sync" class="inline-form">
+  <button type="submit" {% if not cfg.configured %}disabled{% endif %}>Check licences in Entra</button>
+  <span class="hint">Needs <span class="mono">Organization.Read.All</span> on top of
+    <span class="mono">User.Read.All</span>.</span>
+</form>
+
+{% if reclaimable %}
+<div class="warn">
+  <strong>{{ reclaimable|length }} licence(s) assigned to disabled accounts.</strong>
+  You are paying for seats nobody can use:
+  <ul>{% for r in reclaimable %}<li>{{ r.display_name }} &rarr; {{ r.person }}
+    <span class="mono">({{ r.upn }})</span></li>{% endfor %}</ul>
+</div>
+{% endif %}
+
+<table>
+  <thead><tr><th>Licence</th><th>String ID</th><th class="num">Purchased</th>
+    <th class="num">Assigned</th><th class="num">Unused</th><th class="num">Held by synced people</th></tr></thead>
+  <tbody>
+  {% for l in licences %}
+    <tr>
+      <td><a href="/settings/licences/{{ l.sku_id }}">{{ l.display_name }}</a></td>
+      <td class="mono">{{ l.sku_part_number }}</td>
+      <td class="num">{{ l.prepaid }}</td>
+      <td class="num">{{ l.consumed }}</td>
+      <td class="num">{% if l.prepaid - l.consumed > 0 %}<strong>{{ l.prepaid - l.consumed }}</strong>
+          {% else %}{{ l.prepaid - l.consumed }}{% endif %}</td>
+      <td class="num">{{ l.held_here }}</td></tr>
+  {% else %}
+    <tr><td colspan="6" class="empty">No licences yet &mdash; run a check.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="hint">&ldquo;Assigned&rdquo; is Entra's own count for the whole tenant.
+  &ldquo;Held by synced people&rdquo; counts only those matching a user in ITAM, so a
+  gap between the two means licensed accounts your
+  <span class="mono">ENTRA_USER_FILTER</span> leaves out &mdash; guests and service
+  accounts, typically.</p>
+{% endblock %}

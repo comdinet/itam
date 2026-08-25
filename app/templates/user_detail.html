@@ -6,6 +6,8 @@
   {% if not u.account_enabled %}<span class="tag">disabled account</span>{% endif %}</h1>
 <p class="meta mono">{{ u.upn }}</p>
 <p class="meta">{{ u.job_title or 'No job title' }} &middot; {{ u.department or 'No department' }}
+   &middot; {{ u.country or 'No country' }}
+   {%- if u.usage_location %} &middot; usage location {{ u.usage_location }}{% endif %}
    &middot; source: {{ u.source }}</p>
 
 <div class="cards">
@@ -50,6 +52,21 @@
   <button type="submit">Assign</button>
   {% if not spare %}<span class="hint">No spare assets in stock.</span>{% endif %}
 </form>
+
+<h2>Entra ID licences</h2>
+<table>
+  <thead><tr><th>Licence</th><th>String ID</th></tr></thead>
+  <tbody>
+  {% for l in entra_licences %}
+    <tr><td><a href="/settings/licences/{{ l.sku_id }}">{{ l.display_name }}</a></td>
+        <td class="mono">{{ l.sku_part_number }}</td></tr>
+  {% else %}
+    <tr><td colspan="2" class="empty">None, or licences have not been checked yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="hint">Read from Entra. Separate from the subscriptions below, which are
+  what you track and cost here.</p>
 
 <h2>Subscriptions</h2>
 <table>

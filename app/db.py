@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS users (
     department     TEXT,
     entra_id       TEXT,
     account_enabled INTEGER NOT NULL DEFAULT 1,
+    country        TEXT,
+    usage_location TEXT,
     source         TEXT NOT NULL DEFAULT 'manual',
     synced_at      TEXT
 );
@@ -56,6 +58,25 @@ CREATE TABLE IF NOT EXISTS assets (
     external_id  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_assets_upn ON assets(assigned_upn);
+
+-- Licences the tenant owns, straight from Entra. Keyed on the SKU id the
+-- tenant reports; the string id (skuPartNumber) is what names are matched on,
+-- because published GUID lists disagree with each other.
+CREATE TABLE IF NOT EXISTS licenses (
+    sku_id          TEXT PRIMARY KEY,
+    sku_part_number TEXT,
+    display_name    TEXT,
+    prepaid         INTEGER NOT NULL DEFAULT 0,
+    consumed        INTEGER NOT NULL DEFAULT 0,
+    synced_at       TEXT
+);
+
+CREATE TABLE IF NOT EXISTS user_licenses (
+    upn    TEXT NOT NULL REFERENCES users(upn) ON DELETE CASCADE,
+    sku_id TEXT NOT NULL REFERENCES licenses(sku_id) ON DELETE CASCADE,
+    PRIMARY KEY (upn, sku_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_licenses_sku ON user_licenses(sku_id);
 
 -- Entra ID groups and their membership.
 CREATE TABLE IF NOT EXISTS groups (
@@ -201,6 +222,12 @@ def init_db():
         cols = [r["name"] for r in conn.execute("PRAGMA table_info(assets)")]
         if "external_id" not in cols:
             conn.execute("ALTER TABLE assets ADD COLUMN external_id TEXT")
+
+        # Migration: country and usage location arrived after the first release.
+        ucols = [r["name"] for r in conn.execute("PRAGMA table_info(users)")]
+        for col in ("country", "usage_location"):
+            if col not in ucols:
+                conn.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT")
         # NULLs repeat freely in a SQLite unique index, so only real ids are
         # constrained - which is what makes webhook retries idempotent.
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_assets_external "
