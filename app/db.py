@@ -29,12 +29,32 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE TABLE IF NOT EXISTS auth_users (
-    username      TEXT PRIMARY KEY,
-    password_hash TEXT NOT NULL,
-    is_admin      INTEGER NOT NULL DEFAULT 0,
-    must_change   INTEGER NOT NULL DEFAULT 0,
-    created_at    TEXT,
-    last_login    TEXT
+    username       TEXT PRIMARY KEY,
+    password_hash  TEXT NOT NULL,
+    is_admin       INTEGER NOT NULL DEFAULT 0,
+    must_change    INTEGER NOT NULL DEFAULT 0,
+    created_at     TEXT,
+    last_login     TEXT,
+    totp_secret    TEXT,
+    totp_enabled   INTEGER NOT NULL DEFAULT 0,
+    totp_last_step INTEGER
+);
+
+-- Single-use codes for when the authenticator app is gone.
+CREATE TABLE IF NOT EXISTS auth_recovery_codes (
+    username  TEXT NOT NULL REFERENCES auth_users(username) ON DELETE CASCADE,
+    code_hash TEXT NOT NULL,
+    used_at   TEXT,
+    PRIMARY KEY (username, code_hash)
+);
+
+-- Holds a sign-in that passed the password step and still owes a second
+-- factor. Short lived, so an abandoned half-login cannot be resumed later.
+CREATE TABLE IF NOT EXISTS auth_2fa_pending (
+    token      TEXT PRIMARY KEY,
+    username   TEXT NOT NULL REFERENCES auth_users(username) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS auth_sessions (
@@ -222,6 +242,14 @@ def init_db():
         cols = [r["name"] for r in conn.execute("PRAGMA table_info(assets)")]
         if "external_id" not in cols:
             conn.execute("ALTER TABLE assets ADD COLUMN external_id TEXT")
+
+        # Migration: two-factor columns arrived after the first release.
+        acols = [r["name"] for r in conn.execute("PRAGMA table_info(auth_users)")]
+        for col, decl in (("totp_secret", "TEXT"),
+                          ("totp_enabled", "INTEGER NOT NULL DEFAULT 0"),
+                          ("totp_last_step", "INTEGER")):
+            if col not in acols:
+                conn.execute(f"ALTER TABLE auth_users ADD COLUMN {col} {decl}")
 
         # Migration: country and usage location arrived after the first release.
         ucols = [r["name"] for r in conn.execute("PRAGMA table_info(users)")]

@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verification code &middot; ITAM</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="centered">
+<main class="signin">
+  <h1>ITAM</h1>
+  <p class="meta">Signing in as <strong>{{ username }}</strong></p>
+  {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+  <form method="post" action="/login/2fa" class="stack">
+    <input type="hidden" name="next" value="{{ next }}">
+    <label>Code from your authenticator app
+      <input name="code" inputmode="numeric" autocomplete="one-time-code"
+             pattern="[0-9]*" maxlength="6" autofocus></label>
+    <button type="submit">Verify</button>
+  </form>
+  <details class="panel" style="margin-top:18px">
+    <summary>Lost your phone?</summary>
+    <form method="post" action="/login/2fa" class="stack">
+      <input type="hidden" name="next" value="{{ next }}">
+      <label>Recovery code
+        <input name="recovery" placeholder="XXXXX-XXXXX" autocomplete="off"></label>
+      <button type="submit">Use recovery code</button>
+    </form>
+    <p class="hint">{{ recovery_left }} unused code(s) left. Each one works once.
+      If you have none, an admin can turn two-factor off for your account.</p>
+  </details>
+</main>
+</body>
+</html>

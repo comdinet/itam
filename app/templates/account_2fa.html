@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Two-factor setup &middot; ITAM{% endblock %}
+{% block body %}
+<p class="crumb"><a href="/account">&larr; My account</a></p>
+<h1>Set up two-factor authentication</h1>
+
+<div class="panel">
+  <p class="meta">1. Scan this with Microsoft Authenticator, Google Authenticator,
+    1Password, or any TOTP app.</p>
+  <div class="qr">{{ qr_svg|safe }}</div>
+  <p class="meta">2. Or enter the key by hand:</p>
+  <pre>{{ secret }}</pre>
+  <p class="hint">6 digits, refreshing every 30 seconds.</p>
+</div>
+
+<div class="panel">
+  <h2 style="margin-top:0">3. Confirm</h2>
+  <form method="post" action="/account/2fa/confirm" class="stack narrow">
+    <label>Code shown in the app now
+      <input name="code" inputmode="numeric" pattern="[0-9]*" maxlength="6"
+             autocomplete="one-time-code" required autofocus></label>
+    <button type="submit">Turn on two-factor</button>
+  </form>
+  <p class="hint">Two-factor is not active until a code from the app matches, so a
+     mis-scanned key cannot lock you out.</p>
+</div>
+{% endblock %}

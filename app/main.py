@@ -18,6 +18,7 @@ from . import api, auth, db, entra, rules
 async def lifespan(app: FastAPI):
     db.init_db()
     auth.purge_expired()
+    auth.purge_pending()
     creds = auth.bootstrap()
     if creds:
         bar = "=" * 66
@@ -38,6 +39,7 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 
 PUBLIC_PATHS = ("/login", "/static", "/favicon.ico", "/healthz", "/api/")
+COOKIE_2FA = "itam_2fa"
 
 
 @app.middleware("http")
@@ -64,12 +66,31 @@ async def require_login(request: Request, call_next):
         return RedirectResponse("/account?msg=Please+set+a+new+password+to+continue",
                                 status_code=303)
 
+    # When two-factor is mandatory, nothing else is reachable until it is on.
+    if (auth.require_2fa() and not user["totp_enabled"]
+            and not path.startswith("/account") and not path.startswith("/logout")):
+        return RedirectResponse(
+            "/account?msg=Two-factor+authentication+is+required+-+set+it+up+to+continue",
+            status_code=303)
+
     request.state.user = user
     return await call_next(request)
 
 
 def today() -> str:
     return datetime.date.today().isoformat()
+
+
+def qr_svg(data: str) -> str:
+    """Inline SVG QR code. SVG keeps it dependency-light - no image library."""
+    import io
+    import qrcode
+    import qrcode.image.svg
+    img = qrcode.make(data, image_factory=qrcode.image.svg.SvgPathImage, box_size=10, border=2)
+    buf = io.BytesIO()
+    img.save(buf)
+    svg = buf.getvalue().decode()
+    return svg[svg.index("<svg"):]
 
 
 def render(request: Request, name: str, **ctx):
@@ -139,26 +160,159 @@ def login_submit(request: Request, username: str = Form(""), password: str = For
     if locked:
         return back(f"/login?next={quote(target, safe='')}",
                     f"Too many attempts - try again in {locked} minute(s)")
-    token, user = auth.login(username, password)
-    if not token:
+    user = auth.check_credentials(username, password)
+    if not user:
         return back(f"/login?next={quote(target, safe='')}", "Incorrect username or password")
+
+    if user["totp_enabled"]:
+        pending = auth.start_pending(user["username"])
+        resp = RedirectResponse(f"/login/2fa?next={quote(target, safe='')}", status_code=303)
+        resp.set_cookie(COOKIE_2FA, pending, httponly=True, samesite="lax",
+                        secure=auth.COOKIE_SECURE,
+                        max_age=auth.PENDING_MINUTES * 60, path="/")
+        return resp
+
     resp = RedirectResponse(target, status_code=303)
-    resp.set_cookie(auth.COOKIE, token, httponly=True, samesite="lax",
-                    secure=auth.COOKIE_SECURE, max_age=auth.SESSION_HOURS * 3600, path="/")
+    resp.set_cookie(auth.COOKIE, auth.issue_session(user["username"]), httponly=True,
+                    samesite="lax", secure=auth.COOKIE_SECURE,
+                    max_age=auth.SESSION_HOURS * 3600, path="/")
+    return resp
+
+
+@app.get("/login/2fa", response_class=HTMLResponse)
+def login_2fa_page(request: Request, next: str = "/"):
+    user = auth.pending_user(request.cookies.get(COOKIE_2FA))
+    if not user:
+        return RedirectResponse("/login?msg=That+sign-in+expired+-+please+start+again",
+                                status_code=303)
+    return templates.TemplateResponse(request, "login_2fa.html", {
+        "flash": request.query_params.get("msg"), "next": safe_next(next),
+        "username": user["username"], "me": None,
+        "recovery_left": auth.recovery_codes_left(user["username"])})
+
+
+@app.post("/login/2fa")
+def login_2fa_submit(request: Request, code: str = Form(""), recovery: str = Form(""),
+                     next: str = Form("/")):
+    pending_token = request.cookies.get(COOKIE_2FA)
+    user = auth.pending_user(pending_token)
+    target = safe_next(next)
+    if not user:
+        return back("/login", "That sign-in expired - please start again")
+
+    username = user["username"]
+    locked = auth.is_locked(username)
+    if locked:
+        return back("/login", f"Too many attempts - try again in {locked} minute(s)")
+
+    step = auth.verify_totp(user["totp_secret"], code, user["totp_last_step"])
+    used_recovery = False
+    if step is None:
+        if recovery.strip() and auth.use_recovery_code(username, recovery):
+            used_recovery = True
+        elif auth.totp_already_used(user["totp_secret"], code, user["totp_last_step"]):
+            # Right code, spent window. Not a failed attempt, so it does not
+            # count toward the lockout.
+            return back(f"/login/2fa?next={quote(target, safe='')}",
+                        "That code was already used - wait for the next one")
+        else:
+            auth.record_failure(username)
+            return back(f"/login/2fa?next={quote(target, safe='')}",
+                        "That code is not valid")
+
+    if step is not None:
+        # Remember the step so the same code cannot be replayed.
+        db.execute("UPDATE auth_users SET totp_last_step = ? WHERE username = ?",
+                   (step, username))
+    auth.clear_failures(username)
+    auth.clear_pending(pending_token)
+
+    msg = target
+    if used_recovery:
+        left = auth.recovery_codes_left(username)
+        msg = f"/account?msg=Recovery+code+used+-+{left}+left"
+
+    resp = RedirectResponse(msg, status_code=303)
+    resp.set_cookie(auth.COOKIE, auth.issue_session(username), httponly=True,
+                    samesite="lax", secure=auth.COOKIE_SECURE,
+                    max_age=auth.SESSION_HOURS * 3600, path="/")
+    resp.delete_cookie(COOKIE_2FA, path="/")
     return resp
 
 
 @app.post("/logout")
 def logout(request: Request):
     auth.logout(request.cookies.get(auth.COOKIE))
+    auth.clear_pending(request.cookies.get(COOKIE_2FA))
     resp = RedirectResponse("/login?msg=Signed+out", status_code=303)
     resp.delete_cookie(auth.COOKIE, path="/")
+    resp.delete_cookie(COOKIE_2FA, path="/")
     return resp
 
 
 @app.get("/account", response_class=HTMLResponse)
 def account(request: Request):
-    return render(request, "account.html")
+    me = request.state.user
+    return render(request, "account.html",
+                  recovery_left=auth.recovery_codes_left(me["username"]),
+                  require_2fa=auth.require_2fa())
+
+
+@app.post("/account/2fa/start")
+def totp_start(request: Request):
+    """Generate a secret and show the QR. Not enabled until a code confirms it."""
+    me = request.state.user
+    auth.begin_totp_setup(me["username"])
+    return back("/account/2fa/setup")
+
+
+@app.get("/account/2fa/setup", response_class=HTMLResponse)
+def totp_setup(request: Request):
+    me = request.state.user
+    user = auth.get_user(me["username"])
+    if not user["totp_secret"] or user["totp_enabled"]:
+        return back("/account", "Nothing to set up")
+    secret = user["totp_secret"]
+    return render(request, "account_2fa.html", secret=secret,
+                  uri=auth.totp_uri(user["username"], secret),
+                  qr_svg=qr_svg(auth.totp_uri(user["username"], secret)))
+
+
+@app.post("/account/2fa/confirm")
+def totp_confirm(request: Request, code: str = Form("")):
+    me = request.state.user
+    if not auth.confirm_totp(me["username"], code):
+        user = auth.get_user(me["username"])
+        if auth.totp_already_used(user["totp_secret"], code, user["totp_last_step"]):
+            return back("/account/2fa/setup", "That code was already used - wait for the next one")
+        return back("/account/2fa/setup",
+                    "That code did not match - check the clock on your phone and try the next one")
+    codes = auth.issue_recovery_codes(me["username"])
+    return render(request, "account_2fa_codes.html", codes=codes,
+                  flash="Two-factor authentication is on")
+
+
+@app.post("/account/2fa/disable")
+def totp_disable(request: Request, current: str = Form("")):
+    me = request.state.user
+    if auth.require_2fa():
+        return back("/account", "Two-factor authentication is required and cannot be turned off")
+    if not auth.verify_password(current, me["password_hash"]):
+        return back("/account", "Current password is incorrect")
+    auth.disable_totp(me["username"])
+    return back("/account", "Two-factor authentication turned off")
+
+
+@app.post("/account/2fa/recovery")
+def totp_recovery(request: Request, current: str = Form("")):
+    me = request.state.user
+    if not auth.verify_password(current, me["password_hash"]):
+        return back("/account", "Current password is incorrect")
+    if not me["totp_enabled"]:
+        return back("/account", "Two-factor authentication is not on")
+    codes = auth.issue_recovery_codes(me["username"])
+    return render(request, "account_2fa_codes.html", codes=codes,
+                  flash="New recovery codes - the old ones no longer work")
 
 
 @app.post("/account/password")
@@ -217,6 +371,19 @@ def account_delete(request: Request, username: str = Form(...)):
         return back("/settings/accounts", "Cannot delete the last admin account")
     auth.delete_user(username)
     return back("/settings/accounts", f"Account '{username}' deleted")
+
+
+@app.post("/settings/accounts/2fa-reset")
+def account_2fa_reset(request: Request, username: str = Form(...)):
+    if not require_admin(request):
+        return back("/settings/accounts", "Admin accounts only")
+    username = username.strip().lower()
+    if not auth.get_user(username):
+        return back("/settings/accounts", "No such account")
+    auth.disable_totp(username)
+    auth.revoke_all(username)
+    return back("/settings/accounts",
+                f"Two-factor turned off for '{username}'; they must set it up again")
 
 
 @app.post("/settings/accounts/reset")

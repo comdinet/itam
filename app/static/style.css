@@ -116,3 +116,8 @@ body.centered { display: flex; align-items: center; justify-content: center; min
 .attr { font-size: 12px; color: var(--muted); background: var(--bg);
         border: 1px solid var(--line); border-radius: 99px; padding: 1px 8px; }
 .attr-k { color: var(--ink); font-weight: 600; margin-right: 5px; }
+
+/* --- two-factor setup --------------------------------------------------- */
+.qr { background: #fff; padding: 12px; border-radius: 10px; display: inline-block;
+      border: 1px solid var(--line); }
+.qr svg { display: block; width: 200px; height: 200px; }

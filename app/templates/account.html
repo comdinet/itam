@@ -11,6 +11,43 @@
 {% endif %}
 
 <div class="panel">
+  <h2 style="margin-top:0">Two-factor authentication</h2>
+  {% if me.totp_enabled %}
+    <p class="ok">On. Sign-in asks for a code from your authenticator app.</p>
+    <p class="meta">{{ recovery_left }} unused recovery code(s).
+      {% if recovery_left == 0 %}<strong>None left</strong> &mdash; generate a new set,
+      or you will need an admin if you lose your phone.{% endif %}</p>
+    <form method="post" action="/account/2fa/recovery" class="stack narrow">
+      <label>Current password
+        <input type="password" name="current" autocomplete="current-password" required></label>
+      <button type="submit">Generate new recovery codes</button>
+    </form>
+    {% if not require_2fa %}
+    <form method="post" action="/account/2fa/disable" class="stack narrow"
+          onsubmit="return confirm('Turn off two-factor authentication?')">
+      <label>Current password
+        <input type="password" name="current" autocomplete="current-password" required></label>
+      <button class="link danger">Turn off two-factor</button>
+    </form>
+    {% else %}
+      <p class="hint">Two-factor is required here, so it cannot be turned off.</p>
+    {% endif %}
+  {% else %}
+    {% if require_2fa %}
+      <div class="warn"><strong>Two-factor is required.</strong>
+        Set it up to use the rest of the app.</div>
+    {% else %}
+      <p class="meta">Off. A password alone is enough to sign in as you.</p>
+    {% endif %}
+    <form method="post" action="/account/2fa/start">
+      <button type="submit">Set up two-factor authentication</button>
+    </form>
+    <p class="hint">Works with Microsoft Authenticator, Google Authenticator,
+      1Password and any other TOTP app.</p>
+  {% endif %}
+</div>
+
+<div class="panel">
   <h2 style="margin-top:0">Change password</h2>
   <form method="post" action="/account/password" class="stack narrow">
     {% if not me.must_change %}

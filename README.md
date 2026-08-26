@@ -193,12 +193,47 @@ Admins manage them under **Accounts**:
   (assets, subscriptions, assignments, Entra sync).
 - **Reset someone's password** — signs out their sessions and forces a change.
 
-Under the hood: passwords are salted **PBKDF2-HMAC-SHA256** (400,000 iterations,
-stdlib only — no password is ever stored recoverably). Sessions live in the
-database, so they expire and can be revoked server-side; the cookie holds only
-an opaque random token and is `HttpOnly` + `SameSite=Lax`. Changing a password
-revokes that account's other sessions. Repeated failed sign-ins lock an account
-for 15 minutes.
+### Two-factor authentication
+
+Any account can add TOTP two-factor from **My account** — the standard
+6-digit / 30-second codes, so Microsoft Authenticator, Google Authenticator,
+1Password and the rest all work. Scan the QR code, or type the key in by hand.
+
+Two-factor only switches on once a code from the app matches, so a mis-scanned
+key cannot lock you out. Turning it on issues **8 single-use recovery codes**,
+shown once and stored only as hashes.
+
+- **Lost phone, has a recovery code** → use it on the sign-in screen.
+- **Lost phone, no codes left** → an admin clears it under
+  **Settings → Accounts → Reset 2FA**, which also signs that account out
+  everywhere.
+- **Require it for everyone** → set `ITAM_REQUIRE_2FA=1`. Accounts without it
+  can reach only their own account page until they set it up, and nobody can
+  then turn it off.
+
+Set `ITAM_TOTP_ISSUER` to change the name shown in the authenticator app; it
+defaults to `ITAM`.
+
+### How the sign-in is protected
+
+Passwords are salted **PBKDF2-HMAC-SHA256** (400,000 iterations, stdlib only —
+no password is ever stored recoverably). Sessions live in the database, so they
+expire and can be revoked server-side; the cookie holds only an opaque random
+token and is `HttpOnly` + `SameSite=Lax`. Changing a password revokes that
+account's other sessions. Repeated failed sign-ins lock an account for 15
+minutes.
+
+TOTP specifics worth knowing:
+
+- Codes are accepted one window either side of now, for clock drift. Anything
+  further out is refused.
+- A code that has been used **cannot be replayed**, even inside its own 30
+  seconds. Signing in twice in the same window gives "that code was already
+  used — wait for the next one", and that message does **not** count toward the
+  lockout, because it is not a failed guess.
+- The password step alone never issues a session for a 2FA account. It hands
+  out a separate short-lived token that expires in 5 minutes and is good for
+  nothing but the second step.
 
 Set `ITAM_COOKIE_SECURE=1` when you put this behind HTTPS.
 

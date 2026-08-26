@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Recovery codes &middot; ITAM{% endblock %}
+{% block body %}
+<h1>Recovery codes</h1>
+{% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+<div class="warn">
+  <strong>Save these now &mdash; they are not shown again.</strong>
+  Each works once, and only if your authenticator app is unavailable.
+  <pre>{% for c in codes %}{{ c }}
+{% endfor %}</pre>
+  Only hashes are stored, so they cannot be recovered. Lost them? Generate a new
+  set from <a href="/account">My account</a>.
+</div>
+<p><a class="btn" href="/account">Done</a></p>
+{% endblock %}

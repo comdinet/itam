@@ -7,7 +7,7 @@
 
 <table>
   <thead><tr><th>Username</th><th>Role</th><th>Created</th><th>Last sign-in</th>
-    <th>Status</th><th></th></tr></thead>
+    <th>Status</th><th>2FA</th><th></th></tr></thead>
   <tbody>
   {% for a in accounts %}
     <tr>
@@ -18,7 +18,15 @@
       <td>{{ (a.last_login or 'never')[:16].replace('T', ' ') }}</td>
       <td>{% if a.must_change %}<span class="tag">must set password</span>
           {% else %}active{% endif %}</td>
+      <td>{% if a.totp_enabled %}<span class="ok">on</span>
+          {% else %}<span class="tag">off</span>{% endif %}</td>
       <td class="row-actions">
+        {% if a.totp_enabled %}
+        <form method="post" action="/settings/accounts/2fa-reset"
+              onsubmit="return confirm('Turn off two-factor for {{ a.username }}? They will set it up again at next sign-in.')">
+          <input type="hidden" name="username" value="{{ a.username }}">
+          <button class="link">Reset 2FA</button></form>
+        {% endif %}
         {% if a.username != me.username %}
         <form method="post" action="/settings/accounts/delete"
               onsubmit="return confirm('Delete account {{ a.username }}?')">
