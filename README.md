@@ -214,6 +214,44 @@ shown once and stored only as hashes.
 Set `ITAM_TOTP_ISSUER` to change the name shown in the authenticator app; it
 defaults to `ITAM`.
 
+### Single sign-on with Entra ID (SAML 2.0)
+
+Optional, and it sits alongside local accounts rather than replacing them.
+Configure it and the sign-in page grows a **Sign in with Microsoft** button;
+**Settings → SSO** shows the exact values to paste into Entra and what is
+currently configured.
+
+In Entra: **Enterprise applications → New application → Create your own →
+Set up single sign-on → SAML**, then give it
+
+| Entra field | Value |
+|---|---|
+| Identifier (Entity ID) | `https://<your host>/saml/metadata` |
+| Reply URL (ACS) | `https://<your host>/saml/acs` |
+| Sign on URL | `https://<your host>/saml/login` |
+
+and copy back into `.env`:
+
+```
+ITAM_SAML_SP_BASE_URL=https://<your host>
+ITAM_SAML_IDP_ENTITY_ID=<Microsoft Entra Identifier>
+ITAM_SAML_IDP_SSO_URL=<Login URL>
+ITAM_SAML_IDP_CERT=<the Base64 certificate>
+```
+
+`/saml/metadata` serves SP metadata if you would rather upload it.
+
+By default an SSO sign-in only works for an account that **already exists** —
+otherwise anyone in the tenant who finds the URL gets in. Set
+`ITAM_SAML_AUTO_PROVISION=1` to create accounts on first sign-in, and
+`ITAM_SAML_ADMIN_GROUP` to grant admin from a group claim.
+
+SSO accounts satisfy `ITAM_REQUIRE_2FA` on their own, since Entra has already
+applied whatever MFA policy you have there.
+
+**Keep a local admin account with a password and two-factor.** If Entra is
+unreachable or the app registration is changed, that is how you get back in.
+
 ### How the sign-in is protected
 
 Passwords are salted **PBKDF2-HMAC-SHA256** (400,000 iterations, stdlib only —
@@ -234,6 +272,23 @@ TOTP specifics worth knowing:
 - The password step alone never issues a session for a 2FA account. It hands
   out a separate short-lived token that expires in 5 minutes and is good for
   nothing but the second step.
+
+SAML specifics, all of which are covered by tests that craft real signed
+assertions and try to get past them:
+
+- Assertions must be signed, and the signature is checked against the IdP
+  certificate you configured. Unsigned, signed-by-another-key, and
+  tampered-after-signing are all refused.
+- Audience, destination and issuer must match; `NotBefore` / `NotOnOrAfter`
+  are enforced.
+- A response must answer an `AuthnRequest` this app issued. Unsolicited
+  assertions are refused unless `ITAM_SAML_ALLOW_IDP_INITIATED=1`, and each
+  request id is good for exactly one response.
+- Assertion ids are recorded for 24 hours, so a captured response cannot be
+  replayed.
+- The audience is built from `ITAM_SAML_SP_BASE_URL`, never from the `Host`
+  header, so a forwarded header cannot change what an assertion is validated
+  against.
 
 Set `ITAM_COOKIE_SECURE=1` when you put this behind HTTPS.
 

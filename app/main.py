@@ -3,22 +3,25 @@ import csv
 import datetime
 import io
 import os
+import secrets
 from contextlib import asynccontextmanager
 
 from urllib.parse import quote, urlparse
 
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse,
+                               Response, StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import api, auth, db, entra, rules
+from . import api, auth, db, entra, rules, saml
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
     auth.purge_expired()
     auth.purge_pending()
+    saml.purge()
     creds = auth.bootstrap()
     if creds:
         bar = "=" * 66
@@ -38,7 +41,7 @@ templates.env.globals["categories"] = db.categories
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 
-PUBLIC_PATHS = ("/login", "/static", "/favicon.ico", "/healthz", "/api/")
+PUBLIC_PATHS = ("/login", "/static", "/favicon.ico", "/healthz", "/api/", "/saml/")
 COOKIE_2FA = "itam_2fa"
 
 
@@ -67,7 +70,7 @@ async def require_login(request: Request, call_next):
                                 status_code=303)
 
     # When two-factor is mandatory, nothing else is reachable until it is on.
-    if (auth.require_2fa() and not user["totp_enabled"]
+    if (auth.require_2fa() and not user["totp_enabled"] and not user["sso"]
             and not path.startswith("/account") and not path.startswith("/logout")):
         return RedirectResponse(
             "/account?msg=Two-factor+authentication+is+required+-+set+it+up+to+continue",
@@ -133,6 +136,126 @@ def healthz():
     return {"status": "ok"}
 
 
+# --- SAML single sign-on -------------------------------------------------
+
+COOKIE_SAML = "itam_saml"
+
+
+def _saml_request(request: Request, post_data: dict | None = None) -> dict:
+    """The request shape python3-saml expects, built from the real request.
+
+    http_host comes from the configured base URL rather than the Host header:
+    a forwarded header must never decide what audience an assertion is checked
+    against.
+    """
+    from urllib.parse import urlparse
+    parsed = urlparse(saml.base_url())
+    return {
+        "https": "on" if parsed.scheme == "https" else "off",
+        "http_host": parsed.netloc,
+        "server_port": None,
+        "script_name": request.url.path,
+        "get_data": dict(request.query_params),
+        "post_data": post_data or {},
+    }
+
+
+def _saml_auth(request: Request, post_data: dict | None = None):
+    from onelogin.saml2.auth import OneLogin_Saml2_Auth
+    return OneLogin_Saml2_Auth(_saml_request(request, post_data), saml.settings())
+
+
+@app.get("/saml/metadata")
+def saml_metadata():
+    """SP metadata, for uploading into the Entra enterprise application."""
+    if not saml.is_configured():
+        return JSONResponse({"error": "SAML is not configured."}, status_code=404)
+    from onelogin.saml2.settings import OneLogin_Saml2_Settings
+    settings = OneLogin_Saml2_Settings(saml.settings(), sp_validation_only=True)
+    metadata = settings.get_sp_metadata()
+    errors = settings.validate_metadata(metadata)
+    if errors:
+        return JSONResponse({"error": "Invalid SP metadata", "detail": errors},
+                            status_code=500)
+    return Response(content=metadata, media_type="application/xml")
+
+
+@app.get("/saml/login")
+def saml_login(request: Request, next: str = "/"):
+    if not saml.is_configured():
+        return back("/login", "Single sign-on is not configured")
+    target = safe_next(next)
+    a = _saml_auth(request)
+    url = a.login(return_to=target)
+    request_id = a.get_last_request_id()
+    saml.remember_request(request_id, target)
+
+    resp = RedirectResponse(url, status_code=303)
+    resp.set_cookie(COOKIE_SAML, request_id, httponly=True, samesite="lax",
+                    secure=auth.COOKIE_SECURE,
+                    max_age=saml.REQUEST_MINUTES * 60, path="/")
+    return resp
+
+
+@app.post("/saml/acs")
+async def saml_acs(request: Request):
+    """Where Entra posts the assertion."""
+    if not saml.is_configured():
+        return back("/login", "Single sign-on is not configured")
+
+    form = await request.form()
+    post_data = {k: v for k, v in form.items() if isinstance(v, str)}
+
+    outstanding = saml.take_request(request.cookies.get(COOKIE_SAML))
+    request_id = outstanding["request_id"] if outstanding else None
+    if not request_id and not saml.allow_unsolicited():
+        return back("/login", "That sign-in did not start here - please try again")
+
+    a = _saml_auth(request, post_data)
+    a.process_response(request_id=request_id)
+    errors = a.get_errors()
+    if errors:
+        detail = a.get_last_error_reason() or ", ".join(errors)
+        return back("/login", f"Single sign-on failed: {detail}"[:200])
+    if not a.is_authenticated():
+        return back("/login", "Single sign-on did not authenticate")
+
+    # Replay: a correctly signed assertion is still only good once.
+    assertion_id = a.get_last_assertion_id()
+    if assertion_id:
+        if saml.already_seen(assertion_id):
+            return back("/login", "That sign-in has already been used")
+        saml.mark_seen(assertion_id)
+
+    attributes = a.get_attributes() or {}
+    username = saml.pick_username(a.get_nameid(), attributes)
+    if not username:
+        return back("/login", "The sign-in carried no username claim")
+
+    user = auth.get_user(username)
+    if not user:
+        if not saml.auto_provision():
+            return back("/login",
+                        f"No ITAM account for '{username}' - an admin must create it first")
+        auth.create_user(username, secrets.token_urlsafe(32),
+                         is_admin=saml.is_admin_by_group(attributes))
+        db.execute("UPDATE auth_users SET sso = 1, must_change = 0 WHERE username = ?",
+                   (username,))
+        user = auth.get_user(username)
+    else:
+        db.execute("UPDATE auth_users SET sso = 1 WHERE username = ?", (username,))
+        if saml.admin_group() and saml.is_admin_by_group(attributes) and not user["is_admin"]:
+            db.execute("UPDATE auth_users SET is_admin = 1 WHERE username = ?", (username,))
+
+    target = (outstanding["next_url"] if outstanding else "/") or "/"
+    resp = RedirectResponse(safe_next(target), status_code=303)
+    resp.set_cookie(auth.COOKIE, auth.issue_session(username), httponly=True,
+                    samesite="lax", secure=auth.COOKIE_SECURE,
+                    max_age=auth.SESSION_HOURS * 3600, path="/")
+    resp.delete_cookie(COOKIE_SAML, path="/")
+    return resp
+
+
 # --- sign in / account ---------------------------------------------------
 
 def safe_next(raw: str) -> str:
@@ -149,7 +272,8 @@ def login_page(request: Request, next: str = "/"):
     if auth.current_user(request.cookies.get(auth.COOKIE)):
         return RedirectResponse(safe_next(next), status_code=303)
     return templates.TemplateResponse(request, "login.html", {
-        "flash": request.query_params.get("msg"), "next": safe_next(next), "me": None})
+        "flash": request.query_params.get("msg"), "next": safe_next(next), "me": None,
+        "sso": saml.is_configured()})
 
 
 @app.post("/login")
@@ -1043,6 +1167,13 @@ def accounts_page(request: Request):
         return HTMLResponse("<h1>403</h1><p>Admin accounts only.</p>", status_code=403)
     return render(request, "settings_accounts.html", accounts=auth.list_users(),
                   section="accounts")
+
+
+@app.get("/settings/sso", response_class=HTMLResponse)
+def settings_sso(request: Request):
+    if not require_admin(request):
+        return HTMLResponse("<h1>403</h1><p>Admin accounts only.</p>", status_code=403)
+    return render(request, "settings_sso.html", cfg=saml.config_status(), section="sso")
 
 
 # --- settings: API keys and field mapping -------------------------------

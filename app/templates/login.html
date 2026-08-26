@@ -11,6 +11,10 @@
   <h1>ITAM</h1>
   <p class="meta">IT asset &amp; subscription tracking</p>
   {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+  {% if sso %}
+  <a class="btn sso" href="/saml/login?next={{ next|urlencode }}">Sign in with Microsoft</a>
+  <div class="or"><span>or sign in with a local account</span></div>
+  {% endif %}
   <form method="post" action="/login" class="stack">
     <input type="hidden" name="next" value="{{ next }}">
     <label>Username

@@ -208,6 +208,9 @@ if [ "${KEEP_ENV:-0}" = "0" ]; then
         echo "  Needs Graph application permission User.Read.All with admin consent."
     fi
 
+    # Tight umask for the secrets file only - restored straight after, or the
+    # data directory inherits mode 700 and the container cannot traverse it.
+    OLD_UMASK="$(umask)"
     umask 077
     cat > "$ENV_FILE" <<ENVEOF
 # Written by setup.sh - plain KEY=value, no "export".
@@ -232,6 +235,7 @@ ENTRA_USER_FILTER=
 ITAM_CURRENCY=$CURRENCY
 ITAM_DB=/data/itam.db
 ENVEOF
+    umask "$OLD_UMASK"
     chmod 600 "$ENV_FILE"
     ok "Wrote $ENV_FILE (mode 600)"
 else

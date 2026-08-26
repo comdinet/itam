@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS auth_users (
     last_login     TEXT,
     totp_secret    TEXT,
     totp_enabled   INTEGER NOT NULL DEFAULT 0,
-    totp_last_step INTEGER
+    totp_last_step INTEGER,
+    sso            INTEGER NOT NULL DEFAULT 0
 );
 
 -- Single-use codes for when the authenticator app is gone.
@@ -46,6 +47,23 @@ CREATE TABLE IF NOT EXISTS auth_recovery_codes (
     code_hash TEXT NOT NULL,
     used_at   TEXT,
     PRIMARY KEY (username, code_hash)
+);
+
+-- An AuthnRequest we sent to the IdP. The reply must quote one of these back
+-- in InResponseTo, which is what stops a stray or injected assertion being
+-- accepted as a sign-in.
+CREATE TABLE IF NOT EXISTS saml_requests (
+    request_id TEXT PRIMARY KEY,
+    next_url   TEXT,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+
+-- Assertion ids already consumed, so a captured response cannot be replayed.
+CREATE TABLE IF NOT EXISTS saml_seen (
+    assertion_id TEXT PRIMARY KEY,
+    seen_at      TEXT NOT NULL,
+    expires_at   TEXT NOT NULL
 );
 
 -- Holds a sign-in that passed the password step and still owes a second
@@ -247,7 +265,8 @@ def init_db():
         acols = [r["name"] for r in conn.execute("PRAGMA table_info(auth_users)")]
         for col, decl in (("totp_secret", "TEXT"),
                           ("totp_enabled", "INTEGER NOT NULL DEFAULT 0"),
-                          ("totp_last_step", "INTEGER")):
+                          ("totp_last_step", "INTEGER"),
+                          ("sso", "INTEGER NOT NULL DEFAULT 0")):
             if col not in acols:
                 conn.execute(f"ALTER TABLE auth_users ADD COLUMN {col} {decl}")
 

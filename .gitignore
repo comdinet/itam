@@ -14,3 +14,4 @@ certs/
 *.key
 *.crt
 *.pem
+docker-compose.override.yml

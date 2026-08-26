@@ -121,3 +121,9 @@ body.centered { display: flex; align-items: center; justify-content: center; min
 .qr { background: #fff; padding: 12px; border-radius: 10px; display: inline-block;
       border: 1px solid var(--line); }
 .qr svg { display: block; width: 200px; height: 200px; }
+
+/* --- single sign-on ----------------------------------------------------- */
+.btn.sso { display: block; text-align: center; margin-top: 18px; }
+.or { display: flex; align-items: center; gap: 10px; margin: 18px 0 0;
+      color: var(--muted); font-size: 12px; }
+.or::before, .or::after { content: ""; flex: 1; height: 1px; background: var(--line); }

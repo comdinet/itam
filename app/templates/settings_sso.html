@@ -1,0 +1,58 @@
+{% extends "settings_base.html" %}
+{% block title %}Single sign-on &middot; ITAM{% endblock %}
+{% block admin %}
+<h2>SAML single sign-on</h2>
+
+{% if cfg.configured %}
+  <p class="ok">Configured. The sign-in page offers &ldquo;Sign in with Microsoft&rdquo;.</p>
+{% else %}
+  <div class="warn"><strong>Not configured</strong> &mdash; local accounts only.
+    Set the values below in <span class="mono">.env</span> and restart.</div>
+{% endif %}
+
+<h2>What Entra needs from you</h2>
+<p class="meta">In the Entra admin centre create an <strong>Enterprise
+  application</strong> &rarr; <em>Set up single sign-on</em> &rarr; <em>SAML</em>,
+  and enter these two values:</p>
+<table>
+  <tbody>
+    <tr><td><strong>Identifier (Entity ID)</strong></td>
+        <td class="mono">{{ cfg.sp_entity_id or '(set ITAM_SAML_SP_BASE_URL first)' }}</td></tr>
+    <tr><td><strong>Reply URL (ACS)</strong></td>
+        <td class="mono">{{ cfg.acs_url or '(set ITAM_SAML_SP_BASE_URL first)' }}</td></tr>
+    <tr><td><strong>Sign on URL</strong></td>
+        <td class="mono">{{ cfg.metadata_url and (cfg.metadata_url|replace('/saml/metadata','/saml/login')) }}</td></tr>
+  </tbody>
+</table>
+{% if cfg.configured %}
+<p class="meta">Or upload the SP metadata directly:
+  <a href="/saml/metadata">{{ cfg.metadata_url }}</a></p>
+{% endif %}
+
+<h2>What you need from Entra</h2>
+<p class="meta">From the same page, copy these into <span class="mono">.env</span>:</p>
+<pre>ITAM_SAML_SP_BASE_URL=https://your-itam-host
+ITAM_SAML_IDP_ENTITY_ID=&lt;Microsoft Entra Identifier&gt;
+ITAM_SAML_IDP_SSO_URL=&lt;Login URL&gt;
+ITAM_SAML_IDP_CERT=&lt;contents of the Base64 certificate&gt;</pre>
+
+<h2>Current settings</h2>
+<table>
+  <thead><tr><th>Setting</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td>IdP entity ID</td><td class="mono">{{ cfg.idp_entity_id or '(not set)' }}</td></tr>
+    <tr><td>IdP sign-on URL</td><td class="mono">{{ cfg.idp_sso_url or '(not set)' }}</td></tr>
+    <tr><td>IdP certificate</td><td>{{ 'set' if cfg.cert_set else '(not set)' }}</td></tr>
+    <tr><td>Username claim</td><td class="mono">{{ cfg.username_attribute }}</td></tr>
+    <tr><td>Auto-provision new users</td>
+        <td>{{ 'yes' if cfg.auto_provision else 'no - an admin must create the account first' }}</td></tr>
+    <tr><td>Admin group claim</td>
+        <td class="mono">{{ cfg.admin_group or '(none - admin is set by hand)' }}</td></tr>
+    <tr><td>IdP-initiated sign-in</td>
+        <td>{{ 'allowed' if cfg.allow_idp_initiated else 'refused - sign-in must start here' }}</td></tr>
+  </tbody>
+</table>
+<p class="hint">Local accounts keep working alongside single sign-on, which is how
+  you get back in if Entra is unreachable. Keep at least one local admin with a
+  password and two-factor for exactly that.</p>
+{% endblock %}

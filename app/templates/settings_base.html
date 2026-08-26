@@ -10,6 +10,7 @@
   <a href="/settings/rules" {% if section == 'rules' %}class="on"{% endif %}>Rules</a>
   {% if me and me.is_admin %}
     <a href="/settings/accounts" {% if section == 'accounts' %}class="on"{% endif %}>Accounts</a>
+    <a href="/settings/sso" {% if section == 'sso' %}class="on"{% endif %}>SSO</a>
     <a href="/settings/api" {% if section == 'api' %}class="on"{% endif %}>API</a>
   {% endif %}
 </nav>

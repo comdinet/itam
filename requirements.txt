@@ -4,3 +4,4 @@ jinja2
 python-multipart
 httpx
 qrcode
+python3-saml
