@@ -14,7 +14,7 @@ from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse,
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import api, auth, db, entra, rules, saml, settings
+from . import api, auth, db, entra, pricing, rules, saml, settings
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -987,7 +987,17 @@ def device_create_asset(device_id: str):
            VALUES (?,?,0,?,?,?,?)""",
         (name, category, d["serial_number"], notes, upn, today() if upn else None))
     db.execute("UPDATE devices SET asset_id = ? WHERE id = ?", (asset_id, device_id))
-    return back("/settings/devices", "Asset created and linked - set its cost on the Assets page")
+
+    # A pricing group covering this specification prices it straight away, so a
+    # machine of a known spec never lands with a cost of zero.
+    price = pricing.price_for_asset(asset_id)
+    if price:
+        db.execute("UPDATE assets SET cost_cents = ? WHERE id = ?", (price, asset_id))
+        return back("/settings/devices",
+                    f"Asset created, linked and priced at {settings.currency()} "
+                    f"{db.money(price)} from a pricing group")
+    return back("/settings/devices",
+                "Asset created and linked - set its cost on the Assets page")
 
 
 # --- settings: licences (from Entra) ------------------------------------
@@ -1079,6 +1089,93 @@ def licence_detail(request: Request, sku_id: str):
     sub = db.q1("SELECT * FROM subscriptions WHERE sku_id = ?", (sku_id,))
     return render(request, "settings_licence_detail.html", l=lic, holders=holders,
                   sub=sub, section="licences")
+
+
+# --- settings: pricing groups -------------------------------------------
+
+@app.get("/settings/pricing", response_class=HTMLResponse)
+def settings_pricing(request: Request):
+    groups = []
+    for g in pricing.listing():
+        s = pricing.summary(g)
+        groups.append({"g": g, "criteria": s["criteria"], "matched": s["matched"],
+                       "to_change": s["to_change"],
+                       "describe": [pricing.describe(c) for c in s["criteria"]]})
+    return render(request, "settings_pricing.html", groups=groups,
+                  models=pricing.known_models(), section="pricing")
+
+
+@app.post("/settings/pricing/new")
+def pricing_new(name: str = Form(...), price: str = Form("0"), notes: str = Form(""),
+                model: str = Form("")):
+    if not name.strip():
+        return back("/settings/pricing", "Give the group a name")
+    gid = pricing.create(name, db.to_cents(price), notes)
+    # A model is the usual starting point, so offer it on creation.
+    if model.strip():
+        pricing.add_criterion(gid, "model", "eq", model)
+    return back(f"/settings/pricing/{gid}", "Group created - add criteria to narrow it")
+
+
+@app.get("/settings/pricing/{group_id}", response_class=HTMLResponse)
+def pricing_detail(request: Request, group_id: int):
+    group = pricing.get(group_id)
+    if not group:
+        return HTMLResponse("<h1>404</h1><p>No such pricing group.</p>", status_code=404)
+    s = pricing.summary(group)
+    return render(request, "settings_pricing_detail.html", g=group, s=s,
+                  describe=pricing.describe, fields=pricing.FIELDS, ops=pricing.OPS,
+                  attribute_names=pricing.attribute_names(),
+                  models=pricing.known_models(), section="pricing")
+
+
+@app.post("/settings/pricing/{group_id}/edit")
+def pricing_edit(group_id: int, name: str = Form(...), price: str = Form("0"),
+                 notes: str = Form("")):
+    if not pricing.get(group_id):
+        return back("/settings/pricing", "No such group")
+    pricing.update(group_id, name, db.to_cents(price), notes)
+    return back(f"/settings/pricing/{group_id}", "Group updated")
+
+
+@app.post("/settings/pricing/{group_id}/delete")
+def pricing_delete(group_id: int):
+    pricing.delete(group_id)
+    return back("/settings/pricing", "Group deleted - asset prices are left as they are")
+
+
+@app.post("/settings/pricing/{group_id}/criteria/add")
+def pricing_criterion_add(group_id: int, field: str = Form(...), op: str = Form(...),
+                          value: str = Form(""), attr_name: str = Form("")):
+    if not pricing.get(group_id):
+        return back("/settings/pricing", "No such group")
+    if not value.strip():
+        return back(f"/settings/pricing/{group_id}", "Give the criterion a value")
+    try:
+        pricing.add_criterion(group_id, field, op, value, attr_name)
+    except ValueError as exc:
+        return back(f"/settings/pricing/{group_id}", str(exc))
+    return back(f"/settings/pricing/{group_id}", "Criterion added")
+
+
+@app.post("/settings/pricing/{group_id}/criteria/{criterion_id}/delete")
+def pricing_criterion_delete(group_id: int, criterion_id: int):
+    pricing.delete_criterion(criterion_id)
+    return back(f"/settings/pricing/{group_id}", "Criterion removed")
+
+
+@app.post("/settings/pricing/{group_id}/apply")
+def pricing_apply(group_id: int):
+    group = pricing.get(group_id)
+    if not group:
+        return back("/settings/pricing", "No such group")
+    if not pricing.criteria(group_id):
+        return back(f"/settings/pricing/{group_id}",
+                    "Add at least one criterion first - an empty group would match nothing")
+    r = pricing.apply(group)
+    return back(f"/settings/pricing/{group_id}",
+                f"Priced {r['changed']} asset(s) at {settings.currency()} "
+                f"{db.money(group['price_cents'])}")
 
 
 # --- settings: rules -----------------------------------------------------

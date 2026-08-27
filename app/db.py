@@ -181,6 +181,28 @@ CREATE TABLE IF NOT EXISTS device_attributes (
     PRIMARY KEY (device_id, name)
 );
 
+-- Device groups defined by specification, each with a price. Lets a fleet be
+-- priced by spec ("MacBook Air 13 M4/16/512 = 1299") instead of per machine.
+CREATE TABLE IF NOT EXISTS price_groups (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    price_cents INTEGER NOT NULL DEFAULT 0,
+    notes       TEXT,
+    created_at  TEXT
+);
+
+-- All criteria of a group must match (AND), so a group narrows as you add to it.
+CREATE TABLE IF NOT EXISTS price_group_criteria (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id  INTEGER NOT NULL REFERENCES price_groups(id) ON DELETE CASCADE,
+    field     TEXT NOT NULL,   -- model | manufacturer | os | category | attribute
+    attr_name TEXT,            -- which custom attribute, when field = attribute
+    op        TEXT NOT NULL,   -- eq | contains | starts
+    value     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_price_criteria_group
+    ON price_group_criteria(group_id);
+
 -- Entitlement rules: what members of a group should have.
 CREATE TABLE IF NOT EXISTS rules (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -433,6 +433,51 @@ Every job is safe to re-run: syncs upsert and never delete inventory. Each line
 of output says what changed, and the exit status is non-zero if any job failed,
 so cron reports real failures instead of swallowing them.
 
+## Pricing by specification
+
+**Settings → Pricing** prices a fleet by spec instead of one machine at a time.
+A group is a set of criteria with a price; applying it writes that price onto
+every asset matching them.
+
+The simple case — everything of one model:
+
+| | |
+|---|---|
+| Name | Latitude 5450 |
+| Price | 599.00 |
+| Criterion | Model **is exactly** `Latitude 5450` |
+
+Model alone is often not enough, though: two MacBook Airs of the same model
+differ by memory and disk, and on macOS those arrive as Intune **custom
+attributes**. So criteria can match those too, and all criteria must match:
+
+| | |
+|---|---|
+| Name | MacBook Air 13 M4 16/512 |
+| Price | 1299.00 |
+| Criterion | Model **contains** `MacBook Air` |
+| Criterion | Attribute `CPU and RAM` **contains** `16 GB` |
+| Criterion | Attribute `Disk` **is exactly** `512 GB` |
+
+That prices the 16/512 machines and leaves an 8/256 of the same model alone.
+
+Criteria can match model, manufacturer, operating system, category, or any
+custom attribute, with **is exactly**, **contains**, or **starts with** — all
+case-insensitive. Model falls back to the asset name for assets with no linked
+Intune device.
+
+Notes on behaviour:
+
+- A group with **no criteria matches nothing**, deliberately. An empty group
+  silently repricing the whole estate would be worse than doing nothing.
+- Applying is repeatable: it only touches assets not already at the price, and
+  the page shows how many would change before you commit.
+- Deleting a group leaves the prices it set alone. It is a pricing tool, not
+  an owner of the data.
+- Creating an asset from an Intune device **prices it automatically** if a
+  group covers its specification, so a new machine of a known spec never lands
+  at zero.
+
 ## Groups, devices and rules
 
 ### Groups

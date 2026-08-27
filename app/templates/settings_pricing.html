@@ -1,0 +1,56 @@
+{% extends "settings_base.html" %}
+{% block title %}Pricing &middot; ITAM{% endblock %}
+{% block admin %}
+<h2>Pricing groups <span class="count">{{ groups|length }}</span></h2>
+<p class="meta">A group is a specification &mdash; model, and for Macs the memory
+  and disk that arrive as Intune custom attributes &mdash; with a price attached.
+  Applying it writes that price onto every asset matching the specification, so
+  a fleet is priced by spec rather than one machine at a time.</p>
+
+<details class="panel" open>
+  <summary>Add a pricing group</summary>
+  <form class="grid-form" method="post" action="/settings/pricing/new">
+    <label>Name<input name="name" required placeholder="MacBook Air 13 M4 16/512"></label>
+    <label>Price ({{ currency }})<input name="price" inputmode="decimal" placeholder="1299.00"></label>
+    <label>Model (optional starting point)<input name="model" list="known-models"
+           placeholder="Latitude 5450"></label>
+    <datalist id="known-models">
+      {% for m in models %}<option value="{{ m }}">{% endfor %}
+    </datalist>
+    <label class="wide">Notes<input name="notes" placeholder="quote reference, purchase date…"></label>
+    <button type="submit">Create group</button>
+  </form>
+  <p class="hint">Create it, then narrow it with criteria on its own page. A group
+     with no criteria matches nothing &mdash; deliberately, so an empty group can
+     never reprice the whole estate.</p>
+</details>
+
+<table>
+  <thead><tr><th>Group</th><th>Specification</th><th class="num">Price</th>
+    <th class="num">Assets matched</th><th class="num">Not at this price</th><th></th></tr></thead>
+  <tbody>
+  {% for row in groups %}
+    <tr>
+      <td><a href="/settings/pricing/{{ row.g.id }}"><strong>{{ row.g.name }}</strong></a>
+        {% if row.g.notes %}<div class="meta">{{ row.g.notes }}</div>{% endif %}</td>
+      <td>{% if row.describe %}
+            {% for d in row.describe %}<div class="meta">{{ d }}</div>{% endfor %}
+          {% else %}<span class="tag">no criteria yet</span>{% endif %}</td>
+      <td class="num">{{ row.g.price_cents|money }}</td>
+      <td class="num">{{ row.matched }}</td>
+      <td class="num">{% if row.to_change %}<strong>{{ row.to_change }}</strong>{% else %}0{% endif %}</td>
+      <td class="row-actions">
+        {% if row.to_change %}
+        <form method="post" action="/settings/pricing/{{ row.g.id }}/apply"
+              onsubmit="return confirm('Set {{ row.to_change }} asset(s) to {{ currency }} {{ row.g.price_cents|money }}?')">
+          <button class="link">Apply price</button></form>
+        {% endif %}
+        <form method="post" action="/settings/pricing/{{ row.g.id }}/delete"
+              onsubmit="return confirm('Delete {{ row.g.name }}? Asset prices already set are left alone.')">
+          <button class="link danger">Delete</button></form></td></tr>
+  {% else %}
+    <tr><td colspan="6" class="empty">No pricing groups yet &mdash; add one above.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

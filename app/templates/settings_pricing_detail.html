@@ -1,0 +1,100 @@
+{% extends "settings_base.html" %}
+{% block title %}{{ g.name }} &middot; ITAM{% endblock %}
+{% block admin %}
+<p class="crumb"><a href="/settings/pricing">&larr; Pricing</a></p>
+<h2>{{ g.name }}</h2>
+{% if g.notes %}<p class="meta">{{ g.notes }}</p>{% endif %}
+
+<div class="cards">
+  <div class="card"><span class="label">Price</span>
+    <span class="big">{{ currency }} {{ g.price_cents|money }}</span>
+    <span class="sub">per asset</span></div>
+  <div class="card"><span class="label">Assets matched</span>
+    <span class="big">{{ s.matched }}</span>
+    <span class="sub">{{ s.at_price }} already at this price</span></div>
+  <div class="card"><span class="label">Would change</span>
+    <span class="big">{{ s.to_change }}</span></div>
+  <div class="card"><span class="label">Value after applying</span>
+    <span class="big">{{ currency }} {{ s.priced_total|money }}</span>
+    <span class="sub">now {{ currency }} {{ s.current_total|money }}</span></div>
+</div>
+
+{% if s.to_change %}
+<form method="post" action="/settings/pricing/{{ g.id }}/apply" class="inline-form"
+      onsubmit="return confirm('Set {{ s.to_change }} asset(s) to {{ currency }} {{ g.price_cents|money }}?')">
+  <button type="submit">Apply this price to {{ s.to_change }} asset(s)</button>
+  <span class="hint">Writes the price onto matching assets. Nothing else changes.</span>
+</form>
+{% endif %}
+
+<h2>Specification <span class="count">{{ s.criteria|length }}</span></h2>
+<p class="meta">All criteria must match. Adding one narrows the group.</p>
+<table>
+  <thead><tr><th>Criterion</th><th></th></tr></thead>
+  <tbody>
+  {% for c in s.criteria %}
+    <tr><td>{{ describe(c) }}</td>
+        <td class="row-actions">
+          <form method="post" action="/settings/pricing/{{ g.id }}/criteria/{{ c.id }}/delete">
+            <button class="link danger">Remove</button></form></td></tr>
+  {% else %}
+    <tr><td colspan="2" class="empty">No criteria &mdash; this group matches nothing
+      until you add one.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<form class="grid-form" method="post" action="/settings/pricing/{{ g.id }}/criteria/add">
+  <label>Field<select name="field">
+    {% for key, spec in fields.items() %}<option value="{{ key }}">{{ spec[0] }}</option>{% endfor %}
+  </select></label>
+  <label>Attribute name<input name="attr_name" list="attr-names"
+         placeholder="only for Custom attribute"></label>
+  <datalist id="attr-names">
+    {% for a in attribute_names %}<option value="{{ a }}">{% endfor %}
+  </datalist>
+  <label>Match<select name="op">
+    {% for key, spec in ops.items() %}<option value="{{ key }}">{{ spec[0] }}</option>{% endfor %}
+  </select></label>
+  <label>Value<input name="value" list="known-models" required placeholder="Latitude 5450"></label>
+  <datalist id="known-models">
+    {% for m in models %}<option value="{{ m }}">{% endfor %}
+  </datalist>
+  <button type="submit">Add criterion</button>
+</form>
+<p class="hint">For a Mac spec, add <em>Model contains &ldquo;MacBook Air&rdquo;</em> and then a
+  <em>Custom attribute</em> criterion such as attribute
+  {% if attribute_names %}&ldquo;{{ attribute_names[0] }}&rdquo;{% else %}&ldquo;CPU and RAM&rdquo;{% endif %}
+  contains &ldquo;16 GB&rdquo;. Attribute criteria only match assets linked to an
+  Intune device that reports that attribute.</p>
+
+<details class="panel">
+  <summary>Edit name, price and notes</summary>
+  <form class="grid-form" method="post" action="/settings/pricing/{{ g.id }}/edit">
+    <label>Name<input name="name" value="{{ g.name }}" required></label>
+    <label>Price ({{ currency }})<input name="price" value="{{ g.price_cents|money }}"></label>
+    <label class="wide">Notes<input name="notes" value="{{ g.notes or '' }}"></label>
+    <button type="submit">Save</button>
+  </form>
+</details>
+
+<h2>Matching assets <span class="count">{{ s.assets|length }}</span></h2>
+<table>
+  <thead><tr><th>Asset</th><th>Model reported</th><th>Serial</th><th>Assigned to</th>
+    <th class="num">Cost now</th></tr></thead>
+  <tbody>
+  {% for a in s.assets %}
+    <tr><td><a href="/assets/{{ a.id }}">{{ a.name }}</a></td>
+        <td>{{ a.device_model or '' }}{% if a.device_name %}
+            <span class="meta">({{ a.device_name }})</span>{% endif %}</td>
+        <td class="mono">{{ a.serial or '' }}</td>
+        <td>{% if a.assigned_upn %}<a href="/users/{{ a.assigned_upn }}">{{ a.assigned_upn }}</a>
+            {% else %}<span class="tag spare">spare</span>{% endif %}</td>
+        <td class="num">{{ a.cost_cents|money }}
+          {% if a.cost_cents != g.price_cents %}<span class="tag">will change</span>{% endif %}</td></tr>
+  {% else %}
+    <tr><td colspan="5" class="empty">Nothing matches this specification yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
