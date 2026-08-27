@@ -925,7 +925,10 @@ def settings_devices(request: Request, q: str = "", os_filter: str = ""):
            FROM devices""")
     return render(request, "settings_devices.html", devices=devices, attrs=attrs,
                   oses=oses, q=q, os_filter=os_filter, last=last, counts=counts,
-                  cfg=entra.config_status(), section="devices")
+                  cfg=entra.config_status(),
+                  attr_filter=settings.get("INTUNE_ATTRIBUTE_FILTER"),
+                  attr_names=db.q("SELECT DISTINCT name FROM device_attributes ORDER BY name"),
+                  section="devices")
 
 
 @app.post("/settings/devices/sync")
@@ -948,10 +951,17 @@ def settings_devices_sync_attrs():
         r = entra.sync_custom_attributes()
     except Exception as exc:
         return back("/settings/devices", f"Attribute sync failed: {why(exc)}"[:300])
-    msg = f"Read {r['scripts']} custom attribute script(s); stored {r['attributes_stored']} value(s)"
-    if r["skipped"]:
-        msg += f", skipped {r['skipped']} without a value or a known device"
-    return back("/settings/devices", msg)
+    msg = (f"Synced {r['scripts_synced']} of {r['scripts_found']} attribute(s); "
+           f"stored {r['attributes_stored']} value(s)")
+    if r["filtered_out"]:
+        msg += f"; {r['filtered_out']} left out by the filter"
+    if r["stale_attributes_removed"]:
+        msg += f"; cleared {r['stale_attributes_removed']} no longer covered"
+    if r["skipped_values"]:
+        msg += f"; {r['skipped_values']} had no value or an unknown device"
+    if r["available"]:
+        msg += ". Available: " + ", ".join(r["available"][:8])
+    return back("/settings/devices", msg[:400])
 
 
 @app.post("/settings/devices/{device_id}/create-asset")

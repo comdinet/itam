@@ -31,6 +31,9 @@ SPEC: dict[str, tuple] = {
     "ENTRA_USER_FILTER":    ("str",  "", "User filter (OData)", "entra", False),
     "ENTRA_GROUP_FILTER":   ("str",  "", "Group filter (OData)", "entra", False),
     "INTUNE_DEVICE_FILTER": ("str",  "", "Device filter (OData)", "entra", False),
+    "INTUNE_ATTRIBUTE_FILTER": ("str", "", "macOS custom attributes to sync "
+                                "(comma separated, blank = all, * allowed)",
+                                "entra", False),
     # --- SAML ---
     "ITAM_SAML_SP_BASE_URL":        ("str",  "", "This app's public base URL", "saml", False),
     "ITAM_SAML_SP_ENTITY_ID":       ("str",  "", "SP entity ID (blank = derived)", "saml", False),

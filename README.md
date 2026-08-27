@@ -474,8 +474,29 @@ device row:
 HEDY-MBP    CPU and RAM: Apple M4 Pro / 36 GB
 ```
 
-Whatever the script prints is stored under the script's display name, so
-anything you already collect this way carries over without configuration. This
+Whatever the script prints is stored under Intune's `customAttributeName`, so
+anything you already collect this way carries over without configuration.
+
+If you only want some of them, set **`INTUNE_ATTRIBUTE_FILTER`** under
+**Settings → Entra ID** — a comma-separated list of attribute names, with `*`
+wildcards allowed and case ignored:
+
+```
+INTUNE_ATTRIBUTE_FILTER=CPU and RAM, Warranty
+INTUNE_ATTRIBUTE_FILTER=CPU*
+```
+
+Blank means all of them. Filtering happens on the script list, *before* the
+per-script device-state calls, so an excluded attribute costs no requests at
+all — each one is a separate paged call over your whole device estate.
+
+Two things worth knowing:
+
+- Values for attributes the filter no longer covers are **removed** on the next
+  sync, so narrowing the filter actually cleans up rather than leaving orphans.
+- The sync message lists every attribute name Intune reports, filtered or not,
+  so you can see what is available and copy the names you want. The Devices
+  page shows the filter in effect and which attributes are currently held. This
 uses the Graph **beta** endpoint, because custom attribute shell scripts have no
 v1.0 equivalent.
 

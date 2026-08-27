@@ -27,6 +27,14 @@
   <form method="post" action="/settings/devices/sync-attributes">
     <button type="submit" {% if not cfg.configured %}disabled{% endif %}>Sync macOS custom attributes</button></form>
 </div>
+<p class="meta">Custom attributes synced:
+  {% if attr_filter %}only <span class="mono">{{ attr_filter }}</span>
+  {% else %}all of them{% endif %}
+  &mdash; change this under <a href="/settings/entra">Entra ID</a>
+  (<span class="mono">INTUNE_ATTRIBUTE_FILTER</span>).
+  {% if attr_names %}Currently held:
+    {% for a in attr_names %}<span class="attr"><span class="attr-k">{{ a.name }}</span></span>{% endfor %}
+  {% endif %}</p>
 <p class="hint">Devices need <span class="mono">DeviceManagementManagedDevices.Read.All</span>;
   custom attributes need <span class="mono">DeviceManagementScripts.Read.All</span>
   (Microsoft moved this off <span class="mono">DeviceManagementConfiguration.*</span>

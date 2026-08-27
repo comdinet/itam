@@ -146,9 +146,10 @@ PAGES[f"{B}/deviceManagement/deviceCustomAttributeShellScripts/s2/deviceRunState
 ]}
 a = entra.sync_custom_attributes()
 print("\n--- custom attributes ---")
-check("scripts read", a["scripts"], 2)
+check("scripts found", a["scripts_found"], 2)
+check("all synced when no filter is set", a["scripts_synced"], 2)
 check("values stored", a["attributes_stored"], 2)
-check("skipped (unknown device + empty)", a["skipped"], 2)
+check("skipped (unknown device + empty)", a["skipped_values"], 2)
 check("beta endpoint used",
       any("graph.microsoft.com/beta" in u for u in requested), True)
 rows = {r["name"]: r["value"] for r in db.q("SELECT name, value FROM device_attributes WHERE device_id='d1'")}

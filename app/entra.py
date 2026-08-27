@@ -7,6 +7,7 @@ Required Graph application permission: User.Read.All (admin consented).
 UPN (userPrincipalName) is the unique key used throughout the app.
 """
 import datetime
+import fnmatch
 import os
 
 import httpx
@@ -390,6 +391,28 @@ def sync_devices() -> dict:
 
 # --- macOS custom attributes --------------------------------------------
 
+def attribute_patterns() -> list[str]:
+    """Which custom attributes to sync. Empty list means all of them."""
+    raw = settings.get("INTUNE_ATTRIBUTE_FILTER")
+    return [p.strip() for p in raw.split(",") if p.strip()]
+
+
+def attribute_wanted(name: str, patterns: list[str]) -> bool:
+    """Case-insensitive match, with * wildcards, against the attribute name.
+
+    Filtering happens on the script list, before the per-script device-state
+    calls - which is the expensive part, one paged request each.
+    """
+    if not patterns:
+        return True
+    candidate = (name or "").strip().lower()
+    for pattern in patterns:
+        p = pattern.lower()
+        if fnmatch.fnmatch(candidate, p if "*" in p else p):
+            return True
+    return False
+
+
 def sync_custom_attributes() -> dict:
     """Merge Intune custom attribute results onto their devices.
 
@@ -406,7 +429,10 @@ def sync_custom_attributes() -> dict:
                        {"$select": "id,displayName,customAttributeName"},
                        base=GRAPH_BETA)
     now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    patterns = attribute_patterns()
     stored = skipped = 0
+    wanted_names: list[str] = []
+    skipped_names: list[str] = []
 
     for script in scripts:
         sid = script.get("id")
@@ -416,6 +442,10 @@ def sync_custom_attributes() -> dict:
                  or script.get("displayName") or sid)
         if not sid:
             continue
+        if not attribute_wanted(label, patterns):
+            skipped_names.append(label)
+            continue
+        wanted_names.append(label)
         states = _get_all(
             f"/deviceManagement/deviceCustomAttributeShellScripts/{sid}/deviceRunStates",
             {"$expand": "managedDevice($select=id,deviceName)"}, base=GRAPH_BETA)
@@ -440,7 +470,20 @@ def sync_custom_attributes() -> dict:
                     (did, label, value, st.get("lastStateUpdateDateTime") or now))
                 stored += 1
 
-    return {"scripts": len(scripts), "attributes_stored": stored, "skipped": skipped}
+    # Drop values for attributes the filter no longer covers, or they would
+    # linger forever with no way to clear them from the UI.
+    removed = 0
+    if patterns:
+        for row in db.q("SELECT DISTINCT name FROM device_attributes"):
+            if not attribute_wanted(row["name"], patterns):
+                db.execute("DELETE FROM device_attributes WHERE name = ?", (row["name"],))
+                removed += 1
+
+    return {"scripts_found": len(scripts), "scripts_synced": len(wanted_names),
+            "attributes_stored": stored, "skipped_values": skipped,
+            "filtered_out": len(skipped_names),
+            "stale_attributes_removed": removed,
+            "available": sorted(set(wanted_names + skipped_names))}
 
 
 # --- licences ------------------------------------------------------------
