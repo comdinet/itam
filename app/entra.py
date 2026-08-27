@@ -117,8 +117,13 @@ def _explain(resp, path: str) -> str:
         return (f"401 Unauthorized ({code}): {message} -- the tenant id, client id "
                 f"or client secret is wrong, or the secret has expired.")
     if resp.status_code == 400:
-        return (f"400 Bad request ({code}): {message} -- usually a malformed "
-                f"filter. Check the OData filters on this page.")
+        hint = ""
+        if "filter" in message.lower() or "filter" in code.lower():
+            hint = " -- check the OData filters on this page."
+        elif "page size" in message.lower():
+            hint = (" -- this endpoint rejects a page-size argument; that is a "
+                    "bug in the caller, not your configuration.")
+        return f"400 Bad request ({code}): {message}{hint}"
     if resp.status_code == 429:
         return (f"429 Throttled by Graph: {message} -- too many requests; "
                 f"try again shortly.")
@@ -561,14 +566,24 @@ def sync_licenses() -> dict:
 
 # --- connection test -----------------------------------------------------
 
+# Each probe carries its own query, because the endpoints do not accept the
+# same arguments. /subscribedSkus and the shell-script list reject $top
+# outright ("This resource does not support custom page sizes"), and they are
+# small collections anyway, so they are fetched whole.
 PROBES = [
-    ("Users", "/users", "User.Read.All", "{'$select': 'id', '$top': '1'}"),
-    ("Groups", "/groups", "Group.Read.All", "{'$select': 'id', '$top': '1'}"),
-    ("Licences", "/subscribedSkus", "Organization.Read.All", "{'$top': '1'}"),
-    ("Intune devices", "/deviceManagement/managedDevices",
-     "DeviceManagementManagedDevices.Read.All", "{'$select': 'id', '$top': '1'}"),
-    ("macOS custom attributes", "/deviceManagement/deviceCustomAttributeShellScripts",
-     "DeviceManagementScripts.Read.All", "{'$top': '1'}"),
+    {"label": "Users", "path": "/users", "permission": "User.Read.All",
+     "params": {"$select": "id", "$top": "1"}, "base": GRAPH},
+    {"label": "Groups", "path": "/groups", "permission": "Group.Read.All",
+     "params": {"$select": "id", "$top": "1"}, "base": GRAPH},
+    {"label": "Licences", "path": "/subscribedSkus",
+     "permission": "Organization.Read.All", "params": {}, "base": GRAPH},
+    {"label": "Intune devices", "path": "/deviceManagement/managedDevices",
+     "permission": "DeviceManagementManagedDevices.Read.All",
+     "params": {"$select": "id", "$top": "1"}, "base": GRAPH},
+    {"label": "macOS custom attributes",
+     "path": "/deviceManagement/deviceCustomAttributeShellScripts",
+     "permission": "DeviceManagementScripts.Read.All",
+     "params": {}, "base": GRAPH_BETA},
 ]
 
 
@@ -588,22 +603,16 @@ def test_connection() -> dict:
         result["token_error"] = str(exc)
         return result
 
-    for label, path, permission, _ in PROBES:
-        params = {"$top": "1"}
-        if path in ("/users", "/groups", "/deviceManagement/managedDevices"):
-            params["$select"] = "id"
-        base = GRAPH_BETA if "ShellScripts" in path else GRAPH
+    for probe in PROBES:
         try:
-            _get_all_once(path, params, base=base)
-            result["probes"].append({"label": label, "ok": True,
-                                     "permission": permission, "detail": "reachable"})
+            _get_all_once(probe["path"], dict(probe["params"]), base=probe["base"])
+            detail, ok = "reachable", True
         except GraphError as exc:
-            result["probes"].append({"label": label, "ok": False,
-                                     "permission": permission, "detail": str(exc)})
+            detail, ok = str(exc), False
         except Exception as exc:
-            result["probes"].append({"label": label, "ok": False,
-                                     "permission": permission,
-                                     "detail": f"{type(exc).__name__}: {exc}"})
+            detail, ok = f"{type(exc).__name__}: {exc}", False
+        result["probes"].append({"label": probe["label"], "ok": ok,
+                                 "permission": probe["permission"], "detail": detail})
     return result
 
 
