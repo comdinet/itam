@@ -6,6 +6,35 @@
    'Entra ID connection',
    'One app registration covers users, groups, licences and Intune. The client secret is write-only: leave it blank to keep the one already stored.') }}
 
+<h2>Connection test</h2>
+<form method="post" action="/settings/entra/test" class="inline-form">
+  <button type="submit" {% if not cfg.configured %}disabled{% endif %}>Test connection</button>
+  <span class="hint">Checks the credentials, then each permission on its own.</span>
+</form>
+
+{% if probe %}
+  {% if not probe.token %}
+    <div class="warn"><strong>Could not get a token.</strong>
+      <pre>{{ probe.token_error }}</pre></div>
+  {% else %}
+    <p class="ok">Credentials accepted &mdash; Entra issued a token.</p>
+    <table>
+      <thead><tr><th>Feature</th><th>Permission needed</th><th>Result</th></tr></thead>
+      <tbody>
+      {% for p in probe.probes %}
+        <tr><td><strong>{{ p.label }}</strong></td>
+            <td class="mono">{{ p.permission }}</td>
+            <td>{% if p.ok %}<span class="ok">works</span>
+                {% else %}<span class="tag">failed</span>
+                  <div class="meta">{{ p.detail }}</div>{% endif %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="hint">A feature you do not use can stay failed &mdash; only the
+      syncs you actually run need their permission.</p>
+  {% endif %}
+{% endif %}
+
 <h2>Entra ID user sync</h2>
 {% if cfg.configured %}
   <p class="ok">Configured for tenant <span class="mono">{{ cfg.tenant_id }}</span>,

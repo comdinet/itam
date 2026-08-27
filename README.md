@@ -637,6 +637,28 @@ the stored value alone. It does mean the secret is in `itam.db` — which alread
 holds password hashes, TOTP secrets and session tokens, so treat that file and
 your backups as secrets either way.
 
+## Tests
+
+```bash
+./tests/run_all.sh
+```
+
+Seven suites covering money parsing, the Entra user/group/licence syncs, Intune
+devices and macOS custom attributes, OData filters, the entitlement rules, and
+two-factor authentication. Each uses a throwaway database and a mocked Graph,
+so none of them touch a real tenant or your data.
+
+The SAML suite is separate because it needs `xmlsec` to sign assertions, which
+lives in the container:
+
+```bash
+docker compose cp tests/saml_attacks.py itam:/tmp/ && \
+docker compose exec -w /srv/itam itam python /tmp/saml_attacks.py
+```
+
+It stands up a miniature identity provider and tries 21 ways to get past the
+SAML endpoint. Worth running after any change near sign-in.
+
 ## Notes
 
 - Money is stored as **integer cents**, never floats. Input accepts both

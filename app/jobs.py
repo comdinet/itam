@@ -43,8 +43,9 @@ def run(names: list[str]) -> int:
             print(f"{_stamp()}  OK     {label}: {detail}", flush=True)
         except Exception as exc:
             failed += 1
-            print(f"{_stamp()}  FAILED {label}: {type(exc).__name__}: {exc}",
-                  file=sys.stderr, flush=True)
+            detail = str(exc) if isinstance(exc, entra.GraphError) \
+                else f"{type(exc).__name__}: {exc}"
+            print(f"{_stamp()}  FAILED {label}: {detail}", file=sys.stderr, flush=True)
     return 1 if failed else 0
 
 

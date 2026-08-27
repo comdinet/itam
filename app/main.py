@@ -104,6 +104,12 @@ def render(request: Request, name: str, **ctx):
     return templates.TemplateResponse(request, name, ctx)
 
 
+def why(exc: Exception) -> str:
+    """Message for the user. A GraphError already reads plainly; anything else
+    needs its type to be identifiable at all."""
+    return str(exc) if isinstance(exc, entra.GraphError) else f"{type(exc).__name__}: {exc}"
+
+
 def back(url: str, msg: str | None = None):
     if msg:
         sep = "&" if "?" in url else "?"
@@ -861,7 +867,7 @@ def settings_groups_sync():
     try:
         r = entra.sync_groups()
     except Exception as exc:
-        return back("/settings/groups", f"Sync failed: {type(exc).__name__}: {exc}"[:300])
+        return back("/settings/groups", f"Sync failed: {why(exc)}"[:300])
     msg = (f"Synced {r['groups']} group(s); {r['members_linked']} membership(s) linked")
     if r["members_unknown"]:
         msg += f", {r['members_unknown']} member(s) not known here - sync users first"
@@ -921,7 +927,7 @@ def settings_devices_sync():
     try:
         r = entra.sync_devices()
     except Exception as exc:
-        return back("/settings/devices", f"Device sync failed: {type(exc).__name__}: {exc}"[:300])
+        return back("/settings/devices", f"Device sync failed: {why(exc)}"[:300])
     return back("/settings/devices",
                 f"Synced {r['devices']} device(s); {r['linked_to_assets']} matched an asset by serial")
 
@@ -933,8 +939,7 @@ def settings_devices_sync_attrs():
     try:
         r = entra.sync_custom_attributes()
     except Exception as exc:
-        return back("/settings/devices",
-                    f"Attribute sync failed: {type(exc).__name__}: {exc}"[:300])
+        return back("/settings/devices", f"Attribute sync failed: {why(exc)}"[:300])
     msg = f"Read {r['scripts']} custom attribute script(s); stored {r['attributes_stored']} value(s)"
     if r["skipped"]:
         msg += f", skipped {r['skipped']} without a value or a known device"
@@ -952,12 +957,17 @@ def device_create_asset(device_id: str):
     category = "Laptop" if (d["os"] or "").lower() in ("macos", "windows") else "Other"
     upn = d["primary_upn"] if d["primary_upn"] and db.q1(
         "SELECT 1 FROM users WHERE upn = ?", (d["primary_upn"],)) else None
+    # The asset is named after the model - "MacBook Pro 14", not "HEDY-MBP".
+    # An asset record is about the kit; the hostname is kept in the notes so
+    # the Intune device is still identifiable from the asset.
+    name = (d["model"] or d["device_name"] or "Device").strip()
+    hostname = (d["device_name"] or "").strip()
+    notes = f"Created from Intune device {hostname}".strip() if hostname \
+        else "Created from Intune"
     asset_id = db.execute(
         """INSERT INTO assets (name, category, cost_cents, serial, notes, assigned_upn, assigned_on)
            VALUES (?,?,0,?,?,?,?)""",
-        (d["device_name"] or d["model"] or "Device", category, d["serial_number"],
-         f"Created from Intune device {d['model'] or ''}".strip(), upn,
-         today() if upn else None))
+        (name, category, d["serial_number"], notes, upn, today() if upn else None))
     db.execute("UPDATE devices SET asset_id = ? WHERE id = ?", (asset_id, device_id))
     return back("/settings/devices", "Asset created and linked - set its cost on the Assets page")
 
@@ -994,7 +1004,7 @@ def settings_licences_sync():
     try:
         r = entra.sync_licenses()
     except Exception as exc:
-        return back("/settings/licences", f"Licence sync failed: {type(exc).__name__}: {exc}"[:300])
+        return back("/settings/licences", f"Licence sync failed: {why(exc)}"[:300])
     msg = f"Synced {r['skus']} SKU(s) and {r['assignments']} assignment(s)"
     if r["licensed_not_synced"]:
         msg += f"; {r['licensed_not_synced']} licensed account(s) are not synced here"
@@ -1194,7 +1204,22 @@ def admin_entra(request: Request):
     last = db.q1("SELECT MAX(synced_at) AS last, COUNT(*) AS n FROM users WHERE source='entra'")
     people = db.q1("SELECT COUNT(*) c FROM users")["c"]
     return render(request, "settings_entra.html", cfg=entra.config_status(), last=last,
-                  people=people, fields=settings.group("entra"), section="entra")
+                  people=people, fields=settings.group("entra"), probe=None,
+                  section="entra")
+
+
+@app.post("/settings/entra/test", response_class=HTMLResponse)
+def admin_entra_test(request: Request):
+    """Check the credentials and each permission separately."""
+    if not require_admin(request):
+        return back("/settings/entra", "Admin accounts only")
+    if not entra.is_configured():
+        return back("/settings/entra", "Fill in the tenant, client and secret first")
+    last = db.q1("SELECT MAX(synced_at) AS last, COUNT(*) AS n FROM users WHERE source='entra'")
+    people = db.q1("SELECT COUNT(*) c FROM users")["c"]
+    return render(request, "settings_entra.html", cfg=entra.config_status(), last=last,
+                  people=people, fields=settings.group("entra"),
+                  probe=entra.test_connection(), section="entra")
 
 
 @app.post("/settings/entra/sync")
@@ -1204,7 +1229,7 @@ def admin_sync():
     try:
         r = entra.sync()
     except Exception as exc:  # surface the Graph error rather than a 500 page
-        return back("/settings/entra", f"Sync failed: {type(exc).__name__}: {exc}"[:300])
+        return back("/settings/entra", f"Sync failed: {why(exc)}"[:300])
     return back("/settings/entra", f"Synced {r['fetched']} users ({r['created']} new, {r['updated']} updated)")
 
 

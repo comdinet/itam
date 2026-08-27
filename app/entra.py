@@ -70,6 +70,58 @@ def config_status() -> dict:
     }
 
 
+# Which Graph application permission each endpoint needs, so a 403 can say
+# what is actually missing instead of just the status code.
+PERMISSION_FOR = [
+    ("/deviceManagement/deviceCustomAttributeShellScripts",
+     "DeviceManagementConfiguration.Read.All"),
+    ("/deviceManagement/managedDevices", "DeviceManagementManagedDevices.Read.All"),
+    ("/subscribedSkus", "Organization.Read.All"),
+    ("/groups", "Group.Read.All"),
+    ("/users", "User.Read.All"),
+]
+
+
+class GraphError(Exception):
+    """A Graph failure with the reason Graph actually gave."""
+
+
+def _permission_for(path: str) -> str:
+    for prefix, permission in PERMISSION_FOR:
+        if path.startswith(prefix):
+            return permission
+    return "the relevant Graph"
+
+
+def _explain(resp, path: str) -> str:
+    """Turn a Graph error response into something worth reading."""
+    code = message = ""
+    try:
+        err = (resp.json() or {}).get("error") or {}
+        code = str(err.get("code") or "")
+        message = str(err.get("message") or "")
+    except Exception:
+        message = (resp.text or "")[:200]
+
+    permission = _permission_for(path)
+    if resp.status_code == 403:
+        return (f"403 Forbidden from Graph ({code or 'no code'}): {message} "
+                f"-- the app registration is missing the '{permission}' "
+                f"APPLICATION permission, or admin consent has not been granted "
+                f"for it. Add it under API permissions, then click "
+                f"'Grant admin consent'.")
+    if resp.status_code == 401:
+        return (f"401 Unauthorized ({code}): {message} -- the tenant id, client id "
+                f"or client secret is wrong, or the secret has expired.")
+    if resp.status_code == 400:
+        return (f"400 Bad request ({code}): {message} -- usually a malformed "
+                f"filter. Check the OData filters on this page.")
+    if resp.status_code == 429:
+        return (f"429 Throttled by Graph: {message} -- too many requests; "
+                f"try again shortly.")
+    return f"{resp.status_code} from Graph ({code}): {message}"
+
+
 def _token() -> str:
     tenant = settings.get("ENTRA_TENANT_ID")
     resp = httpx.post(
@@ -82,7 +134,16 @@ def _token() -> str:
         },
         timeout=30,
     )
-    resp.raise_for_status()
+    if resp.status_code >= 400:
+        detail = ""
+        try:
+            body = resp.json() or {}
+            detail = f"{body.get('error', '')}: {body.get('error_description', '')}"
+        except Exception:
+            detail = (resp.text or "")[:200]
+        raise GraphError(
+            f"Could not get a token from Entra ({resp.status_code}). {detail.strip()} "
+            f"-- check the tenant id, client id and client secret.")
     return resp.json()["access_token"]
 
 
@@ -105,7 +166,8 @@ def _get_all(path: str, params: dict | None = None, base: str = GRAPH,
     with httpx.Client(timeout=60) as client:
         while url:
             resp = client.get(url, headers=headers, params=params)
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                raise GraphError(_explain(resp, path))
             body = resp.json()
             out.extend(body.get("value", []))
             url = body.get("@odata.nextLink")
@@ -424,3 +486,60 @@ def sync_licenses() -> dict:
 
     return {"skus": len(skus), "assignments": assigned,
             "licensed_not_synced": unknown_user, "unknown_skus": unknown_sku}
+
+
+# --- connection test -----------------------------------------------------
+
+PROBES = [
+    ("Users", "/users", "User.Read.All", "{'$select': 'id', '$top': '1'}"),
+    ("Groups", "/groups", "Group.Read.All", "{'$select': 'id', '$top': '1'}"),
+    ("Licences", "/subscribedSkus", "Organization.Read.All", "{'$top': '1'}"),
+    ("Intune devices", "/deviceManagement/managedDevices",
+     "DeviceManagementManagedDevices.Read.All", "{'$select': 'id', '$top': '1'}"),
+]
+
+
+def test_connection() -> dict:
+    """Check credentials, then each permission separately.
+
+    Deliberately one probe per feature: a tenant may legitimately have
+    User.Read.All and nothing else, and that should read as "users work,
+    devices need a permission" rather than one blanket failure.
+    """
+    result = {"token": None, "token_error": None, "probes": []}
+    try:
+        _token()
+        result["token"] = True
+    except Exception as exc:
+        result["token"] = False
+        result["token_error"] = str(exc)
+        return result
+
+    for label, path, permission, _ in PROBES:
+        params = {"$top": "1"}
+        if path in ("/users", "/groups", "/deviceManagement/managedDevices"):
+            params["$select"] = "id"
+        try:
+            _get_all_once(path, params)
+            result["probes"].append({"label": label, "ok": True,
+                                     "permission": permission, "detail": "reachable"})
+        except GraphError as exc:
+            result["probes"].append({"label": label, "ok": False,
+                                     "permission": permission, "detail": str(exc)})
+        except Exception as exc:
+            result["probes"].append({"label": label, "ok": False,
+                                     "permission": permission,
+                                     "detail": f"{type(exc).__name__}: {exc}"})
+    return result
+
+
+def _get_all_once(path: str, params: dict) -> list[dict]:
+    """One page only - enough to prove a permission works, without walking a
+    whole tenant just to run a test."""
+    token = _token()
+    with httpx.Client(timeout=30) as client:
+        resp = client.get(f"{GRAPH}{path}", headers={"Authorization": f"Bearer {token}"},
+                          params=params)
+    if resp.status_code >= 400:
+        raise GraphError(_explain(resp, path))
+    return (resp.json() or {}).get("value", [])
