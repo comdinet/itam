@@ -20,6 +20,13 @@
   <div class="card"><span class="label">Stock held</span>
     <span class="big">{{ u.stock_units }}</span>
     <span class="sub">{{ currency }} {{ u.stock_total|money }} one-off</span></div>
+  {% set paid_codes = (u.onetime_currencies or '').split(',')|reject('equalto','')|unique|list %}
+  {% if paid_codes|length > 1 %}
+  <div class="card"><span class="label">Paid in</span>
+    <span class="big" style="font-size:1.1rem">{{
+      u.onetime_currencies.split(',')|reject('equalto','')|unique|sort|join(' · ') }}</span>
+    <span class="sub">totals below are converted to {{ currency }}</span></div>
+  {% endif %}
   <div class="card"><span class="label">Total first-year cost</span>
     <span class="big">{{ currency }} {{ (u.onetime_total + u.monthly_total * 12)|money }}</span>
     <span class="sub">assets + stock + 12 months of licences</span></div>
@@ -33,7 +40,8 @@
   {% for a in assets %}
     <tr><td>{{ a.name }}</td><td>{{ a.category }}</td>
         <td class="mono">{{ a.serial or '' }}</td><td>{{ a.assigned_on or '' }}</td>
-        <td class="num">{{ a.cost_cents|money }}</td>
+        <td class="num">{{ a.cost_cents|money }}
+          <span class="chip">{{ a.currency or currency }}</span></td>
         <td class="row-actions">
           <form method="post" action="/assets/{{ a.id }}/unassign">
             <input type="hidden" name="redirect" value="/users/{{ u.upn }}">
@@ -65,8 +73,9 @@
     <tr><td><a href="/stock/{{ k.id }}">{{ k.name }}</a></td>
         <td>{{ k.category }}</td>
         <td class="num">{{ k.quantity }}</td>
-        <td class="num">{{ k.unit_cost_cents|money }}</td>
-        <td class="num">{{ k.cost|money }}</td>
+        <td class="num">{{ k.unit_cost_cents|money }}
+          <span class="chip">{{ k.currency or currency }}</span></td>
+        <td class="num">{{ k.cost_rep|money }}</td>
         <td class="row-actions">
           <form method="post" action="/stock/{{ k.id }}/take-back">
             <input type="hidden" name="upn" value="{{ u.upn }}">

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_currency.html" import currency_select %}
 {% block title %}Stock &middot; ITAM{% endblock %}
 {% block body %}
 <h1>Stock <span class="count">{{ items|length }}</span></h1>
@@ -28,7 +29,8 @@
     <label>Category<select name="category">
       {% for c in categories() %}<option value="{{ c }}"
         {% if c == 'Peripheral' %}selected{% endif %}>{{ c }}</option>{% endfor %}</select></label>
-    <label>Unit price ({{ currency }})<input name="unit_cost" inputmode="decimal" placeholder="109.00"></label>
+    <label>Unit price<input name="unit_cost" inputmode="decimal" placeholder="109.00"></label>
+    <label>Paid in{{ currency_select(currencies) }}</label>
     <label>Quantity owned<input name="quantity" type="number" min="0" value="0"></label>
     <label>Vendor<input name="vendor" placeholder="optional"></label>
     <label class="wide">Notes<input name="notes" placeholder="purchase order, warranty…"></label>
@@ -50,13 +52,17 @@
         {% if i.notes %}<div class="meta">{{ i.notes }}</div>{% endif %}</td>
       <td>{{ i.category }}</td>
       <td>{{ i.vendor or '' }}</td>
-      <td class="num">{{ i.unit_cost_cents|money }}</td>
+      <td class="num">{{ i.unit_cost_cents|money }}
+        <span class="chip">{{ i.currency or currency }}</span></td>
       <td class="num">{{ i.quantity }}</td>
       <td class="num">{{ i.allocated }}{% if i.holders %}
         <span class="meta">({{ i.holders }} people)</span>{% endif %}</td>
       <td class="num">{% if i.quantity - i.allocated == 0 %}
           <span class="tag">none left</span>{% else %}{{ i.quantity - i.allocated }}{% endif %}</td>
-      <td class="num">{{ (i.quantity * i.unit_cost_cents)|money }}</td></tr>
+      <td class="num">{{ i.value_rep|money }}
+        {% if (i.currency or currency) != currency %}
+          <div class="meta">{{ i.currency }} {{ (i.quantity * i.unit_cost_cents)|money }}</div>
+        {% endif %}</td></tr>
   {% else %}
     <tr><td colspan="8" class="empty">No stock items yet &mdash; add one above.</td></tr>
   {% endfor %}

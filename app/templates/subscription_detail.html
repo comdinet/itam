@@ -1,17 +1,20 @@
 {% extends "base.html" %}
+{% from "_currency.html" import currency_select %}
 {% block title %}{{ s.name }} &middot; ITAM{% endblock %}
 {% block body %}
 <p class="crumb"><a href="/subscriptions">&larr; Subscriptions</a></p>
 <h1>{{ s.name }}</h1>
 <p class="meta">{{ s.vendor or 'No vendor' }} &middot;
-  {{ currency }} {{ s.monthly_cost_cents|money }} per seat / month</p>
+  {{ s.currency or currency }} {{ s.monthly_cost_cents|money }} per seat / month</p>
 {% if s.notes %}<p class="meta">{{ s.notes }}</p>{% endif %}
 
 <div class="cards">
   <div class="card"><span class="label">Seats assigned</span><span class="big">{{ seats|length }}</span></div>
   <div class="card"><span class="label">Monthly</span>
-    <span class="big">{{ currency }} {{ monthly|money }}</span>
-    <span class="sub">{{ currency }} {{ (monthly * 12)|money }} / year</span></div>
+    <span class="big">{{ s.currency or currency }} {{ monthly|money }}</span>
+    <span class="sub">
+      {%- if (s.currency or currency) != currency %}&asymp; {{ currency }} {{ monthly_rep|money }} &middot; {% endif -%}
+      {{ currency }} {{ (monthly_rep * 12)|money }} / year</span></div>
 </div>
 
 <h2>Assigned to</h2>
@@ -46,6 +49,7 @@
     <label>Name<input name="name" value="{{ s.name }}" required></label>
     <label>Vendor<input name="vendor" value="{{ s.vendor or '' }}"></label>
     <label>Cost per seat / month<input name="monthly_cost" value="{{ s.monthly_cost_cents|money }}"></label>
+    <label>Billed in{{ currency_select(currencies, s.currency) }}</label>
     <label class="wide">Notes<input name="notes" value="{{ s.notes or '' }}"></label>
     <button type="submit">Save</button>
   </form>

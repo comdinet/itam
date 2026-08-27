@@ -29,12 +29,15 @@ OPS = {
 }
 
 
-def create(name: str, price_cents: int, notes: str | None = None) -> int:
+def create(name: str, price_cents: int, notes: str | None = None,
+           currency: str | None = None, rate_micro: int | None = None) -> int:
     return db.execute(
-        """INSERT INTO price_groups (name, price_cents, notes, created_at)
-           VALUES (?,?,?,?)""",
+        """INSERT INTO price_groups (name, price_cents, notes, created_at,
+                                     currency, rate_micro)
+           VALUES (?,?,?,?,?,?)""",
         (name.strip(), max(0, price_cents), (notes or "").strip() or None,
-         datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")))
+         datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+         currency, rate_micro))
 
 
 def listing():
@@ -49,10 +52,13 @@ def delete(group_id: int) -> None:
     db.execute("DELETE FROM price_groups WHERE id = ?", (group_id,))
 
 
-def update(group_id: int, name: str, price_cents: int, notes: str | None) -> None:
+def update(group_id: int, name: str, price_cents: int, notes: str | None,
+           currency: str | None = None, rate_micro: int | None = None) -> None:
     db.execute(
-        "UPDATE price_groups SET name = ?, price_cents = ?, notes = ? WHERE id = ?",
-        (name.strip(), max(0, price_cents), (notes or "").strip() or None, group_id))
+        """UPDATE price_groups SET name = ?, price_cents = ?, notes = ?,
+                                   currency = ?, rate_micro = ? WHERE id = ?""",
+        (name.strip(), max(0, price_cents), (notes or "").strip() or None,
+         currency, rate_micro, group_id))
 
 
 def criteria(group_id: int):
@@ -120,26 +126,37 @@ def matching_assets(group_id: int):
 
 def summary(group) -> dict:
     assets = matching_assets(group["id"])
-    at_price = [a for a in assets if a["cost_cents"] == group["price_cents"]]
+    at_price = [a for a in assets
+                if a["cost_cents"] == group["price_cents"]
+                and (a["currency"] or "") == (group["currency"] or "")]
+    from . import fx
     return {"criteria": criteria(group["id"]), "matched": len(assets),
             "at_price": len(at_price), "to_change": len(assets) - len(at_price),
             "assets": assets,
-            "current_total": sum(a["cost_cents"] for a in assets),
-            "priced_total": len(assets) * group["price_cents"]}
+            "current_total": sum(fx.to_reporting(a["cost_cents"], a["rate_micro"])
+                                 for a in assets),
+            "priced_total": fx.to_reporting(
+                len(assets) * group["price_cents"], group["rate_micro"])}
 
 
 def apply(group) -> dict:
     """Write the group's price onto every matching asset."""
     changed = 0
     for asset in matching_assets(group["id"]):
-        if asset["cost_cents"] != group["price_cents"]:
-            db.execute("UPDATE assets SET cost_cents = ? WHERE id = ?",
-                       (group["price_cents"], asset["id"]))
+        if (asset["cost_cents"] != group["price_cents"]
+                or (asset["currency"] or "") != (group["currency"] or "")):
+            # The price carries its currency and frozen rate with it, or the
+            # asset would inherit a number with no idea what it is in.
+            db.execute(
+                """UPDATE assets SET cost_cents = ?, currency = ?, rate_micro = ?
+                   WHERE id = ?""",
+                (group["price_cents"], group["currency"], group["rate_micro"],
+                 asset["id"]))
             changed += 1
     return {"changed": changed}
 
 
-def price_for_asset(asset_id: int) -> int | None:
+def price_for_asset(asset_id: int) -> dict | None:
     """The price of the first group covering this asset, if any.
 
     Used when an asset is created from an Intune device, so a new machine of a
@@ -154,7 +171,9 @@ def price_for_asset(asset_id: int) -> int | None:
                 LEFT JOIN devices d ON d.asset_id = a.id
                 WHERE a.id = ? AND {where}""", [asset_id] + params)
         if hit:
-            return group["price_cents"]
+            return {"price_cents": group["price_cents"],
+                    "currency": group["currency"],
+                    "rate_micro": group["rate_micro"]}
     return None
 
 

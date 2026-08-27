@@ -14,11 +14,12 @@ from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse,
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import api, auth, db, entra, pricing, rules, saml, settings, stock
+from . import api, auth, db, entra, fx, pricing, rules, saml, settings, stock
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
+    fx.ensure_base()
     auth.purge_expired()
     auth.purge_pending()
     saml.purge()
@@ -83,6 +84,24 @@ def today() -> str:
     return datetime.date.today().isoformat()
 
 
+def pick_currency(code: str) -> tuple[str | None, int, str | None]:
+    """Validate a submitted currency. Returns (code, frozen_rate, complaint).
+
+    There is deliberately no fallback: an amount without a stated currency is
+    ambiguous, and guessing one is how a shekel purchase silently becomes
+    dollars.
+    """
+    code = (code or "").strip().upper()
+    if not code:
+        return None, 0, "Choose the currency this was paid in"
+    row = fx.get(code)
+    if not row:
+        return None, 0, f"{code} is not set up. Add it under Settings > Currencies."
+    if not row["active"]:
+        return None, 0, f"{code} is switched off. Switch it on under Settings > Currencies."
+    return code, int(row["rate_micro"]), None
+
+
 def qr_svg(data: str) -> str:
     """Inline SVG QR code. SVG keeps it dependency-light - no image library."""
     import io
@@ -128,17 +147,27 @@ SELECT u.upn, u.display_name, u.job_title, u.department, u.country,
        COALESCE(k.stock_units, 0)   AS stock_units,
        COALESCE(a.asset_total, 0) + COALESCE(k.stock_total, 0) AS onetime_total,
        COALESCE(s.monthly_total, 0) AS monthly_total,
-       COALESCE(s.sub_count, 0)     AS sub_count
+       COALESCE(s.sub_count, 0)     AS sub_count,
+       COALESCE(a.currencies, '') || CASE WHEN a.currencies IS NOT NULL
+            AND k.currencies IS NOT NULL THEN ',' ELSE '' END
+            || COALESCE(k.currencies, '') AS onetime_currencies
 FROM users u
-LEFT JOIN (SELECT assigned_upn, SUM(cost_cents) asset_total, COUNT(*) asset_count
+LEFT JOIN (SELECT assigned_upn,
+                  SUM(""" + db.conv("cost_cents", "rate_micro") + """) asset_total,
+                  COUNT(*) asset_count,
+                  GROUP_CONCAT(DISTINCT currency) currencies
              FROM assets WHERE assigned_upn IS NOT NULL GROUP BY assigned_upn) a
        ON a.assigned_upn = u.upn
-LEFT JOIN (SELECT al.upn, SUM(al.quantity * si.unit_cost_cents) stock_total,
-                  SUM(al.quantity) stock_units
+LEFT JOIN (SELECT al.upn,
+                  SUM(""" + db.conv("al.quantity * si.unit_cost_cents", "si.rate_micro") + """) stock_total,
+                  SUM(al.quantity) stock_units,
+                  GROUP_CONCAT(DISTINCT si.currency) currencies
              FROM stock_allocations al JOIN stock_items si ON si.id = al.item_id
             GROUP BY al.upn) k
        ON k.upn = u.upn
-LEFT JOIN (SELECT ss.upn, SUM(sub.monthly_cost_cents) monthly_total, COUNT(*) sub_count
+LEFT JOIN (SELECT ss.upn,
+                  SUM(""" + db.conv("sub.monthly_cost_cents", "sub.rate_micro") + """) monthly_total,
+                  COUNT(*) sub_count
              FROM subscription_seats ss JOIN subscriptions sub ON sub.id = ss.subscription_id
             GROUP BY ss.upn) s
        ON s.upn = u.upn
@@ -621,12 +650,13 @@ def dashboard(request: Request):
         """SELECT (SELECT COUNT(*) FROM users)                                       AS users,
                   (SELECT COUNT(*) FROM users WHERE account_enabled = 0)             AS users_disabled,
                   (SELECT COUNT(*) FROM assets)                                      AS assets,
-                  (SELECT COALESCE(SUM(cost_cents),0) FROM assets)                   AS asset_value,
+                  (SELECT COALESCE(SUM(((cost_cents * COALESCE(rate_micro,1000000) + 500000) / 1000000)),0)
+                     FROM assets)                                                   AS asset_value,
                   (SELECT COUNT(*) FROM assets WHERE assigned_upn IS NULL)           AS spare,
-                  (SELECT COALESCE(SUM(cost_cents),0) FROM assets
-                     WHERE assigned_upn IS NULL)                                     AS spare_value,
+                  (SELECT COALESCE(SUM(((cost_cents * COALESCE(rate_micro,1000000) + 500000) / 1000000)),0)
+                     FROM assets WHERE assigned_upn IS NULL)                        AS spare_value,
                   (SELECT COUNT(*) FROM subscriptions)                               AS subs,
-                  (SELECT COALESCE(SUM(sub.monthly_cost_cents),0)
+                  (SELECT COALESCE(SUM(((sub.monthly_cost_cents * COALESCE(sub.rate_micro,1000000) + 500000) / 1000000)),0)
                      FROM subscription_seats ss
                      JOIN subscriptions sub ON sub.id = ss.subscription_id)          AS monthly"""
     )
@@ -645,9 +675,9 @@ def dashboard(request: Request):
            GROUP BY department ORDER BY monthly_total DESC, asset_total DESC"""
     )
     top_subs = db.q(
-        """SELECT sub.id, sub.name, sub.vendor, sub.monthly_cost_cents,
+        """SELECT sub.id, sub.name, sub.vendor, sub.monthly_cost_cents, sub.currency,
                   COUNT(ss.upn) AS seats,
-                  COUNT(ss.upn) * sub.monthly_cost_cents AS monthly
+                  """ + db.conv("COUNT(ss.upn) * sub.monthly_cost_cents", "sub.rate_micro") + """ AS monthly
            FROM subscriptions sub
            LEFT JOIN subscription_seats ss ON ss.subscription_id = sub.id
            GROUP BY sub.id ORDER BY monthly DESC"""
@@ -658,8 +688,31 @@ def dashboard(request: Request):
            JOIN users u ON u.upn = ss.upn
            WHERE u.account_enabled = 0 ORDER BY sub.name"""
     )
+    by_currency = db.q(
+        """SELECT c.code, c.symbol, c.rate_micro, c.rate_source, c.rate_set_on,
+                  COALESCE(a.raw, 0) AS asset_raw, COALESCE(a.rep, 0) AS asset_rep,
+                  COALESCE(k.raw, 0) AS stock_raw, COALESCE(k.rep, 0) AS stock_rep,
+                  COALESCE(s.raw, 0) AS monthly_raw, COALESCE(s.rep, 0) AS monthly_rep
+           FROM currencies c
+           LEFT JOIN (SELECT currency, SUM(cost_cents) raw,
+                             SUM(""" + db.conv("cost_cents", "rate_micro") + """) rep
+                        FROM assets GROUP BY currency) a ON a.currency = c.code
+           LEFT JOIN (SELECT currency, SUM(quantity * unit_cost_cents) raw,
+                             SUM(""" + db.conv("quantity * unit_cost_cents", "rate_micro") + """) rep
+                        FROM stock_items GROUP BY currency) k ON k.currency = c.code
+           LEFT JOIN (SELECT sub.currency, SUM(sub.monthly_cost_cents) raw,
+                             SUM(""" + db.conv("sub.monthly_cost_cents", "sub.rate_micro") + """) rep
+                        FROM subscription_seats ss
+                        JOIN subscriptions sub ON sub.id = ss.subscription_id
+                       GROUP BY sub.currency) s ON s.currency = c.code
+           WHERE c.active = 1
+           ORDER BY (COALESCE(a.rep,0) + COALESCE(k.rep,0)) DESC, c.code""")
+    rate_asof = db.q1(
+        "SELECT MAX(rate_set_on) AS d FROM currencies WHERE rate_source != 'base'")
     return render(request, "dashboard.html", t=totals, by_dept=by_dept,
-                  top_subs=top_subs, orphans=orphans, stock=stock.totals())
+                  top_subs=top_subs, orphans=orphans, stock=stock.totals(),
+                  by_currency=by_currency, reporting=fx.reporting_code(),
+                  rate_asof=rate_asof["d"] if rate_asof else None)
 
 
 # --- users ---------------------------------------------------------------
@@ -752,21 +805,27 @@ def assets_list(request: Request, q: str = "", category: str = "", state: str = 
         sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY a.category, a.name"
     rows = db.q(sql, params)
-    total = sum(r["cost_cents"] for r in rows)
+    # Mixed currencies cannot be added raw, so the total is in reporting currency.
+    total = sum(fx.to_reporting(r["cost_cents"], r["rate_micro"]) for r in rows)
     users = db.q("SELECT upn, display_name FROM users ORDER BY display_name")
     return render(request, "assets.html", assets=rows, users=users, q=q,
-                  category=category, state=state, total=total)
+                  category=category, state=state, total=total,
+                  currencies=fx.listing(active_only=True))
 
 
 @app.post("/assets/new")
 def asset_new(name: str = Form(...), category: str = Form("Other"), cost: str = Form("0"),
-              serial: str = Form(""), purchased_on: str = Form(""), notes: str = Form(""),
+              currency: str = Form(""), serial: str = Form(""),
+              purchased_on: str = Form(""), notes: str = Form(""),
               assigned_upn: str = Form("")):
+    code, rate, problem = pick_currency(currency)
+    if problem:
+        return back("/assets", problem)
     db.execute(
-        """INSERT INTO assets (name, category, cost_cents, serial, purchased_on, notes,
-                               assigned_upn, assigned_on)
-           VALUES (?,?,?,?,?,?,?,?)""",
-        (name.strip(), category, db.to_cents(cost), serial.strip() or None,
+        """INSERT INTO assets (name, category, cost_cents, currency, rate_micro, serial,
+                               purchased_on, notes, assigned_upn, assigned_on)
+           VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        (name.strip(), category, db.to_cents(cost), code, rate, serial.strip() or None,
          purchased_on or None, notes.strip() or None, assigned_upn or None,
          today() if assigned_upn else None))
     return back("/assets", "Asset added")
@@ -778,21 +837,33 @@ def asset_page(request: Request, asset_id: int):
     if not a:
         return HTMLResponse("<h1>404</h1><p>No such asset.</p>", status_code=404)
     users = db.q("SELECT upn, display_name FROM users ORDER BY display_name")
-    return render(request, "asset_edit.html", a=a, users=users)
+    return render(request, "asset_edit.html", a=a, users=users,
+                  currencies=fx.listing(active_only=True))
 
 
 @app.post("/assets/{asset_id}/edit")
 def asset_edit(asset_id: int, name: str = Form(...), category: str = Form("Other"),
-               cost: str = Form("0"), serial: str = Form(""), purchased_on: str = Form(""),
-               notes: str = Form(""), assigned_upn: str = Form("")):
-    prev = db.q1("SELECT assigned_upn FROM assets WHERE id = ?", (asset_id,))
-    changed = prev and (prev["assigned_upn"] or "") != (assigned_upn or "")
+               cost: str = Form("0"), currency: str = Form(""), serial: str = Form(""),
+               purchased_on: str = Form(""), notes: str = Form(""),
+               assigned_upn: str = Form("")):
+    prev = db.q1("SELECT assigned_upn, currency, rate_micro FROM assets WHERE id = ?",
+                 (asset_id,))
+    if not prev:
+        return back("/assets", "No such asset")
+    code, rate, problem = pick_currency(currency)
+    if problem:
+        return back(f"/assets/{asset_id}", problem)
+    # Keep the frozen rate while the currency is unchanged: editing a typo in
+    # the name must not silently revalue the purchase.
+    if code == (prev["currency"] or "") and prev["rate_micro"]:
+        rate = int(prev["rate_micro"])
+    changed = (prev["assigned_upn"] or "") != (assigned_upn or "")
     db.execute(
-        """UPDATE assets SET name=?, category=?, cost_cents=?, serial=?, purchased_on=?,
-                             notes=?, assigned_upn=?,
+        """UPDATE assets SET name=?, category=?, cost_cents=?, currency=?, rate_micro=?,
+                             serial=?, purchased_on=?, notes=?, assigned_upn=?,
                              assigned_on = CASE WHEN ? THEN ? ELSE assigned_on END
            WHERE id=?""",
-        (name.strip(), category, db.to_cents(cost), serial.strip() or None,
+        (name.strip(), category, db.to_cents(cost), code, rate, serial.strip() or None,
          purchased_on or None, notes.strip() or None, assigned_upn or None,
          1 if changed else 0, today() if assigned_upn else None, asset_id))
     return back("/assets", "Asset updated")
@@ -815,20 +886,24 @@ def asset_delete(asset_id: int, redirect: str = Form("/assets")):
 @app.get("/stock", response_class=HTMLResponse)
 def stock_list(request: Request):
     return render(request, "stock.html", items=stock.listing(),
-                  totals=stock.totals())
+                  totals=stock.totals(), currencies=fx.listing(active_only=True))
 
 
 @app.post("/stock/new")
 def stock_new(name: str = Form(...), category: str = Form("Peripheral"),
-              unit_cost: str = Form("0"), quantity: str = Form("0"),
-              vendor: str = Form(""), notes: str = Form("")):
+              unit_cost: str = Form("0"), currency: str = Form(""),
+              quantity: str = Form("0"), vendor: str = Form(""), notes: str = Form("")):
     if not name.strip():
         return back("/stock", "Give the item a name")
+    code, rate, problem = pick_currency(currency)
+    if problem:
+        return back("/stock", problem)
     try:
         qty = max(0, int(quantity or 0))
     except ValueError:
         return back("/stock", "Quantity must be a whole number")
-    item_id = stock.create(name, category, db.to_cents(unit_cost), qty, vendor, notes)
+    item_id = stock.create(name, category, db.to_cents(unit_cost), qty, vendor, notes,
+                           currency=code, rate_micro=rate)
     return back(f"/stock/{item_id}", "Item added")
 
 
@@ -839,21 +914,27 @@ def stock_detail(request: Request, item_id: int):
         return HTMLResponse("<h1>404</h1><p>No such item.</p>", status_code=404)
     people = db.q("SELECT upn, display_name FROM users ORDER BY display_name")
     return render(request, "stock_detail.html", i=item, s=stock.summary(item),
-                  people=people)
+                  people=people, currencies=fx.listing(active_only=True))
 
 
 @app.post("/stock/{item_id}/edit")
 def stock_edit(item_id: int, name: str = Form(...), category: str = Form("Peripheral"),
-               unit_cost: str = Form("0"), quantity: str = Form("0"),
-               vendor: str = Form(""), notes: str = Form("")):
-    if not stock.get(item_id):
+               unit_cost: str = Form("0"), currency: str = Form(""),
+               quantity: str = Form("0"), vendor: str = Form(""), notes: str = Form("")):
+    existing = stock.get(item_id)
+    if not existing:
         return back("/stock", "No such item")
+    code, rate, problem = pick_currency(currency)
+    if problem:
+        return back(f"/stock/{item_id}", problem)
+    if code == (existing["currency"] or "") and existing["rate_micro"]:
+        rate = int(existing["rate_micro"])
     try:
         qty = max(0, int(quantity or 0))
     except ValueError:
         return back(f"/stock/{item_id}", "Quantity must be a whole number")
     problem = stock.update(item_id, name, category, db.to_cents(unit_cost), qty,
-                           vendor, notes)
+                           vendor, notes, currency=code, rate_micro=rate)
     return back(f"/stock/{item_id}", problem or "Item updated")
 
 
@@ -895,20 +976,28 @@ def stock_take_back(item_id: int, upn: str = Form(...), quantity: str = Form("")
 def subs_list(request: Request):
     rows = db.q(
         """SELECT sub.*, COUNT(ss.upn) AS seats,
-                  COUNT(ss.upn) * sub.monthly_cost_cents AS monthly
+                  COUNT(ss.upn) * sub.monthly_cost_cents AS monthly,
+                  """ + db.conv("COUNT(ss.upn) * sub.monthly_cost_cents", "sub.rate_micro") + """ AS monthly_rep
            FROM subscriptions sub
            LEFT JOIN subscription_seats ss ON ss.subscription_id = sub.id
-           GROUP BY sub.id ORDER BY monthly DESC, sub.name""")
-    monthly = sum(r["monthly"] for r in rows)
-    return render(request, "subscriptions.html", subs=rows, monthly=monthly)
+           GROUP BY sub.id ORDER BY monthly_rep DESC, sub.name""")
+    monthly = sum(r["monthly_rep"] for r in rows)
+    return render(request, "subscriptions.html", subs=rows, monthly=monthly,
+                  currencies=fx.listing(active_only=True))
 
 
 @app.post("/subscriptions/new")
 def sub_new(name: str = Form(...), vendor: str = Form(""), monthly_cost: str = Form("0"),
-            notes: str = Form("")):
+            currency: str = Form(""), notes: str = Form("")):
+    code, rate, problem = pick_currency(currency)
+    if problem:
+        return back("/subscriptions", problem)
     db.execute(
-        "INSERT INTO subscriptions (name, vendor, monthly_cost_cents, notes) VALUES (?,?,?,?)",
-        (name.strip(), vendor.strip() or None, db.to_cents(monthly_cost), notes.strip() or None))
+        """INSERT INTO subscriptions (name, vendor, monthly_cost_cents, currency,
+                                      rate_micro, notes)
+           VALUES (?,?,?,?,?,?)""",
+        (name.strip(), vendor.strip() or None, db.to_cents(monthly_cost), code, rate,
+         notes.strip() or None))
     return back("/subscriptions", "Subscription added")
 
 
@@ -926,15 +1015,28 @@ def sub_detail(request: Request, sub_id: int):
            WHERE upn NOT IN (SELECT upn FROM subscription_seats WHERE subscription_id = ?)
            ORDER BY display_name""", (sub_id,))
     return render(request, "subscription_detail.html", s=sub, seats=seats, avail=avail,
-                  monthly=len(seats) * sub["monthly_cost_cents"])
+                  monthly=len(seats) * sub["monthly_cost_cents"],
+                  monthly_rep=fx.to_reporting(len(seats) * sub["monthly_cost_cents"],
+                                              sub["rate_micro"]),
+                  currencies=fx.listing(active_only=True))
 
 
 @app.post("/subscriptions/{sub_id}/edit")
 def sub_edit(sub_id: int, name: str = Form(...), vendor: str = Form(""),
-             monthly_cost: str = Form("0"), notes: str = Form("")):
+             monthly_cost: str = Form("0"), currency: str = Form(""),
+             notes: str = Form("")):
+    prev = db.q1("SELECT currency, rate_micro FROM subscriptions WHERE id = ?", (sub_id,))
+    if not prev:
+        return back("/subscriptions", "No such subscription")
+    code, rate, problem = pick_currency(currency)
+    if problem:
+        return back(f"/subscriptions/{sub_id}", problem)
+    if code == (prev["currency"] or "") and prev["rate_micro"]:
+        rate = int(prev["rate_micro"])
     db.execute(
-        "UPDATE subscriptions SET name=?, vendor=?, monthly_cost_cents=?, notes=? WHERE id=?",
-        (name.strip(), vendor.strip() or None, db.to_cents(monthly_cost),
+        """UPDATE subscriptions SET name=?, vendor=?, monthly_cost_cents=?, currency=?,
+                                    rate_micro=?, notes=? WHERE id=?""",
+        (name.strip(), vendor.strip() or None, db.to_cents(monthly_cost), code, rate,
          notes.strip() or None, sub_id))
     return back(f"/subscriptions/{sub_id}", "Subscription updated")
 
@@ -1102,17 +1204,21 @@ def _asset_from_device(d) -> tuple[int, int | None]:
     notes = f"Created from Intune device {hostname}".strip() if hostname \
         else "Created from Intune"
     asset_id = db.execute(
-        """INSERT INTO assets (name, category, cost_cents, serial, notes,
-                               assigned_upn, assigned_on)
-           VALUES (?,?,0,?,?,?,?)""",
-        (name, category, d["serial_number"], notes, upn, today() if upn else None))
+        """INSERT INTO assets (name, category, cost_cents, currency, rate_micro, serial,
+                               notes, assigned_upn, assigned_on)
+           VALUES (?,?,0,?,?,?,?,?,?)""",
+        (name, category, fx.reporting_code(), fx.MICRO, d["serial_number"], notes,
+         upn, today() if upn else None))
     db.execute("UPDATE devices SET asset_id = ? WHERE id = ?", (asset_id, d["id"]))
 
-    # A pricing group covering this specification prices it straight away.
-    price = pricing.price_for_asset(asset_id)
-    if price:
-        db.execute("UPDATE assets SET cost_cents = ? WHERE id = ?", (price, asset_id))
-    return asset_id, price
+    # A pricing group covering this specification prices it straight away, in
+    # the currency that group was priced in.
+    hit = pricing.price_for_asset(asset_id)
+    if hit:
+        db.execute(
+            "UPDATE assets SET cost_cents = ?, currency = ?, rate_micro = ? WHERE id = ?",
+            (hit["price_cents"], hit["currency"], hit["rate_micro"], asset_id))
+    return asset_id, hit
 
 
 @app.post("/settings/devices/{device_id}/create-asset")
@@ -1123,11 +1229,11 @@ def device_create_asset(device_id: str):
         return back("/settings/devices", "No such device")
     if d["asset_id"]:
         return back("/settings/devices", "That device is already linked to an asset")
-    _, price = _asset_from_device(d)
-    if price:
+    _, hit = _asset_from_device(d)
+    if hit:
         return back("/settings/devices",
-                    f"Asset created, linked and priced at {settings.currency()} "
-                    f"{db.money(price)} from a pricing group")
+                    f"Asset created, linked and priced at "
+                    f"{fx.money(hit['price_cents'], hit['currency'])} from a pricing group")
     return back("/settings/devices",
                 "Asset created and linked - set its cost on the Assets page")
 
@@ -1146,9 +1252,9 @@ def devices_create_assets(request: Request, q: str = Form(""), os_filter: str = 
         return back("/settings/devices", "No unlinked devices match those filters")
     created = priced = 0
     for d in devices:
-        _, price = _asset_from_device(d)
+        _, hit = _asset_from_device(d)
         created += 1
-        if price:
+        if hit:
             priced += 1
     msg = f"Created {created} asset(s) from Intune"
     if priced:
@@ -1249,6 +1355,101 @@ def licence_detail(request: Request, sku_id: str):
                   sub=sub, section="licences")
 
 
+# --- settings: currencies ------------------------------------------------
+
+@app.get("/settings/currencies", response_class=HTMLResponse)
+def settings_currencies(request: Request):
+    fx.ensure_base()
+    rows = []
+    for c in fx.listing():
+        rows.append({"c": c, "usage": fx.usage(c["code"]),
+                     "rate": fx.format_rate(c["rate_micro"])})
+    return render(request, "settings_currencies.html", rows=rows,
+                  reporting=fx.reporting_code(), proposal=None,
+                  fetch_error=None, section="currencies")
+
+
+@app.post("/settings/currencies/check", response_class=HTMLResponse)
+def currencies_check(request: Request):
+    """Ask Bank of Israel for today's rates. Nothing is stored until approved."""
+    if not require_admin(request):
+        return back("/settings/currencies", "Admin accounts only")
+    fx.ensure_base()
+    proposal, error = None, None
+    try:
+        proposal = fx.fetch_boi()
+    except fx.RateFetchError as exc:
+        error = str(exc)
+    rows = [{"c": c, "usage": fx.usage(c["code"]),
+             "rate": fx.format_rate(c["rate_micro"])} for c in fx.listing()]
+    return render(request, "settings_currencies.html", rows=rows,
+                  reporting=fx.reporting_code(), proposal=proposal,
+                  fetch_error=error, section="currencies")
+
+
+@app.post("/settings/currencies/approve")
+async def currencies_approve(request: Request):
+    """Apply only the rates that were ticked."""
+    if not require_admin(request):
+        return back("/settings/currencies", "Admin accounts only")
+    form = await request.form()
+    picked = [k[len("rate_"):] for k in form.keys() if k.startswith("rate_")]
+    if not picked:
+        return back("/settings/currencies", "Nothing was ticked, so nothing changed")
+    as_of = str(form.get("as_of") or "")
+    by = request.state.user["username"]
+    applied = []
+    for code in picked:
+        micro = fx.parse_rate(str(form.get(f"value_{code}") or ""))
+        if not micro:
+            continue
+        fx.add(code, str(form.get(f"symbol_{code}") or code),
+               str(form.get(f"name_{code}") or code), micro, "boi", by, as_of)
+        applied.append(code)
+    if not applied:
+        return back("/settings/currencies", "None of the ticked rates were readable")
+    return back("/settings/currencies",
+                f"Approved {len(applied)} rate(s) from Bank of Israel: "
+                + ", ".join(sorted(applied)))
+
+
+@app.post("/settings/currencies/manual")
+def currencies_manual(request: Request, code: str = Form(...), symbol: str = Form(""),
+                      name: str = Form(""), rate: str = Form("")):
+    if not require_admin(request):
+        return back("/settings/currencies", "Admin accounts only")
+    code = code.strip().upper()
+    if not (2 <= len(code) <= 4) or not code.isalpha():
+        return back("/settings/currencies", "A currency code is 3 letters, such as ILS")
+    if code == fx.reporting_code():
+        return back("/settings/currencies",
+                    f"{code} is the reporting currency and is always 1.0")
+    micro = fx.parse_rate(rate)
+    if not micro:
+        return back("/settings/currencies",
+                    "Enter the rate as a number, such as 0.3357 for shekels to dollars")
+    fx.add(code, symbol or fx.KNOWN_SYMBOLS.get(code, code),
+           name or fx.KNOWN_NAMES.get(code, code), micro, "manual",
+           request.state.user["username"])
+    return back("/settings/currencies", f"{code} set to {fx.format_rate(micro)}")
+
+
+@app.post("/settings/currencies/{code}/delete")
+def currencies_delete(request: Request, code: str):
+    if not require_admin(request):
+        return back("/settings/currencies", "Admin accounts only")
+    problem = fx.delete(code)
+    return back("/settings/currencies", problem or f"{code.upper()} removed")
+
+
+@app.post("/settings/currencies/{code}/toggle")
+def currencies_toggle(request: Request, code: str, active: str = Form("")):
+    if not require_admin(request):
+        return back("/settings/currencies", "Admin accounts only")
+    problem = fx.set_active(code, bool(active))
+    return back("/settings/currencies", problem or f"{code.upper()} updated")
+
+
 # --- settings: pricing groups -------------------------------------------
 
 @app.get("/settings/pricing", response_class=HTMLResponse)
@@ -1260,15 +1461,19 @@ def settings_pricing(request: Request):
                        "to_change": s["to_change"],
                        "describe": [pricing.describe(c) for c in s["criteria"]]})
     return render(request, "settings_pricing.html", groups=groups,
-                  models=pricing.known_models(), section="pricing")
+                  models=pricing.known_models(),
+                  currencies=fx.listing(active_only=True), section="pricing")
 
 
 @app.post("/settings/pricing/new")
-def pricing_new(name: str = Form(...), price: str = Form("0"), notes: str = Form(""),
-                model: str = Form("")):
+def pricing_new(name: str = Form(...), price: str = Form("0"), currency: str = Form(""),
+                notes: str = Form(""), model: str = Form("")):
     if not name.strip():
         return back("/settings/pricing", "Give the group a name")
-    gid = pricing.create(name, db.to_cents(price), notes)
+    code, rate, problem = pick_currency(currency)
+    if problem:
+        return back("/settings/pricing", problem)
+    gid = pricing.create(name, db.to_cents(price), notes, currency=code, rate_micro=rate)
     # A model is the usual starting point, so offer it on creation.
     if model.strip():
         pricing.add_criterion(gid, "model", "eq", model)
@@ -1284,15 +1489,23 @@ def pricing_detail(request: Request, group_id: int):
     return render(request, "settings_pricing_detail.html", g=group, s=s,
                   describe=pricing.describe, fields=pricing.FIELDS, ops=pricing.OPS,
                   attribute_names=pricing.attribute_names(),
-                  models=pricing.known_models(), section="pricing")
+                  models=pricing.known_models(),
+                  currencies=fx.listing(active_only=True), section="pricing")
 
 
 @app.post("/settings/pricing/{group_id}/edit")
 def pricing_edit(group_id: int, name: str = Form(...), price: str = Form("0"),
-                 notes: str = Form("")):
-    if not pricing.get(group_id):
+                 currency: str = Form(""), notes: str = Form("")):
+    existing = pricing.get(group_id)
+    if not existing:
         return back("/settings/pricing", "No such group")
-    pricing.update(group_id, name, db.to_cents(price), notes)
+    code, rate, problem = pick_currency(currency)
+    if problem:
+        return back(f"/settings/pricing/{group_id}", problem)
+    if code == (existing["currency"] or "") and existing["rate_micro"]:
+        rate = int(existing["rate_micro"])
+    pricing.update(group_id, name, db.to_cents(price), notes,
+                   currency=code, rate_micro=rate)
     return back(f"/settings/pricing/{group_id}", "Group updated")
 
 

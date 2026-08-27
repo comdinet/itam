@@ -36,6 +36,39 @@
 </div>
 {% endif %}
 
+<h2>By currency</h2>
+<p class="meta">What was actually paid, and the same figures in {{ reporting }}.
+  {% if rate_asof %}Rates set {{ rate_asof }}.{% endif %}
+  A consolidated total is only as good as those rates &mdash; the amounts on the
+  left are exact.</p>
+<table>
+  <thead><tr><th>Currency</th><th class="num">Assets</th><th class="num">Stock</th>
+    <th class="num">Monthly</th><th class="num">One-off in {{ reporting }}</th></tr></thead>
+  <tbody>
+  {% set ns = namespace(total=0) %}
+  {% for c in by_currency %}
+    {% if c.asset_raw or c.stock_raw or c.monthly_raw %}
+      {% set ns.total = ns.total + c.asset_rep + c.stock_rep %}
+      <tr>
+        <td><span class="chip">{{ c.code }}</span> {{ c.symbol }}
+          {% if c.rate_source != 'base' %}
+            <div class="meta mono">rate {{ '%.6f'|format((c.rate_micro or 1000000) / 1000000) }}</div>
+          {% endif %}</td>
+        <td class="num">{{ c.asset_raw|money }}</td>
+        <td class="num">{{ c.stock_raw|money }}</td>
+        <td class="num">{{ c.monthly_raw|money }}</td>
+        <td class="num">{{ (c.asset_rep + c.stock_rep)|money }}</td></tr>
+    {% endif %}
+  {% else %}
+    <tr><td colspan="5" class="empty">Nothing recorded yet.</td></tr>
+  {% endfor %}
+  </tbody>
+  {% if ns.total %}
+  <tfoot><tr><td colspan="4">Consolidated one-off</td>
+    <td class="num"><strong>{{ reporting }} {{ ns.total|money }}</strong></td></tr></tfoot>
+  {% endif %}
+</table>
+
 <h2>Subscriptions by monthly spend</h2>
 <table>
   <thead><tr><th>Subscription</th><th>Vendor</th><th class="num">Per seat</th>
@@ -44,7 +77,8 @@
   {% for s in top_subs %}
     <tr><td><a href="/subscriptions/{{ s.id }}">{{ s.name }}</a></td>
         <td>{{ s.vendor or '' }}</td>
-        <td class="num">{{ s.monthly_cost_cents|money }}</td>
+        <td class="num">{{ s.monthly_cost_cents|money }}
+            <span class="chip">{{ s.currency or currency }}</span></td>
         <td class="num">{{ s.seats }}</td>
         <td class="num">{{ s.monthly|money }}</td>
         <td class="num">{{ (s.monthly * 12)|money }}</td></tr>

@@ -102,7 +102,9 @@ CREATE TABLE IF NOT EXISTS assets (
     notes        TEXT,
     assigned_upn TEXT REFERENCES users(upn) ON DELETE SET NULL,
     assigned_on  TEXT,
-    external_id  TEXT
+    external_id  TEXT,
+    currency     TEXT,
+    rate_micro   INTEGER          -- rate at entry: what was paid stays what was paid
 );
 CREATE INDEX IF NOT EXISTS idx_assets_upn ON assets(assigned_upn);
 
@@ -188,7 +190,9 @@ CREATE TABLE IF NOT EXISTS price_groups (
     name        TEXT NOT NULL,
     price_cents INTEGER NOT NULL DEFAULT 0,
     notes       TEXT,
-    created_at  TEXT
+    created_at  TEXT,
+    currency    TEXT,
+    rate_micro  INTEGER
 );
 
 -- All criteria of a group must match (AND), so a group narrows as you add to it.
@@ -245,6 +249,30 @@ CREATE TABLE IF NOT EXISTS api_log (
 );
 CREATE INDEX IF NOT EXISTS idx_api_log_at ON api_log(at DESC);
 
+-- Currencies money can be recorded in. rate_micro is USD per one unit of the
+-- currency, times 1,000,000, so conversion is integer arithmetic throughout.
+CREATE TABLE IF NOT EXISTS currencies (
+    code        TEXT PRIMARY KEY,          -- ISO 4217
+    symbol      TEXT,
+    name        TEXT,
+    rate_micro  INTEGER NOT NULL DEFAULT 1000000,
+    rate_set_on TEXT,
+    rate_source TEXT,                      -- base | manual | boi
+    active      INTEGER NOT NULL DEFAULT 1
+);
+
+-- Every rate ever approved, so a converted total can be explained later.
+CREATE TABLE IF NOT EXISTS rate_history (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    code        TEXT NOT NULL,
+    rate_micro  INTEGER NOT NULL,
+    set_on      TEXT,
+    source      TEXT,
+    approved_by TEXT,
+    recorded_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_rate_history_code ON rate_history(code, id DESC);
+
 -- Pooled items: one row for many identical units. Mice, keyboards, headsets
 -- and bulk-bought licences have no serial and are interchangeable, so a row
 -- per unit would be noise. Instead the row carries a unit price and how many
@@ -257,7 +285,9 @@ CREATE TABLE IF NOT EXISTS stock_items (
     quantity        INTEGER NOT NULL DEFAULT 0,   -- units owned
     vendor          TEXT,
     notes           TEXT,
-    created_at      TEXT
+    created_at      TEXT,
+    currency        TEXT,
+    rate_micro      INTEGER
 );
 
 -- One row per person per item; handing out a second unit raises the quantity
@@ -277,7 +307,9 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     vendor                TEXT,
     monthly_cost_cents    INTEGER NOT NULL DEFAULT 0,  -- per seat, per month
     notes                 TEXT,
-    sku_id                TEXT        -- set when created from an Entra licence
+    sku_id                TEXT,       -- set when created from an Entra licence
+    currency              TEXT,
+    rate_micro            INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS subscription_seats (
@@ -327,6 +359,16 @@ def init_db():
         cols = [r["name"] for r in conn.execute("PRAGMA table_info(assets)")]
         if "external_id" not in cols:
             conn.execute("ALTER TABLE assets ADD COLUMN external_id TEXT")
+
+        # Migration: money-bearing rows gain the currency they were paid in and
+        # the rate that applied then. Existing rows inherit the reporting
+        # currency at a rate of 1, so no stored figure changes meaning.
+        for table in ("assets", "stock_items", "subscriptions", "price_groups"):
+            cols = [r["name"] for r in conn.execute(f"PRAGMA table_info({table})")]
+            if "currency" not in cols:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN currency TEXT")
+            if "rate_micro" not in cols:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN rate_micro INTEGER")
 
         # Migration: subscriptions can be linked to an Entra licence SKU.
         scols = [r["name"] for r in conn.execute("PRAGMA table_info(subscriptions)")]
@@ -394,6 +436,15 @@ def execute(sql, params=()):
 
 
 # --- money helpers -------------------------------------------------------
+
+def conv(amount_col: str, rate_col: str) -> str:
+    """SQL that converts a stored amount to the reporting currency.
+
+    Uses the rate frozen on the row, with explicit half-up rounding. Integers
+    throughout: SQLite would otherwise hand back floats that do not add up.
+    """
+    return f"(({amount_col} * COALESCE({rate_col}, 1000000) + 500000) / 1000000)"
+
 
 def to_cents(value) -> int:
     """Parse user-typed money into integer cents.

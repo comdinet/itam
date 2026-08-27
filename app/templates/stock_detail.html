@@ -1,17 +1,23 @@
 {% extends "base.html" %}
+{% from "_currency.html" import currency_select %}
 {% block title %}{{ i.name }} &middot; ITAM{% endblock %}
 {% block body %}
 <p class="crumb"><a href="/stock">&larr; Stock</a></p>
 <h1>{{ i.name }}</h1>
 <p class="meta">{{ i.category }}{% if i.vendor %} &middot; {{ i.vendor }}{% endif %}
-  &middot; {{ currency }} {{ i.unit_cost_cents|money }} per unit</p>
+  &middot; {{ i.currency or currency }} {{ i.unit_cost_cents|money }} per unit
+  {%- if (i.currency or currency) != currency %}
+    <span class="hint">&asymp; {{ currency }} {{ (i.unit_cost_cents * (i.rate_micro or 1000000) // 1000000)|money }}</span>
+  {%- endif %}</p>
 {% if i.notes %}<p class="meta">{{ i.notes }}</p>{% endif %}
 
 <div class="cards">
   <div class="card"><span class="label">Owned</span><span class="big">{{ i.quantity }}</span>
-    <span class="sub">{{ currency }} {{ s.total_value|money }} total</span></div>
+    <span class="sub">{{ i.currency or currency }} {{ s.total_value|money }} total
+      {%- if (i.currency or currency) != currency %} &asymp; {{ currency }} {{ s.total_value_rep|money }}{% endif %}</span></div>
   <div class="card"><span class="label">Handed out</span><span class="big">{{ s.allocated }}</span>
-    <span class="sub">{{ currency }} {{ s.allocated_value|money }} in people's hands</span></div>
+    <span class="sub">{{ i.currency or currency }} {{ s.allocated_value|money }} out
+      {%- if (i.currency or currency) != currency %} &asymp; {{ currency }} {{ s.allocated_value_rep|money }}{% endif %}</span></div>
   <div class="card"><span class="label">In stock</span><span class="big">{{ s.available }}</span></div>
   <div class="card"><span class="label">People holding it</span>
     <span class="big">{{ s.holders|length }}</span></div>
@@ -61,7 +67,8 @@
     <label>Category<select name="category">
       {% for c in categories() %}<option value="{{ c }}"
         {% if c == i.category %}selected{% endif %}>{{ c }}</option>{% endfor %}</select></label>
-    <label>Unit price ({{ currency }})<input name="unit_cost" value="{{ i.unit_cost_cents|money }}"></label>
+    <label>Unit price<input name="unit_cost" value="{{ i.unit_cost_cents|money }}"></label>
+    <label>Paid in{{ currency_select(currencies, i.currency) }}</label>
     <label>Quantity owned<input name="quantity" type="number" min="0" value="{{ i.quantity }}"></label>
     <label>Vendor<input name="vendor" value="{{ i.vendor or '' }}"></label>
     <label class="wide">Notes<input name="notes" value="{{ i.notes or '' }}"></label>

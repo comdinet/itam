@@ -5,11 +5,15 @@ People come from **Entra ID**, keyed on **UPN**. Two kinds of cost:
 
 | | What it is | Cost model |
 |---|---|---|
-| **Assets** | Serial-tracked kit: laptops, monitors, phones | one-off cost, one row per machine |
+| **Assets** | Serial-tracked kit: laptops, monitors, phones | one-off cost in any currency, one row per machine |
 | **Stock** | Interchangeable units: mice, keyboards, headsets, licences bought in bulk | unit price × how many, counted not listed |
 | **Subscriptions** | SaaS licences (M365, GitHub, Slack, …) | cost per seat, per month |
 
 Repository: <https://github.com/comdinet/itam>
+
+Amounts are recorded **in the currency they were paid in** — shekels, euros,
+pounds, dollars — and consolidated figures are converted at a rate frozen when
+the amount was entered.
 
 Stack: FastAPI + SQLite + server-rendered HTML. No build step, no JavaScript
 framework, no external services. One file for the database (`itam.db`).
@@ -445,6 +449,61 @@ Nightly at 03:00 (`crontab -e`):
 Every job is safe to re-run: syncs upsert and never delete inventory. Each line
 of output says what changed, and the exit status is non-zero if any job failed,
 so cron reports real failures instead of swallowing them.
+
+## Currencies
+
+Money is stored in the currency it was paid in and never converted on the way
+in. A laptop bought in Tel Aviv is ₪11,900 permanently — that is what the
+invoice says. Conversion happens only when figures are added together, and the
+amount, its currency, and the converted figure are all shown.
+
+**The rate is frozen when the amount is entered.** Last year's totals do not
+move because the shekel did, which is what book value means. Changing a rate
+today affects only what is entered from today — there is a test asserting
+exactly that.
+
+### Setting rates
+
+**Settings → Currencies**. Two ways:
+
+- **Check rates at Bank of Israel** fetches today's published rates and shows
+  them **for approval**. Nothing is stored until you tick and confirm, so a
+  published rate never moves your books on its own. BoI quotes everything
+  against the shekel, so one call yields all of them, expressed against your
+  reporting currency.
+- **Set a rate by hand** for anything BoI does not publish, or when you want a
+  specific figure.
+
+Every approval is recorded — rate, date, source, and who approved it — so a
+converted total can be explained months later.
+
+A currency in use cannot be deleted or switched off, and the reporting currency
+(`ITAM_CURRENCY`, default `USD`) is always present at exactly 1.
+
+### Entering amounts
+
+Every form that takes money has a **currency picker with no default**. The
+choice is always explicit: guessing one is how a shekel purchase silently
+becomes dollars. An amount submitted without a currency is refused.
+
+Editing a record keeps its frozen rate while the currency is unchanged, so
+fixing a typo in a name never revalues the purchase.
+
+### Reading totals
+
+- **Dashboard** shows the consolidated figure *and* a per-currency breakdown
+  underneath, so the number is checkable. The amounts on the left are exact;
+  the converted column is only as good as the rates.
+- **People** marks anyone holding items in more than one currency.
+- **A person's page** shows each line in what was paid, with the converted
+  figure beside it.
+- **Pricing groups** are priced in one currency, and applying one carries that
+  currency onto the assets it prices. A group covering both Israeli and UK
+  laptops needs splitting in two.
+
+Rates are stored as USD-per-unit × 1,000,000, and every conversion is integer
+arithmetic with explicit half-up rounding — floats would drift, and Python's
+`round()` rounds halves to even, which is not what money does.
 
 ## Stock: things you count rather than list
 

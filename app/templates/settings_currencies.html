@@ -1,0 +1,103 @@
+{% extends "settings_base.html" %}
+{% block title %}Currencies &middot; ITAM{% endblock %}
+{% block admin %}
+<h2>Currencies</h2>
+<p class="meta">Money is stored in the currency it was paid in. The rate is
+  frozen when an amount is entered, so what you paid stays what you paid and old
+  totals do not move when a rate changes. Consolidated figures are shown in
+  <strong>{{ reporting }}</strong>.</p>
+
+<form method="post" action="/settings/currencies/check" class="inline-form">
+  <button type="submit">Check rates at Bank of Israel</button>
+  <span class="hint">Fetches today's published rates and shows them for approval.
+    Nothing is stored until you tick and confirm.</span>
+</form>
+
+{% if fetch_error %}
+  <div class="warn"><strong>Could not read the rates.</strong><br>{{ fetch_error }}</div>
+{% endif %}
+
+{% if proposal %}
+<div class="panel">
+  <h2 style="margin-top:0">Proposed rates
+    <span class="count">Bank of Israel, {{ proposal.as_of }}</span></h2>
+  <p class="meta">Rates are expressed as {{ proposal.target }} per one unit.
+    Tick the ones to apply. Existing records keep the rate they were entered
+    with &mdash; this only affects what you enter from now on.</p>
+  <form method="post" action="/settings/currencies/approve">
+    <input type="hidden" name="as_of" value="{{ proposal.as_of }}">
+    <table>
+      <thead><tr><th>Apply</th><th>Currency</th><th class="num">Proposed rate</th>
+        <th class="num">Currently</th><th class="num">ILS per unit</th></tr></thead>
+      <tbody>
+      {% for p in proposal.proposals %}
+        <tr>
+          <td><input type="checkbox" name="rate_{{ p.code }}"
+                     {% if p.known and p.changed %}checked{% endif %}></td>
+          <td><strong>{{ p.code }}</strong> {{ p.name }}
+            {% if not p.known %}<span class="tag">new</span>
+            {% elif p.changed %}<span class="tag">changed</span>
+            {% else %}<span class="meta">unchanged</span>{% endif %}
+            <input type="hidden" name="symbol_{{ p.code }}" value="{{ p.symbol }}">
+            <input type="hidden" name="name_{{ p.code }}" value="{{ p.name }}"></td>
+          <td class="num mono">{{ p.rate }}
+            <input type="hidden" name="value_{{ p.code }}" value="{{ p.rate }}"></td>
+          <td class="num mono">{{ p.current or '—' }}</td>
+          <td class="num mono">{{ p.ils_per_unit }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p><button type="submit">Approve the ticked rates</button></p>
+  </form>
+  <p class="hint">Currencies already in use with a changed rate are ticked for you.
+    New ones are left unticked &mdash; add only what you actually buy in.</p>
+</div>
+{% endif %}
+
+<h2>In use here</h2>
+<table>
+  <thead><tr><th>Currency</th><th class="num">Rate to {{ reporting }}</th>
+    <th>Set</th><th>Source</th><th>Used by</th><th></th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr {% if not r.c.active %}class="disabled"{% endif %}>
+      <td><strong>{{ r.c.code }}</strong> <span class="mono">{{ r.c.symbol }}</span>
+        <div class="meta">{{ r.c.name }}</div>
+        {% if r.c.rate_source == 'base' %}<span class="tag spare">reporting currency</span>{% endif %}
+        {% if not r.c.active %}<span class="tag">off</span>{% endif %}</td>
+      <td class="num mono">{{ r.rate }}</td>
+      <td class="mono">{{ r.c.rate_set_on or '—' }}</td>
+      <td class="meta">{{ r.c.rate_source }}</td>
+      <td class="meta">
+        {% set u = r.usage %}
+        {% if u.assets or u.stock or u.subscriptions or u.pricing %}
+          {{ u.assets }} asset(s), {{ u.stock }} stock, {{ u.subscriptions }} sub(s),
+          {{ u.pricing }} pricing group(s)
+        {% else %}not used yet{% endif %}</td>
+      <td class="row-actions">
+        {% if r.c.rate_source != 'base' %}
+          <form method="post" action="/settings/currencies/{{ r.c.code }}/toggle">
+            <input type="hidden" name="active" value="{{ '' if r.c.active else '1' }}">
+            <button class="link">{{ 'Switch off' if r.c.active else 'Switch on' }}</button></form>
+          <form method="post" action="/settings/currencies/{{ r.c.code }}/delete"
+                onsubmit="return confirm('Remove {{ r.c.code }}?')">
+            <button class="link danger">Remove</button></form>
+        {% endif %}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<details class="panel">
+  <summary>Set a rate by hand</summary>
+  <form class="grid-form" method="post" action="/settings/currencies/manual">
+    <label>Code<input name="code" required placeholder="ILS" maxlength="4"></label>
+    <label>Symbol<input name="symbol" placeholder="&#8362;"></label>
+    <label>Name<input name="name" placeholder="Israeli new shekel"></label>
+    <label>{{ reporting }} per one unit<input name="rate" required
+           inputmode="decimal" placeholder="0.3357"></label>
+    <button type="submit">Save rate</button>
+  </form>
+  <p class="hint">The rate is how many {{ reporting }} one unit buys. If a shekel
+     is worth about 34 US cents, the rate is 0.34.</p>
+</details>
+{% endblock %}

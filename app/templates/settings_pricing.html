@@ -1,4 +1,5 @@
 {% extends "settings_base.html" %}
+{% from "_currency.html" import currency_select %}
 {% block title %}Pricing &middot; ITAM{% endblock %}
 {% block admin %}
 <h2>Pricing groups <span class="count">{{ groups|length }}</span></h2>
@@ -11,7 +12,8 @@
   <summary>Add a pricing group</summary>
   <form class="grid-form" method="post" action="/settings/pricing/new">
     <label>Name<input name="name" required placeholder="MacBook Air 13 M4 16/512"></label>
-    <label>Price ({{ currency }})<input name="price" inputmode="decimal" placeholder="1299.00"></label>
+    <label>Price<input name="price" inputmode="decimal" placeholder="1299.00"></label>
+    <label>Priced in{{ currency_select(currencies) }}</label>
     <label>Model (optional starting point)<input name="model" list="known-models"
            placeholder="Latitude 5450"></label>
     <datalist id="known-models">
@@ -36,7 +38,8 @@
       <td>{% if row.describe %}
             {% for d in row.describe %}<div class="meta">{{ d }}</div>{% endfor %}
           {% else %}<span class="tag">no criteria yet</span>{% endif %}</td>
-      <td class="num">{{ row.g.price_cents|money }}</td>
+      <td class="num">{{ row.g.price_cents|money }}
+        <span class="chip">{{ row.g.currency or currency }}</span></td>
       <td class="num">{{ row.matched }}</td>
       <td class="num">{% if row.to_change %}<strong>{{ row.to_change }}</strong>{% else %}0{% endif %}</td>
       <td class="row-actions">

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_currency.html" import currency_select %}
 {% block title %}{{ a.name }} &middot; ITAM{% endblock %}
 {% block body %}
 <p class="crumb"><a href="/assets">&larr; Assets</a></p>
@@ -11,7 +12,8 @@
     <label>Category<select name="category">
       {% for c in categories() %}<option value="{{ c }}" {% if c == a.category %}selected{% endif %}>{{ c }}</option>{% endfor %}
     </select></label>
-    <label>Cost ({{ currency }})<input name="cost" inputmode="decimal" value="{{ a.cost_cents|money }}"></label>
+    <label>Cost<input name="cost" inputmode="decimal" value="{{ a.cost_cents|money }}"></label>
+    <label>Paid in{{ currency_select(currencies, a.currency) }}</label>
     <label>Serial<input name="serial" value="{{ a.serial or '' }}"></label>
     <label>Purchased<input type="date" name="purchased_on" value="{{ a.purchased_on or '' }}"></label>
     <label>Assigned to<select name="assigned_upn"><option value="">&mdash; spare &mdash;</option>

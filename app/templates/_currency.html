@@ -1,0 +1,10 @@
+{# A currency picker with no default: the choice is always explicit. #}
+{% macro currency_select(currencies, selected=None, name='currency') %}
+<select name="{{ name }}" required>
+  <option value="">&mdash; choose &mdash;</option>
+  {% for c in currencies %}
+    <option value="{{ c.code }}" {% if selected == c.code %}selected{% endif %}
+      >{{ c.code }} &nbsp;{{ c.symbol }}{% if c.rate_source == 'base' %} (reporting){% endif %}</option>
+  {% endfor %}
+</select>
+{% endmacro %}

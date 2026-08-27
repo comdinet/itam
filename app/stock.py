@@ -20,17 +20,20 @@ def _now() -> str:
 
 
 def create(name: str, category: str, unit_cost_cents: int, quantity: int,
-           vendor: str | None = None, notes: str | None = None) -> int:
+           vendor: str | None = None, notes: str | None = None,
+           currency: str | None = None, rate_micro: int | None = None) -> int:
     return db.execute(
         """INSERT INTO stock_items (name, category, unit_cost_cents, quantity,
-                                    vendor, notes, created_at)
-           VALUES (?,?,?,?,?,?,?)""",
+                                    vendor, notes, created_at, currency, rate_micro)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
         (name.strip(), category, max(0, unit_cost_cents), max(0, quantity),
-         (vendor or "").strip() or None, (notes or "").strip() or None, _now()))
+         (vendor or "").strip() or None, (notes or "").strip() or None, _now(),
+         currency, rate_micro))
 
 
 def update(item_id: int, name: str, category: str, unit_cost_cents: int,
-           quantity: int, vendor: str | None, notes: str | None) -> str | None:
+           quantity: int, vendor: str | None, notes: str | None,
+           currency: str | None = None, rate_micro: int | None = None) -> str | None:
     """Returns a complaint if the change is impossible, else None."""
     allocated = allocated_units(item_id)
     if quantity < allocated:
@@ -38,9 +41,11 @@ def update(item_id: int, name: str, category: str, unit_cost_cents: int,
                 f"owned cannot drop below that. Take some back first.")
     db.execute(
         """UPDATE stock_items SET name=?, category=?, unit_cost_cents=?, quantity=?,
-                                  vendor=?, notes=? WHERE id=?""",
+                                  vendor=?, notes=?, currency=?, rate_micro=?
+           WHERE id=?""",
         (name.strip(), category, max(0, unit_cost_cents), max(0, quantity),
-         (vendor or "").strip() or None, (notes or "").strip() or None, item_id))
+         (vendor or "").strip() or None, (notes or "").strip() or None,
+         currency, rate_micro, item_id))
     return None
 
 
@@ -60,6 +65,7 @@ def allocated_units(item_id: int) -> int:
 def listing():
     return db.q(
         """SELECT s.*,
+                  """ + db.conv("s.quantity * s.unit_cost_cents", "s.rate_micro") + """ AS value_rep,
                   COALESCE((SELECT SUM(quantity) FROM stock_allocations a
                             WHERE a.item_id = s.id), 0) AS allocated,
                   COALESCE((SELECT COUNT(*) FROM stock_allocations a
@@ -69,11 +75,15 @@ def listing():
 
 def summary(item) -> dict:
     allocated = allocated_units(item["id"])
+    from . import fx
+    rate = item["rate_micro"]
     return {
         "allocated": allocated,
         "available": item["quantity"] - allocated,
         "total_value": item["quantity"] * item["unit_cost_cents"],
         "allocated_value": allocated * item["unit_cost_cents"],
+        "total_value_rep": fx.to_reporting(item["quantity"] * item["unit_cost_cents"], rate),
+        "allocated_value_rep": fx.to_reporting(allocated * item["unit_cost_cents"], rate),
         "holders": db.q(
             """SELECT a.*, u.display_name, u.account_enabled
                FROM stock_allocations a JOIN users u ON u.upn = a.upn
@@ -121,13 +131,15 @@ def take_back(item_id: int, upn: str, quantity: int | None = None) -> str | None
 
 
 def totals() -> dict:
+    # Values are in the reporting currency: stock items may be priced in
+    # several, and raw sums across them would be meaningless.
     row = db.q1(
         """SELECT COALESCE(SUM(quantity),0) AS units,
-                  COALESCE(SUM(quantity * unit_cost_cents),0) AS value,
+                  COALESCE(SUM(""" + db.conv("quantity * unit_cost_cents", "rate_micro") + """),0) AS value,
                   COUNT(*) AS items FROM stock_items""")
     alloc = db.q1(
         """SELECT COALESCE(SUM(a.quantity),0) AS units,
-                  COALESCE(SUM(a.quantity * s.unit_cost_cents),0) AS value
+                  COALESCE(SUM(""" + db.conv("a.quantity * s.unit_cost_cents", "s.rate_micro") + """),0) AS value
            FROM stock_allocations a JOIN stock_items s ON s.id = a.item_id""")
     # Not named "items": in a template, dict.items is the method, not the key.
     return {"item_count": row["items"], "units": row["units"], "value": row["value"],
@@ -138,7 +150,9 @@ def totals() -> dict:
 
 def for_user(upn: str):
     return db.q(
-        """SELECT s.id, s.name, s.category, s.unit_cost_cents, a.quantity,
-                  a.assigned_on, (a.quantity * s.unit_cost_cents) AS cost
+        """SELECT s.id, s.name, s.category, s.unit_cost_cents, s.currency,
+                  s.rate_micro, a.quantity, a.assigned_on,
+                  (a.quantity * s.unit_cost_cents) AS cost,
+                  """ + db.conv("a.quantity * s.unit_cost_cents", "s.rate_micro") + """ AS cost_rep
            FROM stock_allocations a JOIN stock_items s ON s.id = a.item_id
            WHERE a.upn = ? ORDER BY s.category, s.name""", (upn,))

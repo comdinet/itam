@@ -33,7 +33,13 @@
       <td>{{ u.country or '' }}</td>
       <td class="num">{{ u.asset_count }}</td>
       <td class="num">{{ u.asset_total|money }}</td>
-      <td class="num">{{ u.stock_total|money }}</td>
+      <td class="num">{{ u.stock_total|money }}
+        {% if u.onetime_currencies and ',' in u.onetime_currencies %}
+          {% set codes = u.onetime_currencies.split(',')|reject('equalto','')|unique|sort|list %}
+          {% if codes|length > 1 %}
+            <span class="chip" title="paid in {{ codes|join(', ') }}">{{ codes|join('/') }}</span>
+          {% endif %}
+        {% endif %}</td>
       <td class="num">{{ u.sub_count }}</td>
       <td class="num">{{ u.monthly_total|money }}</td>
       <td class="num">{{ (u.monthly_total * 12)|money }}</td></tr>

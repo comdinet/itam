@@ -1,4 +1,5 @@
 {% extends "settings_base.html" %}
+{% from "_currency.html" import currency_select %}
 {% block title %}{{ g.name }} &middot; ITAM{% endblock %}
 {% block admin %}
 <p class="crumb"><a href="/settings/pricing">&larr; Pricing</a></p>
@@ -7,7 +8,7 @@
 
 <div class="cards">
   <div class="card"><span class="label">Price</span>
-    <span class="big">{{ currency }} {{ g.price_cents|money }}</span>
+    <span class="big">{{ g.currency or currency }} {{ g.price_cents|money }}</span>
     <span class="sub">per asset</span></div>
   <div class="card"><span class="label">Assets matched</span>
     <span class="big">{{ s.matched }}</span>
@@ -72,7 +73,8 @@
   <summary>Edit name, price and notes</summary>
   <form class="grid-form" method="post" action="/settings/pricing/{{ g.id }}/edit">
     <label>Name<input name="name" value="{{ g.name }}" required></label>
-    <label>Price ({{ currency }})<input name="price" value="{{ g.price_cents|money }}"></label>
+    <label>Price<input name="price" value="{{ g.price_cents|money }}"></label>
+    <label>Priced in{{ currency_select(currencies, g.currency) }}</label>
     <label class="wide">Notes<input name="notes" value="{{ g.notes or '' }}"></label>
     <button type="submit">Save</button>
   </form>

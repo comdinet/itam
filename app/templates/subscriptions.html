@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_currency.html" import currency_select %}
 {% block title %}Subscriptions &middot; ITAM{% endblock %}
 {% block body %}
 <h1>Subscriptions <span class="count">{{ subs|length }}</span></h1>
@@ -10,7 +11,8 @@
   <form class="grid-form" method="post" action="/subscriptions/new">
     <label>Name<input name="name" required placeholder="Microsoft 365 E3"></label>
     <label>Vendor<input name="vendor" placeholder="Microsoft"></label>
-    <label>Cost per seat / month ({{ currency }})<input name="monthly_cost" inputmode="decimal" placeholder="33.00"></label>
+    <label>Cost per seat / month<input name="monthly_cost" inputmode="decimal" placeholder="33.00"></label>
+    <label>Billed in{{ currency_select(currencies) }}</label>
     <label class="wide">Notes<input name="notes" placeholder="renewal date, contract ref, …"></label>
     <button type="submit">Add subscription</button>
   </form>
@@ -23,10 +25,11 @@
   {% for s in subs %}
     <tr><td><a href="/subscriptions/{{ s.id }}">{{ s.name }}</a></td>
         <td>{{ s.vendor or '' }}</td>
-        <td class="num">{{ s.monthly_cost_cents|money }}</td>
+        <td class="num">{{ s.monthly_cost_cents|money }}
+          <span class="chip">{{ s.currency or currency }}</span></td>
         <td class="num">{{ s.seats }}</td>
-        <td class="num">{{ s.monthly|money }}</td>
-        <td class="num">{{ (s.monthly * 12)|money }}</td></tr>
+        <td class="num">{{ s.monthly_rep|money }}</td>
+        <td class="num">{{ (s.monthly_rep * 12)|money }}</td></tr>
   {% else %}
     <tr><td colspan="6" class="empty">No subscriptions yet &mdash; add your first one above.</td></tr>
   {% endfor %}

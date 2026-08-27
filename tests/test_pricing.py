@@ -127,10 +127,14 @@ for field, op in (("nonsense", "eq"), ("model", "regex"), ("attribute", "eq")):
         print(f"PASS  refused {field}/{op}")
 
 print("\n--- price_for_asset, used when creating an asset from Intune ---")
-check("a covered asset gets its group price", pricing.price_for_asset(m1), 129900)
-check("an uncovered asset gets nothing",
-      pricing.price_for_asset(db.q1("SELECT id FROM assets WHERE serial='MBP-1'")["id"]) in (None, 1),
-      True)
+# price_for_asset now returns the price with its currency, so an asset created
+# from Intune inherits a figure that knows what it is denominated in.
+hit = pricing.price_for_asset(m1)
+check("a covered asset gets its group price", hit["price_cents"], 129900)
+check("and the group's currency travels with it", "currency" in hit, True)
+other = pricing.price_for_asset(db.q1("SELECT id FROM assets WHERE serial='MBP-1'")["id"])
+check("an uncovered asset gets nothing, or only a trivial group",
+      other is None or other["price_cents"] in (1,), True)
 
 print("\n--- deleting a group leaves prices alone ---")
 before = db.q1("SELECT cost_cents FROM assets WHERE serial='MBA-1'")["cost_cents"]

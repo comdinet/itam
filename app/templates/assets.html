@@ -1,8 +1,10 @@
 {% extends "base.html" %}
+{% from "_currency.html" import currency_select %}
 {% block title %}Assets &middot; ITAM{% endblock %}
 {% block body %}
 <h1>Assets <span class="count">{{ assets|length }}</span></h1>
-<p class="meta">Total value shown: {{ currency }} {{ total|money }}</p>
+<p class="meta">Total value shown: {{ currency }} {{ total|money }}
+  <span class="hint">converted to {{ currency }} at the rate held on each asset</span></p>
 
 <form class="filters" method="get" action="/assets">
   <input type="search" name="q" value="{{ q }}" placeholder="Name or serial">
@@ -23,7 +25,8 @@
     <label>Name<input name="name" required placeholder="MacBook Pro 14 M4"></label>
     <label>Category<select name="category">
       {% for c in categories() %}<option value="{{ c }}">{{ c }}</option>{% endfor %}</select></label>
-    <label>Cost ({{ currency }})<input name="cost" inputmode="decimal" placeholder="2499.00"></label>
+    <label>Cost<input name="cost" inputmode="decimal" placeholder="2499.00"></label>
+    <label>Paid in{{ currency_select(currencies) }}</label>
     <label>Serial<input name="serial" placeholder="optional"></label>
     <label>Purchased<input type="date" name="purchased_on"></label>
     <label>Assign to<select name="assigned_upn"><option value="">— spare —</option>
@@ -42,7 +45,8 @@
       <td>{{ a.name }}</td><td>{{ a.category }}</td><td class="mono">{{ a.serial or '' }}</td>
       <td>{% if a.assigned_upn %}<a href="/users/{{ a.assigned_upn }}">{{ a.display_name }}</a>
           {% else %}<span class="tag spare">spare</span>{% endif %}</td>
-      <td class="num">{{ a.cost_cents|money }}</td>
+      <td class="num">{{ a.cost_cents|money }}
+        <span class="chip">{{ a.currency or currency }}</span></td>
       <td class="row-actions"><a href="/assets/{{ a.id }}">Edit</a></td></tr>
   {% else %}
     <tr><td colspan="6" class="empty">
