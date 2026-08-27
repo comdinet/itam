@@ -38,7 +38,8 @@
 
 <table>
   <thead><tr><th>Licence</th><th>String ID</th><th class="num">Purchased</th>
-    <th class="num">Assigned</th><th class="num">Unused</th><th class="num">Held by synced people</th></tr></thead>
+    <th class="num">Assigned</th><th class="num">Unused</th>
+    <th class="num">Held by synced people</th><th>Subscription</th></tr></thead>
   <tbody>
   {% for l in licences %}
     <tr>
@@ -48,12 +49,24 @@
       <td class="num">{{ l.consumed }}</td>
       <td class="num">{% if l.prepaid - l.consumed > 0 %}<strong>{{ l.prepaid - l.consumed }}</strong>
           {% else %}{{ l.prepaid - l.consumed }}{% endif %}</td>
-      <td class="num">{{ l.held_here }}</td></tr>
+      <td class="num">{{ l.held_here }}</td>
+      <td class="row-actions">
+        {% if l.sub_id %}
+          <a href="/subscriptions/{{ l.sub_id }}">tracked</a>
+          {% if not l.monthly_cost_cents %}<span class="tag">no cost set</span>{% endif %}
+        {% else %}
+          <form method="post" action="/settings/licences/{{ l.sku_id }}/create-subscription">
+            <button class="link">Create subscription</button></form>
+        {% endif %}</td></tr>
   {% else %}
-    <tr><td colspan="6" class="empty">No licences yet &mdash; run a check.</td></tr>
+    <tr><td colspan="7" class="empty">No licences yet &mdash; run a check.</td></tr>
   {% endfor %}
   </tbody>
 </table>
+<p class="hint">&ldquo;Create subscription&rdquo; makes a tracked subscription from the
+  licence and grants its current holders a seat, so the counts line up straight
+  away. Cost starts at zero &mdash; Entra knows who holds a licence, not what you
+  pay for it, so set the per-seat price on the Subscriptions page.</p>
 <p class="hint">&ldquo;Assigned&rdquo; is Entra's own count for the whole tenant.
   &ldquo;Held by synced people&rdquo; counts only those matching a user in ITAM, so a
   gap between the two means licensed accounts your

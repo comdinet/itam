@@ -306,7 +306,7 @@ Set `ITAM_COOKIE_SECURE=1` when you put this behind HTTPS.
    | `Organization.Read.All` | licence SKUs the tenant owns |
    | `Group.Read.All` | groups and membership |
    | `DeviceManagementManagedDevices.Read.All` | Intune devices |
-   | `DeviceManagementConfiguration.Read.All` | macOS custom attributes |
+   | `DeviceManagementScripts.Read.All` | macOS custom attributes |
 
    Only `User.Read.All` is required. Add the others when you want groups,
    devices, or attributes.
@@ -395,6 +395,12 @@ string ID:
 Any SKU not in that map is listed under its raw string ID rather than hidden,
 so nothing goes missing.
 
+**Create subscription** turns a licence into a tracked subscription and grants
+its current holders a seat, so the counts line up with Entra immediately. The
+cost starts at zero: Entra knows who holds a licence, not what you pay for it,
+so set the per-seat price on the Subscriptions page. The licence row then links
+to the subscription and flags it while no cost is set.
+
 Two numbers are worth watching:
 
 - **Unused** — purchased minus assigned, straight from Entra. Seats you pay for
@@ -436,8 +442,16 @@ sync first: only people already in ITAM can be linked, and the group list shows
 how many members it could not match (nested groups, service principals, or
 someone who joined since the last user sync).
 
+Membership comes from Entra's `transitiveMembers`, so people in **nested
+groups** are included — a group of groups resolves to the actual people.
+
 Membership is replaced on every sync, so someone removed from a group in Entra
 stops counting here too.
+
+If a group shows fewer people than Entra does, open it: the **Not matched to an
+ITAM user** section lists those UPNs by name and says why. Almost always it is
+`ENTRA_USER_FILTER` excluding them — guests, disabled accounts, or anyone with
+a null `userType` if you filter on `userType eq 'Member'`.
 
 ### Devices
 
@@ -450,7 +464,9 @@ For a device with no asset, **Create asset** makes one from the device details
 and links them, leaving you to fill in the cost.
 
 **macOS custom attributes** are shell scripts in Intune whose output Intune
-stores per device. *Sync macOS custom attributes* reads those results and merges
+stores per device. Needs `DeviceManagementScripts.Read.All` — Microsoft moved
+this endpoint off `DeviceManagementConfiguration.*` in July 2025, so older
+guides name the wrong permission. *Sync macOS custom attributes* reads those results and merges
 them onto the device, so an attribute reporting CPU and RAM shows up on the
 device row:
 

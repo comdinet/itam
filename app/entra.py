@@ -73,8 +73,10 @@ def config_status() -> dict:
 # Which Graph application permission each endpoint needs, so a 403 can say
 # what is actually missing instead of just the status code.
 PERMISSION_FOR = [
+    # Microsoft moved this endpoint to DeviceManagementScripts.* in July 2025;
+    # it used to be DeviceManagementConfiguration.*.
     ("/deviceManagement/deviceCustomAttributeShellScripts",
-     "DeviceManagementConfiguration.Read.All"),
+     "DeviceManagementScripts.Read.All"),
     ("/deviceManagement/managedDevices", "DeviceManagementManagedDevices.Read.All"),
     ("/subscribedSkus", "Organization.Read.All"),
     ("/groups", "Group.Read.All"),
@@ -252,10 +254,12 @@ def sync_groups() -> dict:
         gid = g.get("id")
         if not gid:
             continue
-        # Only members already synced as users can be linked, so run the user
-        # sync first; anything else is counted and reported.
-        members = _get_all(f"/groups/{gid}/members",
-                           {"$select": "id,userPrincipalName", "$top": "999"})
+        # transitiveMembers, cast to user: includes people in nested groups and
+        # excludes non-user members outright. Plain /members would return only
+        # direct members, so anyone in a nested group would silently vanish.
+        members = _get_all(
+            f"/groups/{gid}/transitiveMembers/microsoft.graph.user",
+            {"$select": "id,userPrincipalName", "$top": "999"})
         upns = [(m.get("userPrincipalName") or "").strip().lower()
                 for m in members if m.get("userPrincipalName")]
 
@@ -271,12 +275,19 @@ def sync_groups() -> dict:
                        synced_at    = excluded.synced_at""",
                 (gid, g.get("displayName") or gid, g.get("description"), len(upns), now))
             conn.execute("DELETE FROM group_members WHERE group_id = ?", (gid,))
+            conn.execute("DELETE FROM group_members_unlinked WHERE group_id = ?", (gid,))
             for upn in upns:
                 known = conn.execute("SELECT 1 FROM users WHERE upn = ?", (upn,)).fetchone()
                 if known:
                     conn.execute(
                         "INSERT OR IGNORE INTO group_members (group_id, upn) VALUES (?,?)",
                         (gid, upn))
+                else:
+                    # Recorded by name, so the group page can say who is missing
+                    # rather than only how many.
+                    conn.execute(
+                        """INSERT OR IGNORE INTO group_members_unlinked (group_id, upn)
+                           VALUES (?,?)""", (gid, upn))
             if exists:
                 updated += 1
             else:
@@ -288,6 +299,18 @@ def sync_groups() -> dict:
 
     return {"groups": len(groups), "created": created, "updated": updated,
             "members_linked": members_linked, "members_unknown": skipped_members}
+
+
+def unlinked_reason() -> str:
+    """Why a group member might not be an ITAM user."""
+    user_filter = settings.get("ENTRA_USER_FILTER")
+    if user_filter:
+        return (f"These people are in the group in Entra but are not users here. "
+                f"The user sync is filtered by: {user_filter} - anyone it excludes "
+                f"cannot be linked. Run the user sync, and check that filter.")
+    return ("These people are in the group in Entra but are not users here. "
+            "Run the user sync under Entra ID; if they still do not appear, they "
+            "are probably not user accounts.")
 
 
 # --- Intune devices ------------------------------------------------------
@@ -375,17 +398,22 @@ def sync_custom_attributes() -> dict:
     what gets stored here - so an attribute reporting CPU and RAM shows up on
     the device.
 
-    Beta endpoint (no v1.0 equivalent). Needs
-    DeviceManagementConfiguration.Read.All with admin consent.
+    Beta endpoint (no v1.0 equivalent). Needs DeviceManagementScripts.Read.All
+    with admin consent - Microsoft moved this off
+    DeviceManagementConfiguration.* in July 2025.
     """
     scripts = _get_all("/deviceManagement/deviceCustomAttributeShellScripts",
-                       {"$select": "id,displayName"}, base=GRAPH_BETA)
+                       {"$select": "id,displayName,customAttributeName"},
+                       base=GRAPH_BETA)
     now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     stored = skipped = 0
 
     for script in scripts:
         sid = script.get("id")
-        label = script.get("displayName") or sid
+        # customAttributeName is the attribute Intune actually reports under;
+        # displayName is just the script's name in the console.
+        label = (script.get("customAttributeName")
+                 or script.get("displayName") or sid)
         if not sid:
             continue
         states = _get_all(
@@ -496,6 +524,8 @@ PROBES = [
     ("Licences", "/subscribedSkus", "Organization.Read.All", "{'$top': '1'}"),
     ("Intune devices", "/deviceManagement/managedDevices",
      "DeviceManagementManagedDevices.Read.All", "{'$select': 'id', '$top': '1'}"),
+    ("macOS custom attributes", "/deviceManagement/deviceCustomAttributeShellScripts",
+     "DeviceManagementScripts.Read.All", "{'$top': '1'}"),
 ]
 
 
@@ -519,8 +549,9 @@ def test_connection() -> dict:
         params = {"$top": "1"}
         if path in ("/users", "/groups", "/deviceManagement/managedDevices"):
             params["$select"] = "id"
+        base = GRAPH_BETA if "ShellScripts" in path else GRAPH
         try:
-            _get_all_once(path, params)
+            _get_all_once(path, params, base=base)
             result["probes"].append({"label": label, "ok": True,
                                      "permission": permission, "detail": "reachable"})
         except GraphError as exc:
@@ -533,12 +564,12 @@ def test_connection() -> dict:
     return result
 
 
-def _get_all_once(path: str, params: dict) -> list[dict]:
+def _get_all_once(path: str, params: dict, base: str = GRAPH) -> list[dict]:
     """One page only - enough to prove a permission works, without walking a
     whole tenant just to run a test."""
     token = _token()
     with httpx.Client(timeout=30) as client:
-        resp = client.get(f"{GRAPH}{path}", headers={"Authorization": f"Bearer {token}"},
+        resp = client.get(f"{base}{path}", headers={"Authorization": f"Bearer {token}"},
                           params=params)
     if resp.status_code >= 400:
         raise GraphError(_explain(resp, path))

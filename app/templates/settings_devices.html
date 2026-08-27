@@ -28,7 +28,9 @@
     <button type="submit" {% if not cfg.configured %}disabled{% endif %}>Sync macOS custom attributes</button></form>
 </div>
 <p class="hint">Devices need <span class="mono">DeviceManagementManagedDevices.Read.All</span>;
-  custom attributes need <span class="mono">DeviceManagementConfiguration.Read.All</span>.
+  custom attributes need <span class="mono">DeviceManagementScripts.Read.All</span>
+  (Microsoft moved this off <span class="mono">DeviceManagementConfiguration.*</span>
+  in July 2025, so older guides name the wrong one).
   Custom attributes are macOS shell scripts in Intune &mdash; whatever the script
   prints is stored against the device, so an attribute reporting CPU and RAM
   shows up below.</p>

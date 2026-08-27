@@ -46,14 +46,14 @@ PAGES[f"{G}/groups"] = {"value": [
     {"id": "g-design", "displayName": "Design", "description": "Design team"},
     {"id": "g-eng", "displayName": "Engineering", "description": None},
 ]}
-PAGES[f"{G}/groups/g-design/members"] = {
+PAGES[f"{G}/groups/g-design/transitiveMembers/microsoft.graph.user"] = {
     "value": [{"id":"1","userPrincipalName":"Hedy@X.com"},
               {"id":"2","userPrincipalName":"ada@x.com"},
               {"id":"3"}],                                  # nested group: no UPN
-    "@odata.nextLink": f"{G}/groups/g-design/members?$skip=3"}
-PAGES[f"{G}/groups/g-design/members?$skip=3"] = {
+    "@odata.nextLink": f"{G}/groups/g-design/transitiveMembers/microsoft.graph.user?$skip=3"}
+PAGES[f"{G}/groups/g-design/transitiveMembers/microsoft.graph.user?$skip=3"] = {
     "value": [{"id":"4","userPrincipalName":"ghost@x.com"}]}  # not synced as a user
-PAGES[f"{G}/groups/g-eng/members"] = {
+PAGES[f"{G}/groups/g-eng/transitiveMembers/microsoft.graph.user"] = {
     "value": [{"id":"5","userPrincipalName":"grace@x.com"}]}
 
 r = entra.sync_groups()
@@ -62,21 +62,28 @@ check("groups fetched", r["groups"], 2)
 check("created", r["created"], 2)
 check("members linked", r["members_linked"], 3)      # hedy, ada, grace
 check("members unknown", r["members_unknown"], 1)    # ghost@x.com
-check("member paging followed", f"{G}/groups/g-design/members?$skip=3" in requested, True)
+check("member paging followed", f"{G}/groups/g-design/transitiveMembers/microsoft.graph.user?$skip=3" in requested, True)
+check("transitive cast used, so nested groups are included",
+      any("transitiveMembers/microsoft.graph.user" in u for u in requested), True)
 check("UPN lowercased in membership",
       bool(db.q1("SELECT 1 FROM group_members WHERE upn='hedy@x.com'")), True)
-check("nested group without UPN ignored",
+check("member without a UPN ignored",
       db.q1("SELECT COUNT(*) c FROM group_members WHERE group_id='g-design'")["c"], 2)
+check("the unmatched member is recorded by name",
+      [r["upn"] for r in db.q("SELECT upn FROM group_members_unlinked WHERE group_id='g-design'")],
+      ["ghost@x.com"])
 check("member_count records Entra's number, not ours",
       db.q1("SELECT member_count FROM groups WHERE id='g-design'")["member_count"], 3)
 
 # re-sync with Hedy removed: membership must not be stale
-PAGES[f"{G}/groups/g-design/members"] = {"value": [{"id":"2","userPrincipalName":"ada@x.com"}]}
-del PAGES[f"{G}/groups/g-design/members?$skip=3"]
+PAGES[f"{G}/groups/g-design/transitiveMembers/microsoft.graph.user"] = {"value": [{"id":"2","userPrincipalName":"ada@x.com"}]}
+del PAGES[f"{G}/groups/g-design/transitiveMembers/microsoft.graph.user?$skip=3"]
 r2 = entra.sync_groups()
 check("re-sync updates not duplicates", r2["created"], 0)
 check("removed member is dropped",
       bool(db.q1("SELECT 1 FROM group_members WHERE group_id='g-design' AND upn='hedy@x.com'")), False)
+check("stale unmatched rows are cleared on re-sync",
+      db.q1("SELECT COUNT(*) c FROM group_members_unlinked WHERE group_id='g-design'")["c"], 0)
 # The reserved "Everyone" pseudo-group also lives in this table, so count
 # only groups that actually came from Entra.
 check("no duplicate groups",

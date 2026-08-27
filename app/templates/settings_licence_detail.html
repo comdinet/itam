@@ -13,6 +13,18 @@
   <div class="card"><span class="label">Held by synced people</span><span class="big">{{ holders|length }}</span></div>
 </div>
 
+{% if sub %}
+<p class="meta">Tracked as the subscription
+  <a href="/subscriptions/{{ sub.id }}">{{ sub.name }}</a>
+  {% if not sub.monthly_cost_cents %}&mdash; <span class="tag">no per-seat cost set yet</span>{% endif %}</p>
+{% else %}
+<form method="post" action="/settings/licences/{{ l.sku_id }}/create-subscription"
+      class="inline-form">
+  <button type="submit">Create subscription from this licence</button>
+  <span class="hint">Creates it with the current holders as seats. Cost starts at zero.</span>
+</form>
+{% endif %}
+
 <h2>Who holds it</h2>
 <table>
   <thead><tr><th>Name</th><th>UPN</th><th>Department</th><th>Country</th><th>Status</th></tr></thead>

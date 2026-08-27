@@ -24,15 +24,15 @@
         <td class="meta">{{ g.description or '' }}</td>
         <td class="num">{{ g.member_count }}</td>
         <td class="num">{{ g.known }}
-          {% if g.known < g.member_count %}<span class="tag">{{ g.member_count - g.known }} unmatched</span>{% endif %}</td>
+          {% if g.unlinked %}<span class="tag">{{ g.unlinked }} unmatched</span>{% endif %}</td>
         <td class="mono">{{ (g.synced_at or '')[:16].replace('T',' ') }}</td></tr>
   {% else %}
     <tr><td colspan="5" class="empty">No groups yet &mdash; run a sync.</td></tr>
   {% endfor %}
   </tbody>
 </table>
-<p class="hint">&ldquo;Unmatched&rdquo; members exist in the group but not in ITAM, usually
-  because they are not users (nested groups, service principals) or the user sync
-  has not run since they joined. Sync users under
-  <a href="/settings/entra">Entra ID</a> first.</p>
+<p class="hint">Membership comes from Entra's <span class="mono">transitiveMembers</span>,
+  so people in nested groups are included. &ldquo;Unmatched&rdquo; means Entra lists
+  them in the group but they are not users here &mdash; open the group to see
+  exactly who, and why.</p>
 {% endblock %}

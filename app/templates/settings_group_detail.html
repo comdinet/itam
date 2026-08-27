@@ -1,5 +1,15 @@
 {% extends "settings_base.html" %}
-{% block title %}{{ g.display_name }} &middot; ITAM{% endblock %}
+{% block title %}{{ g.display_name }} &middot; ITAM{% if unlinked %}
+<h2>Not matched to an ITAM user <span class="count">{{ unlinked|length }}</span></h2>
+<div class="warn">{{ unlinked_reason }}</div>
+<table>
+  <thead><tr><th>UPN in Entra</th></tr></thead>
+  <tbody>
+  {% for u in unlinked %}<tr><td class="mono">{{ u.upn }}</td></tr>{% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}
 {% block admin %}
 <p class="crumb"><a href="/settings/groups">&larr; Groups</a></p>
 <h2>{{ g.display_name }}</h2>
@@ -25,4 +35,14 @@
   {% endfor %}
   </tbody>
 </table>
+{% if unlinked %}
+<h2>Not matched to an ITAM user <span class="count">{{ unlinked|length }}</span></h2>
+<div class="warn">{{ unlinked_reason }}</div>
+<table>
+  <thead><tr><th>UPN in Entra</th></tr></thead>
+  <tbody>
+  {% for u in unlinked %}<tr><td class="mono">{{ u.upn }}</td></tr>{% endfor %}
+  </tbody>
+</table>
+{% endif %}
 {% endblock %}

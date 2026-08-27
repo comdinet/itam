@@ -853,8 +853,12 @@ def seat_remove(sub_id: int, upn: str = Form(...), redirect: str = Form("")):
 @app.get("/settings/groups", response_class=HTMLResponse)
 def settings_groups(request: Request):
     groups = db.q(
-        """SELECT g.*, (SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.id) AS known
-           FROM groups g WHERE g.id != ? ORDER BY g.display_name""", (db.ALL_USERS_GROUP,))
+        """SELECT g.*,
+                  (SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.id) AS known,
+                  (SELECT COUNT(*) FROM group_members_unlinked u WHERE u.group_id = g.id)
+                      AS unlinked
+           FROM groups g WHERE g.id != ? ORDER BY g.display_name""",
+        (db.ALL_USERS_GROUP,))
     last = db.q1("SELECT MAX(synced_at) AS last FROM groups")
     return render(request, "settings_groups.html", groups=groups, last=last,
                   cfg=entra.config_status(), section="groups")
@@ -883,8 +887,12 @@ def group_detail(request: Request, group_id: str):
         """SELECT u.* FROM group_members gm JOIN users u ON u.upn = gm.upn
            WHERE gm.group_id = ? ORDER BY u.display_name""", (group_id,))
     group_rules = db.q("SELECT * FROM rules WHERE group_id = ?", (group_id,))
+    unlinked = db.q(
+        "SELECT upn FROM group_members_unlinked WHERE group_id = ? ORDER BY upn",
+        (group_id,))
     return render(request, "settings_group_detail.html", g=group, members=members,
-                  group_rules=group_rules, section="groups")
+                  group_rules=group_rules, unlinked=unlinked,
+                  unlinked_reason=entra.unlinked_reason(), section="groups")
 
 
 # --- settings: devices (Intune) -----------------------------------------
@@ -977,8 +985,12 @@ def device_create_asset(device_id: str):
 @app.get("/settings/licences", response_class=HTMLResponse)
 def settings_licences(request: Request):
     rows = db.q(
-        """SELECT l.*, (SELECT COUNT(*) FROM user_licenses ul WHERE ul.sku_id = l.sku_id) AS held_here
-           FROM licenses l ORDER BY l.display_name""")
+        """SELECT l.*,
+                  (SELECT COUNT(*) FROM user_licenses ul WHERE ul.sku_id = l.sku_id) AS held_here,
+                  s.id AS sub_id, s.monthly_cost_cents
+           FROM licenses l
+           LEFT JOIN subscriptions s ON s.sku_id = l.sku_id
+           ORDER BY l.display_name""")
     last = db.q1("SELECT MAX(synced_at) AS last FROM licenses")
     totals = db.q1(
         """SELECT COALESCE(SUM(prepaid),0) AS prepaid,
@@ -1013,6 +1025,38 @@ def settings_licences_sync():
     return back("/settings/licences", msg)
 
 
+@app.post("/settings/licences/{sku_id}/create-subscription")
+def licence_create_subscription(sku_id: str):
+    """Turn an Entra licence into a tracked subscription, and grant its seats.
+
+    Cost is left at zero: Entra knows who holds a licence, not what you pay for
+    it. Set the per-seat price on the Subscriptions page.
+    """
+    lic = db.q1("SELECT * FROM licenses WHERE sku_id = ?", (sku_id,))
+    if not lic:
+        return back("/settings/licences", "No such licence")
+    existing = db.q1("SELECT id FROM subscriptions WHERE sku_id = ?", (sku_id,))
+    if existing:
+        return back(f"/subscriptions/{existing['id']}",
+                    "That licence already has a subscription")
+
+    sub_id = db.execute(
+        """INSERT INTO subscriptions (name, vendor, monthly_cost_cents, notes, sku_id)
+           VALUES (?,?,0,?,?)""",
+        (lic["display_name"], "Microsoft",
+         f"Created from Entra licence {lic['sku_part_number']}", sku_id))
+
+    # Mirror the current holders, so the seat count matches Entra straight away.
+    seats = 0
+    for row in db.q("SELECT upn FROM user_licenses WHERE sku_id = ?", (sku_id,)):
+        db.execute(
+            """INSERT OR IGNORE INTO subscription_seats (subscription_id, upn, assigned_on)
+               VALUES (?,?,?)""", (sub_id, row["upn"], today()))
+        seats += 1
+    return back(f"/subscriptions/{sub_id}",
+                f"Subscription created with {seats} seat(s) - set the per-seat cost")
+
+
 @app.get("/settings/licences/{sku_id}", response_class=HTMLResponse)
 def licence_detail(request: Request, sku_id: str):
     lic = db.q1("SELECT * FROM licenses WHERE sku_id = ?", (sku_id,))
@@ -1022,8 +1066,9 @@ def licence_detail(request: Request, sku_id: str):
         """SELECT u.upn, u.display_name, u.department, u.country, u.account_enabled
            FROM user_licenses ul JOIN users u ON u.upn = ul.upn
            WHERE ul.sku_id = ? ORDER BY u.display_name""", (sku_id,))
+    sub = db.q1("SELECT * FROM subscriptions WHERE sku_id = ?", (sku_id,))
     return render(request, "settings_licence_detail.html", l=lic, holders=holders,
-                  section="licences")
+                  sub=sub, section="licences")
 
 
 # --- settings: rules -----------------------------------------------------

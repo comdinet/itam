@@ -141,6 +141,15 @@ CREATE TABLE IF NOT EXISTS group_members (
 );
 CREATE INDEX IF NOT EXISTS idx_group_members_upn ON group_members(upn);
 
+-- Members Entra reports for a group that are not users here, usually because
+-- ENTRA_USER_FILTER excludes them. Kept so the group page can say who is
+-- missing instead of just how many.
+CREATE TABLE IF NOT EXISTS group_members_unlinked (
+    group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    upn      TEXT NOT NULL,
+    PRIMARY KEY (group_id, upn)
+);
+
 -- Devices from Intune. Kept separate from assets: a device is what Intune
 -- reports, an asset is what you paid for. They are linked by serial number.
 CREATE TABLE IF NOT EXISTS devices (
@@ -219,7 +228,8 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     name                  TEXT NOT NULL,
     vendor                TEXT,
     monthly_cost_cents    INTEGER NOT NULL DEFAULT 0,  -- per seat, per month
-    notes                 TEXT
+    notes                 TEXT,
+    sku_id                TEXT        -- set when created from an Entra licence
 );
 
 CREATE TABLE IF NOT EXISTS subscription_seats (
@@ -269,6 +279,13 @@ def init_db():
         cols = [r["name"] for r in conn.execute("PRAGMA table_info(assets)")]
         if "external_id" not in cols:
             conn.execute("ALTER TABLE assets ADD COLUMN external_id TEXT")
+
+        # Migration: subscriptions can be linked to an Entra licence SKU.
+        scols = [r["name"] for r in conn.execute("PRAGMA table_info(subscriptions)")]
+        if "sku_id" not in scols:
+            conn.execute("ALTER TABLE subscriptions ADD COLUMN sku_id TEXT")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_subs_sku "
+                     "ON subscriptions(sku_id)")
 
         # Migration: two-factor columns arrived after the first release.
         acols = [r["name"] for r in conn.execute("PRAGMA table_info(auth_users)")]
