@@ -6,7 +6,7 @@ from contextlib import contextmanager
 # `or` not a default arg: an empty value in .env must fall back, not win.
 DB_PATH = os.environ.get("ITAM_DB") or os.path.join(
     os.path.dirname(os.path.dirname(__file__)), "itam.db")
-CURRENCY = os.environ.get("ITAM_CURRENCY") or "USD"
+
 
 DEFAULT_CATEGORIES = ["Laptop", "Desktop", "Monitor", "Phone", "Peripheral", "Software", "Other"]
 
@@ -26,6 +26,15 @@ CREATE TABLE IF NOT EXISTS users (
     usage_location TEXT,
     source         TEXT NOT NULL DEFAULT 'manual',
     synced_at      TEXT
+);
+
+-- Settings changed in the UI. A row here overrides the environment; delete it
+-- and the .env value (or the built-in default) applies again.
+CREATE TABLE IF NOT EXISTS settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT,
+    updated_at TEXT,
+    updated_by TEXT
 );
 
 CREATE TABLE IF NOT EXISTS auth_users (

@@ -10,12 +10,10 @@ import hmac
 import os
 import secrets
 
-from . import db
+from . import db, settings
 
 COOKIE = "itam_session"
-SESSION_HOURS = int(os.environ.get("ITAM_SESSION_HOURS") or 12)
 # Defaults to on: the shipped deployment terminates TLS in front of the app.
-COOKIE_SECURE = (os.environ.get("ITAM_COOKIE_SECURE") or "1").lower() in ("1", "true", "yes")
 ITERATIONS = 400_000
 MAX_FAILURES = 8            # per username, per process
 LOCKOUT_MINUTES = 15
@@ -200,7 +198,6 @@ TOTP_STEP = 30
 TOTP_SKEW = 1           # accept the neighbouring windows for clock drift
 RECOVERY_CODES = 8
 PENDING_MINUTES = 5
-ISSUER = os.environ.get("ITAM_TOTP_ISSUER") or "ITAM"
 
 
 def new_totp_secret() -> str:
@@ -209,9 +206,10 @@ def new_totp_secret() -> str:
 
 def totp_uri(username: str, secret: str) -> str:
     from urllib.parse import quote
-    label = quote(f"{ISSUER}:{username}")
+    issuer = settings.totp_issuer()
+    label = quote(f"{issuer}:{username}")
     return (f"otpauth://totp/{label}?secret={secret}"
-            f"&issuer={quote(ISSUER)}&algorithm=SHA1&digits={TOTP_DIGITS}&period={TOTP_STEP}")
+            f"&issuer={quote(issuer)}&algorithm=SHA1&digits={TOTP_DIGITS}&period={TOTP_STEP}")
 
 
 def _totp_at(secret: str, step: int) -> str:
@@ -356,7 +354,7 @@ def purge_pending() -> None:
 
 
 def require_2fa() -> bool:
-    return (os.environ.get("ITAM_REQUIRE_2FA") or "").lower() in ("1", "true", "yes")
+    return settings.require_2fa()
 
 
 def issue_session(username: str) -> str:
@@ -365,6 +363,6 @@ def issue_session(username: str) -> str:
     now = _now()
     db.execute(
         "INSERT INTO auth_sessions (token, username, created_at, expires_at) VALUES (?,?,?,?)",
-        (token, username, _iso(now), _iso(now + datetime.timedelta(hours=SESSION_HOURS))))
+        (token, username, _iso(now), _iso(now + datetime.timedelta(hours=settings.session_hours()))))
     db.execute("UPDATE auth_users SET last_login = ? WHERE username = ?", (_iso(now), username))
     return token

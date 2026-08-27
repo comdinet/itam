@@ -1,0 +1,50 @@
+{% macro settings_form(fields, action, redirect, title, intro='') %}
+<h2>{{ title }}</h2>
+{% if intro %}<p class="meta">{{ intro }}</p>{% endif %}
+<form method="post" action="{{ action }}">
+  <table>
+    <thead><tr><th>Setting</th><th>Value</th><th>Source</th><th></th></tr></thead>
+    <tbody>
+    {% for f in fields %}
+      <tr>
+        <td><strong>{{ f.label }}</strong>
+            <div class="meta mono">{{ f.key }}</div></td>
+        <td>
+          {% if f.kind == 'bool' %}
+            <label class="check"><input type="checkbox" name="{{ f.key }}"
+                   {% if f.value in ('1','true','yes','on') %}checked{% endif %}> enabled</label>
+          {% elif f.kind == 'text' %}
+            <textarea name="{{ f.key }}" rows="4" class="wide-input">{{ f.value }}</textarea>
+          {% elif f.secret %}
+            <input type="password" name="{{ f.key }}" class="wide-input"
+                   placeholder="{{ 'set - leave blank to keep' if f.is_set else 'not set' }}"
+                   autocomplete="new-password">
+          {% else %}
+            <input name="{{ f.key }}" value="{{ f.value }}" class="wide-input">
+          {% endif %}
+        </td>
+        <td class="meta">{{ f.source }}</td>
+        <td class="row-actions">
+          {% if f.source == 'set here' %}
+            <button class="link" type="submit" form="reset-{{ f.key }}">Reset</button>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p><button type="submit">Save changes</button></p>
+</form>
+{% for f in fields %}
+  {% if f.source == 'set here' %}
+  <form id="reset-{{ f.key }}" method="post" action="/settings/reset" class="hidden-form">
+    <input type="hidden" name="key" value="{{ f.key }}">
+    <input type="hidden" name="redirect" value="{{ redirect }}">
+  </form>
+  {% endif %}
+{% endfor %}
+<p class="hint">&ldquo;Source&rdquo; says where the value in use comes from: set here
+  (in this database), <span class="mono">.env</span>, or the built-in default.
+  Resetting removes the value stored here so <span class="mono">.env</span>
+  applies again. Changes take effect immediately &mdash; no restart.</p>
+{% endmacro %}

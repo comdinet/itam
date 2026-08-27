@@ -11,7 +11,7 @@ import os
 
 import httpx
 
-from . import db
+from . import db, settings
 
 GRAPH = "https://graph.microsoft.com/v1.0"
 # Intune custom attribute shell scripts are only exposed on the beta endpoint.
@@ -54,28 +54,29 @@ DEVICE_SELECT = ("id,deviceName,serialNumber,manufacturer,model,operatingSystem,
 
 
 def is_configured() -> bool:
-    return all(os.environ.get(k) for k in ("ENTRA_TENANT_ID", "ENTRA_CLIENT_ID", "ENTRA_CLIENT_SECRET"))
+    return all(settings.get(k) for k in ("ENTRA_TENANT_ID", "ENTRA_CLIENT_ID",
+                                        "ENTRA_CLIENT_SECRET"))
 
 
 def config_status() -> dict:
     return {
         "configured": is_configured(),
-        "tenant_id": os.environ.get("ENTRA_TENANT_ID", ""),
-        "client_id": os.environ.get("ENTRA_CLIENT_ID", ""),
-        "secret_set": bool(os.environ.get("ENTRA_CLIENT_SECRET")),
-        "filter": (os.environ.get("ENTRA_USER_FILTER") or "").strip(),
-        "group_filter": (os.environ.get("ENTRA_GROUP_FILTER") or "").strip(),
-        "device_filter": (os.environ.get("INTUNE_DEVICE_FILTER") or "").strip(),
+        "tenant_id": settings.get("ENTRA_TENANT_ID"),
+        "client_id": settings.get("ENTRA_CLIENT_ID"),
+        "secret_set": bool(settings.get("ENTRA_CLIENT_SECRET")),
+        "filter": settings.get("ENTRA_USER_FILTER"),
+        "group_filter": settings.get("ENTRA_GROUP_FILTER"),
+        "device_filter": settings.get("INTUNE_DEVICE_FILTER"),
     }
 
 
 def _token() -> str:
-    tenant = os.environ["ENTRA_TENANT_ID"]
+    tenant = settings.get("ENTRA_TENANT_ID")
     resp = httpx.post(
         f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
         data={
-            "client_id": os.environ["ENTRA_CLIENT_ID"],
-            "client_secret": os.environ["ENTRA_CLIENT_SECRET"],
+            "client_id": settings.get("ENTRA_CLIENT_ID"),
+            "client_secret": settings.get("ENTRA_CLIENT_SECRET"),
             "scope": "https://graph.microsoft.com/.default",
             "grant_type": "client_credentials",
         },
@@ -115,7 +116,7 @@ def _get_all(path: str, params: dict | None = None, base: str = GRAPH,
 def fetch_users() -> list[dict]:
     """Page through all users in the tenant."""
     params = {"$select": SELECT, "$top": "999"}
-    user_filter = (os.environ.get("ENTRA_USER_FILTER") or "").strip()
+    user_filter = settings.get("ENTRA_USER_FILTER")
     if user_filter:
         params["$filter"] = user_filter
     return _get_all("/users", params, advanced=bool(user_filter))
@@ -176,7 +177,7 @@ def sync_groups() -> dict:
     Needs the Graph application permission Group.Read.All (plus the existing
     User.Read.All) with admin consent.
     """
-    group_filter = (os.environ.get("ENTRA_GROUP_FILTER") or "").strip()
+    group_filter = settings.get("ENTRA_GROUP_FILTER")
     params = {"$select": "id,displayName,description", "$top": "999"}
     if group_filter:
         params["$filter"] = group_filter
@@ -243,7 +244,7 @@ def sync_devices() -> dict:
     DeviceManagementManagedDevices.Read.All with admin consent.
     """
     params = {"$select": DEVICE_SELECT, "$top": "999"}
-    device_filter = (os.environ.get("INTUNE_DEVICE_FILTER") or "").strip()
+    device_filter = settings.get("INTUNE_DEVICE_FILTER")
     if device_filter:
         params["$filter"] = device_filter
     # Intune's managedDevices does not support advanced query, so no opt-in here.
@@ -390,7 +391,7 @@ def sync_licenses() -> dict:
     # Per-user assignments. The same filter as the user sync, so the two views
     # cannot disagree about who is in scope.
     params = {"$select": "userPrincipalName,assignedLicenses", "$top": "999"}
-    user_filter = (os.environ.get("ENTRA_USER_FILTER") or "").strip()
+    user_filter = settings.get("ENTRA_USER_FILTER")
     if user_filter:
         params["$filter"] = user_filter
     people = _get_all("/users", params, advanced=bool(user_filter))

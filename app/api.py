@@ -13,7 +13,7 @@ import hmac
 import json
 import secrets
 
-from . import db
+from . import db, settings
 
 TOKEN_PREFIX = "itam_"
 LOG_KEEP = 200
@@ -169,5 +169,5 @@ def create_asset(key, payload: dict) -> dict:
 
     return {"status": "created", "asset_id": asset_id, "name": name,
             "category": category, "assigned_upn": upn,
-            "cost": db.money(cost_cents), "currency": db.CURRENCY,
+            "cost": db.money(cost_cents), "currency": settings.currency(),
             "ignored_fields": ignored}

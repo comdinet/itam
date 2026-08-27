@@ -362,8 +362,8 @@ Sync behaviour:
 - **Subscriptions** — per-seat cost, seat count, monthly and annual spend;
   manage seats per subscription.
 - **Settings** — subsections:
-  - **General** — counts, plus every current setting and the environment
-    variable behind it. Read-only; change these in `.env` and restart.
+  - **General** — counts, plus the application settings, **editable here**.
+    Below them, the handful that must stay in `.env`, with the reason.
   - **Entra ID** — configuration status and the user sync.
   - **Groups** — Entra groups and their membership; the basis for rules.
   - **Devices** — Intune devices, their macOS custom attributes, and the link
@@ -601,6 +601,41 @@ Every call is recorded under **Settings → API**, most recent first, with the
 status and outcome — the first place to look when a webhook "didn't work". The
 last 200 calls are kept.
 
+
+## Settings: `.env` or the UI
+
+Most settings are editable under **Settings**, by an admin, and take effect
+immediately — no restart. Each row shows where the value in use comes from:
+
+| Source | Meaning |
+|---|---|
+| `set here` | stored in this database, overriding everything else |
+| `.env` | no override; the environment value is in use |
+| `default` | neither is set; the built-in default applies |
+
+**Reset** removes the stored override so the `.env` value applies again. So
+`.env` keeps working exactly as before — it is now the default layer rather
+than the only one, and an existing deployment needs no changes.
+
+Editable in the UI: currency, session length, require-2FA, authenticator issuer
+name, the Entra tenant/client/secret and the three OData filters, and the whole
+SAML configuration.
+
+These stay in `.env`, because a database row could not work:
+
+| Variable | Why |
+|---|---|
+| `ITAM_DB` | Opening the database comes before reading any setting |
+| `ITAM_SITE_ADDRESS` | Certificate names, and what Caddy serves |
+| `ITAM_HTTP_PORT`, `ITAM_HTTPS_PORT`, `ITAM_PORT` | Published by Compose, outside the app |
+| `ITAM_COOKIE_SECURE` | Transport-level; setting it wrong locks everyone out |
+| `ITAM_ADMIN_USER`, `ITAM_ADMIN_PASSWORD` | Used once, to create the first account |
+
+The Entra client secret is **write-only** in the UI: it shows as set or not
+set, is never rendered back to the page, and submitting the field blank leaves
+the stored value alone. It does mean the secret is in `itam.db` — which already
+holds password hashes, TOTP secrets and session tokens, so treat that file and
+your backups as secrets either way.
 
 ## Notes
 

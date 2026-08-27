@@ -1,4 +1,5 @@
 {% extends "settings_base.html" %}
+{% from "_settings_form.html" import settings_form %}
 {% block title %}Single sign-on &middot; ITAM{% endblock %}
 {% block admin %}
 <h2>SAML single sign-on</h2>
@@ -29,29 +30,10 @@
   <a href="/saml/metadata">{{ cfg.metadata_url }}</a></p>
 {% endif %}
 
-<h2>What you need from Entra</h2>
-<p class="meta">From the same page, copy these into <span class="mono">.env</span>:</p>
-<pre>ITAM_SAML_SP_BASE_URL=https://your-itam-host
-ITAM_SAML_IDP_ENTITY_ID=&lt;Microsoft Entra Identifier&gt;
-ITAM_SAML_IDP_SSO_URL=&lt;Login URL&gt;
-ITAM_SAML_IDP_CERT=&lt;contents of the Base64 certificate&gt;</pre>
+{{ settings_form(fields, '/settings/sso/save', '/settings/sso',
+   'What you need from Entra',
+   'Copy these from the same SAML setup page in Entra.') }}
 
-<h2>Current settings</h2>
-<table>
-  <thead><tr><th>Setting</th><th>Value</th></tr></thead>
-  <tbody>
-    <tr><td>IdP entity ID</td><td class="mono">{{ cfg.idp_entity_id or '(not set)' }}</td></tr>
-    <tr><td>IdP sign-on URL</td><td class="mono">{{ cfg.idp_sso_url or '(not set)' }}</td></tr>
-    <tr><td>IdP certificate</td><td>{{ 'set' if cfg.cert_set else '(not set)' }}</td></tr>
-    <tr><td>Username claim</td><td class="mono">{{ cfg.username_attribute }}</td></tr>
-    <tr><td>Auto-provision new users</td>
-        <td>{{ 'yes' if cfg.auto_provision else 'no - an admin must create the account first' }}</td></tr>
-    <tr><td>Admin group claim</td>
-        <td class="mono">{{ cfg.admin_group or '(none - admin is set by hand)' }}</td></tr>
-    <tr><td>IdP-initiated sign-in</td>
-        <td>{{ 'allowed' if cfg.allow_idp_initiated else 'refused - sign-in must start here' }}</td></tr>
-  </tbody>
-</table>
 <p class="hint">Local accounts keep working alongside single sign-on, which is how
   you get back in if Entra is unreachable. Keep at least one local admin with a
   password and two-factor for exactly that.</p>

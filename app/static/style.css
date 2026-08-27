@@ -127,3 +127,10 @@ body.centered { display: flex; align-items: center; justify-content: center; min
 .or { display: flex; align-items: center; gap: 10px; margin: 18px 0 0;
       color: var(--muted); font-size: 12px; }
 .or::before, .or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+/* --- settings forms ----------------------------------------------------- */
+.wide-input { width: 100%; max-width: 460px; }
+textarea.wide-input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                      font-size: 12px; resize: vertical; }
+.check { display: inline-flex; align-items: center; gap: 7px; color: var(--ink); }
+.hidden-form { display: none; }

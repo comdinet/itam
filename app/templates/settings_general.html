@@ -1,4 +1,5 @@
 {% extends "settings_base.html" %}
+{% from "_settings_form.html" import settings_form %}
 {% block title %}Settings &middot; ITAM{% endblock %}
 {% block admin %}
 <h2>What's in here</h2>
@@ -14,19 +15,22 @@
     <span class="sub">{{ counts.api_keys }} active API key(s)</span></div>
 </div>
 
-<h2>Current settings</h2>
-<p class="meta">Read-only here. These come from the environment, so change them in
-  <span class="mono">.env</span> and restart with
+{{ settings_form(fields, '/settings/general/save', '/settings', 'Application settings') }}
+
+<h2>Set in .env only</h2>
+<p class="meta">These are read before the app can reach its own database, or are
+  used by Docker rather than the app, so they cannot be edited here. Change them
+  in <span class="mono">.env</span> and run
   <span class="mono">docker compose up -d</span>.</p>
 <table>
-  <thead><tr><th>Setting</th><th>Value</th><th>Variable</th><th>Notes</th></tr></thead>
+  <thead><tr><th>Variable</th><th>Value</th><th>Why not here</th></tr></thead>
   <tbody>
-  {% for label, value, var, note in settings %}
-    <tr><td><strong>{{ label }}</strong></td>
-        <td class="mono">{{ value }}</td>
-        <td class="mono">{{ var }}</td>
-        <td class="meta">{{ note }}</td></tr>
+  {% for key, value, why in env_only %}
+    <tr><td class="mono">{{ key }}</td><td class="mono">{{ value }}</td>
+        <td class="meta">{{ why }}</td></tr>
   {% endfor %}
+    <tr><td class="mono">ITAM_DB</td><td class="mono">{{ db_path }}</td>
+        <td class="meta">Database file. Opening it comes before reading any setting.</td></tr>
   </tbody>
 </table>
 

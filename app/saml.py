@@ -13,7 +13,7 @@ import datetime
 import os
 import re
 
-from . import db
+from . import db, settings
 
 REQUEST_MINUTES = 10          # an AuthnRequest is good for one sign-in attempt
 SEEN_HOURS = 24               # how long a consumed assertion id blocks a replay
@@ -28,7 +28,8 @@ def _iso(dt: datetime.datetime) -> str:
 
 
 def _env(name: str, default: str = "") -> str:
-    return (os.environ.get(name) or default).strip()
+    """Effective value: set in the UI, else .env, else the given default."""
+    return settings.get(name) or default
 
 
 # --- configuration -------------------------------------------------------
@@ -98,8 +99,11 @@ def config_status() -> dict:
     }
 
 
-def settings() -> dict:
-    """python3-saml settings. Strict, and assertions must be signed."""
+def sp_settings() -> dict:
+    """python3-saml settings. Strict, and assertions must be signed.
+
+    Not named `settings`: that is the app's own settings module, imported here.
+    """
     return {
         "strict": True,
         "debug": False,

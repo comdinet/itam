@@ -14,7 +14,7 @@ from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse,
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import api, auth, db, entra, rules, saml
+from . import api, auth, db, entra, rules, saml, settings
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -36,7 +36,6 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="ITAM", lifespan=lifespan)
 templates = Jinja2Templates(directory="app/templates")
 templates.env.filters["money"] = db.money
-templates.env.globals["currency"] = db.CURRENCY
 templates.env.globals["categories"] = db.categories
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
@@ -98,6 +97,9 @@ def qr_svg(data: str) -> str:
 
 def render(request: Request, name: str, **ctx):
     ctx.setdefault("flash", request.query_params.get("msg"))
+    # Resolved per request: a settings change must show up without a restart,
+    # and a Jinja global holding the function would render the function itself.
+    ctx.setdefault("currency", settings.currency())
     ctx.setdefault("me", getattr(request.state, "user", None))
     return templates.TemplateResponse(request, name, ctx)
 
@@ -162,7 +164,7 @@ def _saml_request(request: Request, post_data: dict | None = None) -> dict:
 
 def _saml_auth(request: Request, post_data: dict | None = None):
     from onelogin.saml2.auth import OneLogin_Saml2_Auth
-    return OneLogin_Saml2_Auth(_saml_request(request, post_data), saml.settings())
+    return OneLogin_Saml2_Auth(_saml_request(request, post_data), saml.sp_settings())
 
 
 @app.get("/saml/metadata")
@@ -171,9 +173,10 @@ def saml_metadata():
     if not saml.is_configured():
         return JSONResponse({"error": "SAML is not configured."}, status_code=404)
     from onelogin.saml2.settings import OneLogin_Saml2_Settings
-    settings = OneLogin_Saml2_Settings(saml.settings(), sp_validation_only=True)
-    metadata = settings.get_sp_metadata()
-    errors = settings.validate_metadata(metadata)
+    # Not named `settings`: that is the app's own settings module.
+    sp = OneLogin_Saml2_Settings(saml.sp_settings(), sp_validation_only=True)
+    metadata = sp.get_sp_metadata()
+    errors = sp.validate_metadata(metadata)
     if errors:
         return JSONResponse({"error": "Invalid SP metadata", "detail": errors},
                             status_code=500)
@@ -192,7 +195,7 @@ def saml_login(request: Request, next: str = "/"):
 
     resp = RedirectResponse(url, status_code=303)
     resp.set_cookie(COOKIE_SAML, request_id, httponly=True, samesite="lax",
-                    secure=auth.COOKIE_SECURE,
+                    secure=settings.cookie_secure(),
                     max_age=saml.REQUEST_MINUTES * 60, path="/")
     return resp
 
@@ -250,8 +253,8 @@ async def saml_acs(request: Request):
     target = (outstanding["next_url"] if outstanding else "/") or "/"
     resp = RedirectResponse(safe_next(target), status_code=303)
     resp.set_cookie(auth.COOKIE, auth.issue_session(username), httponly=True,
-                    samesite="lax", secure=auth.COOKIE_SECURE,
-                    max_age=auth.SESSION_HOURS * 3600, path="/")
+                    samesite="lax", secure=settings.cookie_secure(),
+                    max_age=settings.session_hours() * 3600, path="/")
     resp.delete_cookie(COOKIE_SAML, path="/")
     return resp
 
@@ -292,14 +295,14 @@ def login_submit(request: Request, username: str = Form(""), password: str = For
         pending = auth.start_pending(user["username"])
         resp = RedirectResponse(f"/login/2fa?next={quote(target, safe='')}", status_code=303)
         resp.set_cookie(COOKIE_2FA, pending, httponly=True, samesite="lax",
-                        secure=auth.COOKIE_SECURE,
+                        secure=settings.cookie_secure(),
                         max_age=auth.PENDING_MINUTES * 60, path="/")
         return resp
 
     resp = RedirectResponse(target, status_code=303)
     resp.set_cookie(auth.COOKIE, auth.issue_session(user["username"]), httponly=True,
-                    samesite="lax", secure=auth.COOKIE_SECURE,
-                    max_age=auth.SESSION_HOURS * 3600, path="/")
+                    samesite="lax", secure=settings.cookie_secure(),
+                    max_age=settings.session_hours() * 3600, path="/")
     return resp
 
 
@@ -358,8 +361,8 @@ def login_2fa_submit(request: Request, code: str = Form(""), recovery: str = For
 
     resp = RedirectResponse(msg, status_code=303)
     resp.set_cookie(auth.COOKIE, auth.issue_session(username), httponly=True,
-                    samesite="lax", secure=auth.COOKIE_SECURE,
-                    max_age=auth.SESSION_HOURS * 3600, path="/")
+                    samesite="lax", secure=settings.cookie_secure(),
+                    max_age=settings.session_hours() * 3600, path="/")
     resp.delete_cookie(COOKIE_2FA, path="/")
     return resp
 
@@ -1093,7 +1096,7 @@ def rule_detail(request: Request, rule_id: int):
 # --- settings: general ---------------------------------------------------
 
 @app.get("/settings", response_class=HTMLResponse)
-def admin_general(request: Request):
+def settings_general(request: Request):
     counts = db.q1(
         """SELECT (SELECT COUNT(*) FROM users)         AS people,
                   (SELECT COUNT(*) FROM assets)        AS assets,
@@ -1104,26 +1107,84 @@ def admin_general(request: Request):
                   (SELECT COUNT(*) FROM devices) AS devices,
                   (SELECT COUNT(*) FROM rules WHERE active = 1) AS rules"""
     )
-    settings = [
-        ("Currency", db.CURRENCY, "ITAM_CURRENCY", "Display label only; no conversion is done."),
-        ("Site address", os.environ.get("ITAM_SITE_ADDRESS") or "(not set)", "ITAM_SITE_ADDRESS",
-         "Hostname the HTTPS certificate is issued for."),
-        ("TLS mode", os.environ.get("ITAM_TLS") or "internal", "ITAM_TLS",
-         "'internal' uses Caddy's local CA; an email address uses Let's Encrypt."),
-        ("Secure cookies", "on" if auth.COOKIE_SECURE else "off", "ITAM_COOKIE_SECURE",
-         "Must be on when served over HTTPS, off on plain HTTP."),
-        ("Session length", f"{auth.SESSION_HOURS} hours", "ITAM_SESSION_HOURS",
-         "How long a sign-in lasts before it expires."),
-        ("Database", db.DB_PATH, "ITAM_DB", "SQLite file. Back it up with ./backup.sh."),
-        ("Entra user filter", os.environ.get("ENTRA_USER_FILTER") or "(all users)",
-         "ENTRA_USER_FILTER", "Optional OData filter narrowing the user sync."),
-        ("Entra group filter", os.environ.get("ENTRA_GROUP_FILTER") or "(all groups)",
-         "ENTRA_GROUP_FILTER", "Optional OData filter narrowing the group sync."),
-        ("Intune device filter", os.environ.get("INTUNE_DEVICE_FILTER") or "(all devices)",
-         "INTUNE_DEVICE_FILTER", "Optional OData filter narrowing the device sync."),
-    ]
-    return render(request, "settings_general.html", counts=counts, settings=settings,
-                  section="general")
+    env_only = [(k, os.environ.get(k) or "(not set)", why)
+                for k, why in settings.ENV_ONLY.items()
+                if not k.startswith("ITAM_ADMIN_")]
+    return render(request, "settings_general.html", counts=counts,
+                  fields=settings.group("general"), env_only=env_only,
+                  db_path=db.DB_PATH, section="general")
+
+
+async def _read_form(request: Request) -> dict:
+    form = await request.form()
+    return {k: v for k, v in form.items() if isinstance(v, str)}
+
+
+@app.post("/settings/general/save")
+async def settings_general_save(request: Request):
+    if not require_admin(request):
+        return back("/settings", "Admin accounts only")
+    data = await _read_form(request)
+    return _apply(data, "general", request.state.user["username"], "/settings")
+
+
+@app.post("/settings/entra/save")
+async def settings_entra_save(request: Request):
+    if not require_admin(request):
+        return back("/settings/entra", "Admin accounts only")
+    data = await _read_form(request)
+    return _apply(data, "entra", request.state.user["username"], "/settings/entra")
+
+
+@app.post("/settings/sso/save")
+async def settings_sso_save(request: Request):
+    if not require_admin(request):
+        return back("/settings/sso", "Admin accounts only")
+    data = await _read_form(request)
+    return _apply(data, "saml", request.state.user["username"], "/settings/sso")
+
+
+@app.post("/settings/reset")
+async def settings_reset(request: Request):
+    """Drop an override so the .env value (or the default) applies again."""
+    if not require_admin(request):
+        return back("/settings", "Admin accounts only")
+    data = await _read_form(request)
+    key = data.get("key", "")
+    redirect = data.get("redirect", "/settings")
+    if key not in settings.SPEC:
+        return back(redirect, "Unknown setting")
+    settings.clear(key, request.state.user["username"])
+    return back(redirect, f"'{key}' reset to the .env value")
+
+
+def _apply(data: dict, group: str, by: str, redirect: str):
+    changed, errors = 0, []
+    for field in settings.group(group):
+        key, kind = field["key"], field["kind"]
+        if kind == "bool":
+            # An unticked checkbox sends nothing, which is a real value here.
+            value = "1" if data.get(key) else "0"
+        else:
+            if key not in data:
+                continue
+            value = data[key].strip()
+            # A blank secret means "leave it alone", not "erase it".
+            if field["secret"] and value == "":
+                continue
+        if kind == "int":
+            try:
+                int(value)
+            except ValueError:
+                errors.append(f"{field['label']} must be a whole number")
+                continue
+        if settings.raw(key) == value and settings.stored(key) is not None:
+            continue
+        settings.set_value(key, value, by)
+        changed += 1
+    if errors:
+        return back(redirect, "; ".join(errors))
+    return back(redirect, f"Saved {changed} setting(s)" if changed else "Nothing changed")
 
 
 # --- settings: Entra ID -------------------------------------------------
@@ -1133,7 +1194,7 @@ def admin_entra(request: Request):
     last = db.q1("SELECT MAX(synced_at) AS last, COUNT(*) AS n FROM users WHERE source='entra'")
     people = db.q1("SELECT COUNT(*) c FROM users")["c"]
     return render(request, "settings_entra.html", cfg=entra.config_status(), last=last,
-                  people=people, section="entra")
+                  people=people, fields=settings.group("entra"), section="entra")
 
 
 @app.post("/settings/entra/sync")
@@ -1173,7 +1234,8 @@ def accounts_page(request: Request):
 def settings_sso(request: Request):
     if not require_admin(request):
         return HTMLResponse("<h1>403</h1><p>Admin accounts only.</p>", status_code=403)
-    return render(request, "settings_sso.html", cfg=saml.config_status(), section="sso")
+    return render(request, "settings_sso.html", cfg=saml.config_status(),
+                  fields=settings.group("saml"), section="sso")
 
 
 # --- settings: API keys and field mapping -------------------------------
@@ -1244,8 +1306,8 @@ def export_costs():
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["upn", "display_name", "department", "account_enabled", "assets",
-                f"asset_value_{db.CURRENCY}", "subscriptions",
-                f"monthly_{db.CURRENCY}", f"annual_{db.CURRENCY}"])
+                f"asset_value_{settings.currency()}", "subscriptions",
+                f"monthly_{settings.currency()}", f"annual_{settings.currency()}"])
     for r in rows:
         w.writerow([r["upn"], r["display_name"], r["department"] or "", r["account_enabled"],
                     r["asset_count"], db.money(r["asset_total"]).replace(",", ""),

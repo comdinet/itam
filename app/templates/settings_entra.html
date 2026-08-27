@@ -1,6 +1,11 @@
 {% extends "settings_base.html" %}
+{% from "_settings_form.html" import settings_form %}
 {% block title %}Entra ID &middot; ITAM{% endblock %}
 {% block admin %}
+{{ settings_form(fields, '/settings/entra/save', '/settings/entra',
+   'Entra ID connection',
+   'One app registration covers users, groups, licences and Intune. The client secret is write-only: leave it blank to keep the one already stored.') }}
+
 <h2>Entra ID user sync</h2>
 {% if cfg.configured %}
   <p class="ok">Configured for tenant <span class="mono">{{ cfg.tenant_id }}</span>,
@@ -8,14 +13,11 @@
 {% else %}
   <div class="warn">
     <strong>Not configured</strong> &mdash; no users can be synced yet.
-    Set these in <span class="mono">.env</span> and restart:
-    <pre>ENTRA_TENANT_ID=&lt;your tenant guid&gt;
-ENTRA_CLIENT_ID=&lt;app registration client id&gt;
-ENTRA_CLIENT_SECRET=&lt;client secret&gt;
-# optional: only sync a subset
-ENTRA_USER_FILTER=accountEnabled eq true</pre>
-    The app registration needs the <strong>User.Read.All</strong> Graph
-    <em>application</em> permission with admin consent.
+    Fill in the tenant, client and secret above. The app registration needs the
+    <strong>User.Read.All</strong> Graph <em>application</em> permission with
+    admin consent (plus <span class="mono">Group.Read.All</span>,
+    <span class="mono">Organization.Read.All</span> and the Intune permissions
+    for the other syncs).
   </div>
 {% endif %}
 <p class="meta">{{ last.n }} user(s) sourced from Entra ID, {{ people }} in total.
