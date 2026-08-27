@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}{{ i.name }} &middot; ITAM{% endblock %}
+{% block body %}
+<p class="crumb"><a href="/stock">&larr; Stock</a></p>
+<h1>{{ i.name }}</h1>
+<p class="meta">{{ i.category }}{% if i.vendor %} &middot; {{ i.vendor }}{% endif %}
+  &middot; {{ currency }} {{ i.unit_cost_cents|money }} per unit</p>
+{% if i.notes %}<p class="meta">{{ i.notes }}</p>{% endif %}
+
+<div class="cards">
+  <div class="card"><span class="label">Owned</span><span class="big">{{ i.quantity }}</span>
+    <span class="sub">{{ currency }} {{ s.total_value|money }} total</span></div>
+  <div class="card"><span class="label">Handed out</span><span class="big">{{ s.allocated }}</span>
+    <span class="sub">{{ currency }} {{ s.allocated_value|money }} in people's hands</span></div>
+  <div class="card"><span class="label">In stock</span><span class="big">{{ s.available }}</span></div>
+  <div class="card"><span class="label">People holding it</span>
+    <span class="big">{{ s.holders|length }}</span></div>
+</div>
+
+<h2>Who has them</h2>
+<table>
+  <thead><tr><th>Name</th><th>UPN</th><th class="num">Units</th>
+    <th class="num">Cost carried</th><th>Since</th><th></th></tr></thead>
+  <tbody>
+  {% for h in s.holders %}
+    <tr {% if not h.account_enabled %}class="disabled"{% endif %}>
+      <td><a href="/users/{{ h.upn }}">{{ h.display_name }}</a>
+        {% if not h.account_enabled %}<span class="tag">disabled</span>{% endif %}</td>
+      <td class="mono">{{ h.upn }}</td>
+      <td class="num">{{ h.quantity }}</td>
+      <td class="num">{{ (h.quantity * i.unit_cost_cents)|money }}</td>
+      <td>{{ h.assigned_on or '' }}</td>
+      <td class="row-actions">
+        <form method="post" action="/stock/{{ i.id }}/take-back">
+          <input type="hidden" name="upn" value="{{ h.upn }}">
+          <input type="hidden" name="quantity" value="1">
+          <button class="link">Take back 1</button></form>
+        <form method="post" action="/stock/{{ i.id }}/take-back">
+          <input type="hidden" name="upn" value="{{ h.upn }}">
+          <button class="link">Take back all</button></form></td></tr>
+  {% else %}
+    <tr><td colspan="6" class="empty">Nobody has any yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<form class="inline-form" method="post" action="/stock/{{ i.id }}/assign">
+  <select name="upn" required>
+    <option value="">Hand out to&hellip;</option>
+    {% for p in people %}<option value="{{ p.upn }}">{{ p.display_name }}</option>{% endfor %}
+  </select>
+  <input name="quantity" type="number" min="1" value="1" style="width:5rem">
+  <button type="submit" {% if s.available < 1 %}disabled{% endif %}>Hand out</button>
+  {% if s.available < 1 %}<span class="hint">None left &mdash; raise the quantity owned below.</span>{% endif %}
+</form>
+
+<details class="panel">
+  <summary>Edit item</summary>
+  <form class="grid-form" method="post" action="/stock/{{ i.id }}/edit">
+    <label>Name<input name="name" value="{{ i.name }}" required></label>
+    <label>Category<select name="category">
+      {% for c in categories() %}<option value="{{ c }}"
+        {% if c == i.category %}selected{% endif %}>{{ c }}</option>{% endfor %}</select></label>
+    <label>Unit price ({{ currency }})<input name="unit_cost" value="{{ i.unit_cost_cents|money }}"></label>
+    <label>Quantity owned<input name="quantity" type="number" min="0" value="{{ i.quantity }}"></label>
+    <label>Vendor<input name="vendor" value="{{ i.vendor or '' }}"></label>
+    <label class="wide">Notes<input name="notes" value="{{ i.notes or '' }}"></label>
+    <button type="submit">Save</button>
+  </form>
+  <p class="hint">Bought more? Raise the quantity owned. It cannot go below the
+     {{ s.allocated }} unit(s) already handed out.</p>
+  <form method="post" action="/stock/{{ i.id }}/delete"
+        onsubmit="return confirm('Delete {{ i.name }} and its {{ s.holders|length }} allocation(s)?')">
+    <button class="link danger">Delete item</button></form>
+</details>
+{% endblock %}

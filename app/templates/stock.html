@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Stock &middot; ITAM{% endblock %}
+{% block body %}
+<h1>Stock <span class="count">{{ items|length }}</span></h1>
+<p class="meta">One record for many identical units. Mice, keyboards, headsets
+  and licences bought in bulk have no serial and are interchangeable, so they are
+  counted rather than listed individually. Cost follows the units: hand out two
+  of a {{ currency }} 25.00 item and that person carries {{ currency }} 50.00.</p>
+
+<div class="cards">
+  <div class="card"><span class="label">Units owned</span>
+    <span class="big">{{ totals.units }}</span>
+    <span class="sub">{{ totals.item_count }} item(s)</span></div>
+  <div class="card"><span class="label">Total value</span>
+    <span class="big">{{ currency }} {{ totals.value|money }}</span></div>
+  <div class="card"><span class="label">Handed out</span>
+    <span class="big">{{ totals.allocated_units }}</span>
+    <span class="sub">{{ currency }} {{ totals.allocated_value|money }}</span></div>
+  <div class="card"><span class="label">Still in stock</span>
+    <span class="big">{{ totals.spare_units }}</span>
+    <span class="sub">{{ currency }} {{ totals.spare_value|money }} idle</span></div>
+</div>
+
+<details class="panel" {% if not items %}open{% endif %}>
+  <summary>Add a stock item</summary>
+  <form class="grid-form" method="post" action="/stock/new">
+    <label>Name<input name="name" required placeholder="Logitech MX Master 3S"></label>
+    <label>Category<select name="category">
+      {% for c in categories() %}<option value="{{ c }}"
+        {% if c == 'Peripheral' %}selected{% endif %}>{{ c }}</option>{% endfor %}</select></label>
+    <label>Unit price ({{ currency }})<input name="unit_cost" inputmode="decimal" placeholder="109.00"></label>
+    <label>Quantity owned<input name="quantity" type="number" min="0" value="0"></label>
+    <label>Vendor<input name="vendor" placeholder="optional"></label>
+    <label class="wide">Notes<input name="notes" placeholder="purchase order, warranty…"></label>
+    <button type="submit">Add item</button>
+  </form>
+  <p class="hint">For something with a serial that belongs to one person, use
+     <a href="/assets">Assets</a> instead. For a recurring monthly charge per
+     person, use <a href="/subscriptions">Subscriptions</a>.</p>
+</details>
+
+<table>
+  <thead><tr><th>Item</th><th>Category</th><th>Vendor</th>
+    <th class="num">Unit price</th><th class="num">Owned</th><th class="num">Out</th>
+    <th class="num">In stock</th><th class="num">Total value</th></tr></thead>
+  <tbody>
+  {% for i in items %}
+    <tr>
+      <td><a href="/stock/{{ i.id }}">{{ i.name }}</a>
+        {% if i.notes %}<div class="meta">{{ i.notes }}</div>{% endif %}</td>
+      <td>{{ i.category }}</td>
+      <td>{{ i.vendor or '' }}</td>
+      <td class="num">{{ i.unit_cost_cents|money }}</td>
+      <td class="num">{{ i.quantity }}</td>
+      <td class="num">{{ i.allocated }}{% if i.holders %}
+        <span class="meta">({{ i.holders }} people)</span>{% endif %}</td>
+      <td class="num">{% if i.quantity - i.allocated == 0 %}
+          <span class="tag">none left</span>{% else %}{{ i.quantity - i.allocated }}{% endif %}</td>
+      <td class="num">{{ (i.quantity * i.unit_cost_cents)|money }}</td></tr>
+  {% else %}
+    <tr><td colspan="8" class="empty">No stock items yet &mdash; add one above.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

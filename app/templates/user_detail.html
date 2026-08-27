@@ -17,9 +17,12 @@
   <div class="card"><span class="label">Monthly subscriptions</span>
     <span class="big">{{ currency }} {{ u.monthly_total|money }}</span>
     <span class="sub">{{ currency }} {{ (u.monthly_total * 12)|money }} / year</span></div>
+  <div class="card"><span class="label">Stock held</span>
+    <span class="big">{{ u.stock_units }}</span>
+    <span class="sub">{{ currency }} {{ u.stock_total|money }} one-off</span></div>
   <div class="card"><span class="label">Total first-year cost</span>
-    <span class="big">{{ currency }} {{ (u.asset_total + u.monthly_total * 12)|money }}</span>
-    <span class="sub">assets + 12 months of licences</span></div>
+    <span class="big">{{ currency }} {{ (u.onetime_total + u.monthly_total * 12)|money }}</span>
+    <span class="sub">assets + stock + 12 months of licences</span></div>
 </div>
 
 <h2>Assets</h2>
@@ -52,6 +55,42 @@
   <button type="submit">Assign</button>
   {% if not spare %}<span class="hint">No spare assets in stock.</span>{% endif %}
 </form>
+
+<h2>Stock</h2>
+<table>
+  <thead><tr><th>Item</th><th>Category</th><th class="num">Units</th>
+    <th class="num">Unit price</th><th class="num">Cost</th><th></th></tr></thead>
+  <tbody>
+  {% for k in stock_items %}
+    <tr><td><a href="/stock/{{ k.id }}">{{ k.name }}</a></td>
+        <td>{{ k.category }}</td>
+        <td class="num">{{ k.quantity }}</td>
+        <td class="num">{{ k.unit_cost_cents|money }}</td>
+        <td class="num">{{ k.cost|money }}</td>
+        <td class="row-actions">
+          <form method="post" action="/stock/{{ k.id }}/take-back">
+            <input type="hidden" name="upn" value="{{ u.upn }}">
+            <input type="hidden" name="redirect" value="/users/{{ u.upn }}">
+            <button class="link">Take back</button></form></td></tr>
+  {% else %}
+    <tr><td colspan="6" class="empty">No pooled items held.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+{% if stock_available %}
+<div class="inline-form">
+  {% for k in stock_available %}
+  <form method="post" action="/stock/{{ k.id }}/assign">
+    <input type="hidden" name="upn" value="{{ u.upn }}">
+    <input type="hidden" name="quantity" value="1">
+    <input type="hidden" name="redirect" value="/users/{{ u.upn }}">
+    <button class="link">+ {{ k.name }} ({{ k.available }} left)</button>
+  </form>
+  {% endfor %}
+</div>
+<p class="hint">Hands out one unit from stock.</p>
+{% endif %}
 
 <h2>Entra ID licences</h2>
 <table>

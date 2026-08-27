@@ -5,7 +5,8 @@ People come from **Entra ID**, keyed on **UPN**. Two kinds of cost:
 
 | | What it is | Cost model |
 |---|---|---|
-| **Assets** | Laptops, monitors, phones, peripherals, perpetual software | one-off purchase cost |
+| **Assets** | Serial-tracked kit: laptops, monitors, phones | one-off cost, one row per machine |
+| **Stock** | Interchangeable units: mice, keyboards, headsets, licences bought in bulk | unit price × how many, counted not listed |
 | **Subscriptions** | SaaS licences (M365, GitHub, Slack, …) | cost per seat, per month |
 
 Repository: <https://github.com/comdinet/itam>
@@ -444,6 +445,37 @@ Nightly at 03:00 (`crontab -e`):
 Every job is safe to re-run: syncs upsert and never delete inventory. Each line
 of output says what changed, and the exit status is non-zero if any job failed,
 so cron reports real failures instead of swallowing them.
+
+## Stock: things you count rather than list
+
+A laptop has a serial and belongs to one person, so a row per machine is right.
+A mouse does not. Fifty identical mice as fifty rows is noise, and the useful
+questions are *how many do we own, how many are out, what did they cost*.
+
+**Stock** answers those with one record carrying a **unit price** and **how many
+units are owned**. Handing one out counts against the total; cost follows the
+units, so someone holding two of a 25.00 item carries 50.00.
+
+The same shape fits licences bought in bulk. Four JetBrains seats are one
+purchase at 779.00 each, not four assets:
+
+```
+JetBrains All Products Pack   779.00/unit   owned 4   out 2   in stock 2   3,116.00
+```
+
+Hand a seat to someone and the count goes up; the cost lands on them
+automatically. Handing out more than you own is refused, and the quantity owned
+cannot drop below what is already out — take some back first.
+
+Which to use:
+
+- **Assets** — it has a serial and one owner.
+- **Stock** — units are interchangeable, bought as a batch, one-off cost.
+- **Subscriptions** — a recurring monthly charge per person.
+
+Stock feeds every rollup: the People list and each person's page, their
+first-year total, the dashboard, and the finance CSV (`stock_units`,
+`stock_value`, `onetime_total`).
 
 ## Pricing by specification
 

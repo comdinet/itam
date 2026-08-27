@@ -21,7 +21,7 @@
 </form>
 <table>
   <thead><tr><th>Name</th><th>UPN</th><th>Department</th><th>Country</th>
-    <th class="num">Assets</th><th class="num">Asset value</th>
+    <th class="num">Assets</th><th class="num">Asset value</th><th class="num">Stock</th>
     <th class="num">Licences</th><th class="num">Monthly</th><th class="num">Annual</th></tr></thead>
   <tbody>
   {% for u in users %}
@@ -33,11 +33,12 @@
       <td>{{ u.country or '' }}</td>
       <td class="num">{{ u.asset_count }}</td>
       <td class="num">{{ u.asset_total|money }}</td>
+      <td class="num">{{ u.stock_total|money }}</td>
       <td class="num">{{ u.sub_count }}</td>
       <td class="num">{{ u.monthly_total|money }}</td>
       <td class="num">{{ (u.monthly_total * 12)|money }}</td></tr>
   {% else %}
-    <tr><td colspan="9" class="empty">No people yet &mdash; run an Entra ID sync from <a href="/settings/entra">Settings</a>.</td></tr>
+    <tr><td colspan="10" class="empty">No people yet &mdash; run an Entra ID sync from <a href="/settings/entra">Settings</a>.</td></tr>
   {% endfor %}
   </tbody>
 </table>

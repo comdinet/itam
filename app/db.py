@@ -245,6 +245,32 @@ CREATE TABLE IF NOT EXISTS api_log (
 );
 CREATE INDEX IF NOT EXISTS idx_api_log_at ON api_log(at DESC);
 
+-- Pooled items: one row for many identical units. Mice, keyboards, headsets
+-- and bulk-bought licences have no serial and are interchangeable, so a row
+-- per unit would be noise. Instead the row carries a unit price and how many
+-- are owned, and allocations count against it.
+CREATE TABLE IF NOT EXISTS stock_items (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT NOT NULL,
+    category        TEXT NOT NULL DEFAULT 'Peripheral',
+    unit_cost_cents INTEGER NOT NULL DEFAULT 0,
+    quantity        INTEGER NOT NULL DEFAULT 0,   -- units owned
+    vendor          TEXT,
+    notes           TEXT,
+    created_at      TEXT
+);
+
+-- One row per person per item; handing out a second unit raises the quantity
+-- rather than adding a row.
+CREATE TABLE IF NOT EXISTS stock_allocations (
+    item_id     INTEGER NOT NULL REFERENCES stock_items(id) ON DELETE CASCADE,
+    upn         TEXT NOT NULL REFERENCES users(upn) ON DELETE CASCADE,
+    quantity    INTEGER NOT NULL DEFAULT 1,
+    assigned_on TEXT,
+    PRIMARY KEY (item_id, upn)
+);
+CREATE INDEX IF NOT EXISTS idx_stock_alloc_upn ON stock_allocations(upn);
+
 CREATE TABLE IF NOT EXISTS subscriptions (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
     name                  TEXT NOT NULL,
