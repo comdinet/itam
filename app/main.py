@@ -425,6 +425,25 @@ def totp_confirm(request: Request, code: str = Form("")):
                   flash="Two-factor authentication is on")
 
 
+@app.post("/account/2fa/test")
+def totp_test(request: Request, code: str = Form("")):
+    """Check a code without consuming it.
+
+    Deliberately does not advance totp_last_step: this is for confirming the
+    authenticator is in sync, and burning the window would make the next real
+    sign-in fail for no reason.
+    """
+    me = request.state.user
+    user = auth.get_user(me["username"])
+    if not user["totp_enabled"] or not user["totp_secret"]:
+        return back("/account", "Two-factor is not set up on this account")
+    if auth.verify_totp(user["totp_secret"], code, None) is not None:
+        return back("/account", "That code is correct - two-factor is working")
+    return back("/account",
+                "That code did not match. Check your phone's clock is accurate, "
+                "and that you are reading the entry for this account.")
+
+
 @app.post("/account/2fa/disable")
 def totp_disable(request: Request, current: str = Form("")):
     me = request.state.user
@@ -897,8 +916,7 @@ def group_detail(request: Request, group_id: str):
 
 # --- settings: devices (Intune) -----------------------------------------
 
-@app.get("/settings/devices", response_class=HTMLResponse)
-def settings_devices(request: Request, q: str = "", os_filter: str = ""):
+def _device_query(q: str, os_filter: str, linked: str) -> tuple[str, list]:
     sql = """SELECT d.*, a.name AS asset_name FROM devices d
              LEFT JOIN assets a ON a.id = d.asset_id"""
     where, params = [], []
@@ -909,9 +927,19 @@ def settings_devices(request: Request, q: str = "", os_filter: str = ""):
     if os_filter:
         where.append("COALESCE(d.os,'') = ?")
         params.append(os_filter)
+    if linked == "unlinked":
+        where.append("d.asset_id IS NULL")
+    elif linked == "linked":
+        where.append("d.asset_id IS NOT NULL")
     if where:
         sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY d.device_name"
+    return sql + " ORDER BY d.device_name", params
+
+
+@app.get("/settings/devices", response_class=HTMLResponse)
+def settings_devices(request: Request, q: str = "", os_filter: str = "",
+                     linked: str = ""):
+    sql, params = _device_query(q, os_filter, linked)
     devices = db.q(sql, params)
     oses = db.q("SELECT DISTINCT COALESCE(os,'') o FROM devices ORDER BY o")
     attrs = {}
@@ -923,8 +951,10 @@ def settings_devices(request: Request, q: str = "", os_filter: str = ""):
                   SUM(CASE WHEN asset_id IS NULL THEN 1 ELSE 0 END) AS unlinked,
                   (SELECT COUNT(*) FROM device_attributes) AS attributes
            FROM devices""")
+    unlinked_here = sum(1 for d in devices if not d["asset_id"])
     return render(request, "settings_devices.html", devices=devices, attrs=attrs,
-                  oses=oses, q=q, os_filter=os_filter, last=last, counts=counts,
+                  oses=oses, q=q, os_filter=os_filter, linked=linked,
+                  unlinked_here=unlinked_here, last=last, counts=counts,
                   cfg=entra.config_status(),
                   attr_filter=settings.get("INTUNE_ATTRIBUTE_FILTER"),
                   attr_names=db.q("SELECT DISTINCT name FROM device_attributes ORDER BY name"),
@@ -964,40 +994,74 @@ def settings_devices_sync_attrs():
     return back("/settings/devices", msg[:400])
 
 
-@app.post("/settings/devices/{device_id}/create-asset")
-def device_create_asset(device_id: str):
-    """Turn an Intune device into a tracked asset, keeping them linked."""
-    d = db.q1("SELECT * FROM devices WHERE id = ?", (device_id,))
-    if not d:
-        return back("/settings/devices", "No such device")
-    if d["asset_id"]:
-        return back("/settings/devices", "That device is already linked to an asset")
+def _asset_from_device(d) -> tuple[int, int | None]:
+    """Create an asset for an Intune device and link them.
+
+    Returns (asset_id, price_applied). Named after the model, since an asset
+    record is about the kit; the hostname goes in the notes.
+    """
     category = "Laptop" if (d["os"] or "").lower() in ("macos", "windows") else "Other"
     upn = d["primary_upn"] if d["primary_upn"] and db.q1(
         "SELECT 1 FROM users WHERE upn = ?", (d["primary_upn"],)) else None
-    # The asset is named after the model - "MacBook Pro 14", not "HEDY-MBP".
-    # An asset record is about the kit; the hostname is kept in the notes so
-    # the Intune device is still identifiable from the asset.
     name = (d["model"] or d["device_name"] or "Device").strip()
     hostname = (d["device_name"] or "").strip()
     notes = f"Created from Intune device {hostname}".strip() if hostname \
         else "Created from Intune"
     asset_id = db.execute(
-        """INSERT INTO assets (name, category, cost_cents, serial, notes, assigned_upn, assigned_on)
+        """INSERT INTO assets (name, category, cost_cents, serial, notes,
+                               assigned_upn, assigned_on)
            VALUES (?,?,0,?,?,?,?)""",
         (name, category, d["serial_number"], notes, upn, today() if upn else None))
-    db.execute("UPDATE devices SET asset_id = ? WHERE id = ?", (asset_id, device_id))
+    db.execute("UPDATE devices SET asset_id = ? WHERE id = ?", (asset_id, d["id"]))
 
-    # A pricing group covering this specification prices it straight away, so a
-    # machine of a known spec never lands with a cost of zero.
+    # A pricing group covering this specification prices it straight away.
     price = pricing.price_for_asset(asset_id)
     if price:
         db.execute("UPDATE assets SET cost_cents = ? WHERE id = ?", (price, asset_id))
+    return asset_id, price
+
+
+@app.post("/settings/devices/{device_id}/create-asset")
+def device_create_asset(device_id: str):
+    """Turn one Intune device into a tracked asset, keeping them linked."""
+    d = db.q1("SELECT * FROM devices WHERE id = ?", (device_id,))
+    if not d:
+        return back("/settings/devices", "No such device")
+    if d["asset_id"]:
+        return back("/settings/devices", "That device is already linked to an asset")
+    _, price = _asset_from_device(d)
+    if price:
         return back("/settings/devices",
                     f"Asset created, linked and priced at {settings.currency()} "
                     f"{db.money(price)} from a pricing group")
     return back("/settings/devices",
                 "Asset created and linked - set its cost on the Assets page")
+
+
+@app.post("/settings/devices/create-assets")
+def devices_create_assets(request: Request, q: str = Form(""), os_filter: str = Form(""),
+                          linked: str = Form("")):
+    """Create assets for every unlinked device matching the current filters.
+
+    Scoped to what the page was showing, so a filtered view creates assets for
+    that subset rather than the whole estate.
+    """
+    sql, params = _device_query(q, os_filter, "unlinked")
+    devices = db.q(sql, params)
+    if not devices:
+        return back("/settings/devices", "No unlinked devices match those filters")
+    created = priced = 0
+    for d in devices:
+        _, price = _asset_from_device(d)
+        created += 1
+        if price:
+            priced += 1
+    msg = f"Created {created} asset(s) from Intune"
+    if priced:
+        msg += f", {priced} priced from a pricing group"
+    if created - priced:
+        msg += f"; {created - priced} need a cost setting"
+    return back("/settings/devices", msg)
 
 
 # --- settings: licences (from Entra) ------------------------------------
@@ -1269,12 +1333,19 @@ def settings_general(request: Request):
                   (SELECT COUNT(*) FROM devices) AS devices,
                   (SELECT COUNT(*) FROM rules WHERE active = 1) AS rules"""
     )
+    local_accounts = db.q(
+        """SELECT username, is_admin, totp_enabled, sso FROM auth_users
+           ORDER BY username""")
+    tfa_ready = [a for a in local_accounts if a["totp_enabled"] or a["sso"]]
     env_only = [(k, os.environ.get(k) or "(not set)", why)
                 for k, why in settings.ENV_ONLY.items()
                 if not k.startswith("ITAM_ADMIN_")]
     return render(request, "settings_general.html", counts=counts,
                   fields=settings.group("general"), env_only=env_only,
-                  db_path=db.DB_PATH, section="general")
+                  db_path=db.DB_PATH, local_accounts=local_accounts,
+                  tfa_ready=len(tfa_ready), require_2fa=auth.require_2fa(),
+                  me_has_2fa=bool(request.state.user["totp_enabled"]),
+                  section="general")
 
 
 async def _read_form(request: Request) -> dict:

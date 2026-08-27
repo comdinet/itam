@@ -68,6 +68,21 @@ print(f"  {'PASS' if not [f for f in fails if 'malformed' in f] else 'FAIL'}  em
 check("another account's code is refused",
       auth.verify_totp(fresh, auth._totp_at(auth.new_totp_secret(), n), None), None)
 
+print("\n--- testing a code must not consume it ---")
+# verify_totp with last_step=None is what the "test a code" route uses: it
+# reports whether the authenticator is in sync without advancing the counter,
+# so the next real sign-in with that code still works.
+probe_secret = auth.begin_totp_setup("bob")
+auth.confirm_totp("bob", auth._totp_at(probe_secret, auth.current_step()))
+before = auth.get_user("bob")["totp_last_step"]
+step = before + 1
+code = auth._totp_at(probe_secret, step)
+check("a test check passes without touching the counter",
+      auth.verify_totp(probe_secret, code, None) is not None, True)
+check("counter unchanged by the check", auth.get_user("bob")["totp_last_step"], before)
+check("and the code is still good for a real sign-in",
+      auth.verify_totp(probe_secret, code, before), step)
+
 print("\n--- recovery codes ---")
 auth.confirm_totp("bob", auth._totp_at(fresh, auth.current_step()))
 codes = auth.issue_recovery_codes("bob")

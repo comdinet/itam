@@ -17,6 +17,15 @@
     <p class="meta">{{ recovery_left }} unused recovery code(s).
       {% if recovery_left == 0 %}<strong>None left</strong> &mdash; generate a new set,
       or you will need an admin if you lose your phone.{% endif %}</p>
+    <form method="post" action="/account/2fa/test" class="stack narrow">
+      <label>Test a code
+        <input name="code" inputmode="numeric" pattern="[0-9]*" maxlength="6"
+               autocomplete="one-time-code" placeholder="000000"></label>
+      <button type="submit">Check this code</button>
+    </form>
+    <p class="hint">Confirms your authenticator is in sync. The code is not
+       consumed, so your next sign-in still works.</p>
+
     <form method="post" action="/account/2fa/recovery" class="stack narrow">
       <label>Current password
         <input type="password" name="current" autocomplete="current-password" required></label>

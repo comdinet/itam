@@ -48,9 +48,28 @@
   <select name="os_filter"><option value="">Any OS</option>
     {% for o in oses %}{% if o.o %}<option value="{{ o.o }}" {% if o.o == os_filter %}selected{% endif %}>{{ o.o }}</option>{% endif %}{% endfor %}
   </select>
+  <select name="linked">
+    <option value="">Linked or not</option>
+    <option value="unlinked" {% if linked == 'unlinked' %}selected{% endif %}>Not in ITAM yet</option>
+    <option value="linked" {% if linked == 'linked' %}selected{% endif %}>Already an asset</option>
+  </select>
   <button type="submit">Filter</button>
   <a class="btn light" href="/settings/devices">Reset</a>
+  <a class="btn light" href="/settings/devices?linked=unlinked">Show only missing from ITAM</a>
 </form>
+
+{% if unlinked_here %}
+<form method="post" action="/settings/devices/create-assets" class="inline-form"
+      onsubmit="return confirm('Create {{ unlinked_here }} asset(s) from the devices shown?')">
+  <input type="hidden" name="q" value="{{ q }}">
+  <input type="hidden" name="os_filter" value="{{ os_filter }}">
+  <input type="hidden" name="linked" value="{{ linked }}">
+  <button type="submit">Create assets for {{ unlinked_here }} device(s) not in ITAM</button>
+  <span class="hint">Named after the model, linked to the device, and priced from a
+    <a href="/settings/pricing">pricing group</a> where one covers the spec.
+    Only the devices matching the filters above.</span>
+</form>
+{% endif %}
 
 <table>
   <thead><tr><th>Device</th><th>OS</th><th>Model</th><th>Serial</th>
@@ -80,7 +99,7 @@
         {% endif %}</td></tr>
   {% else %}
     <tr><td colspan="7" class="empty">
-      {% if q or os_filter %}No devices match those filters.
+      {% if q or os_filter or linked %}No devices match those filters.
       {% else %}No devices yet &mdash; run a sync.{% endif %}</td></tr>
   {% endfor %}
   </tbody>

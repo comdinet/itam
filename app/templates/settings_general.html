@@ -17,6 +17,41 @@
 
 {{ settings_form(fields, '/settings/general/save', '/settings', 'Application settings') }}
 
+<h2>Two-factor readiness</h2>
+<p class="meta">{{ tfa_ready }} of {{ local_accounts|length }} sign-in account(s)
+  can already satisfy a two-factor requirement.
+  {% if require_2fa %}It is currently <strong>required</strong>.
+  {% else %}It is currently optional.{% endif %}</p>
+
+{% if not me_has_2fa %}
+<div class="warn">
+  <strong>Your own account does not have two-factor set up.</strong>
+  Set it up and test a code under <a href="/account">My account</a> before you
+  require it for everyone &mdash; that way you know it works on your phone first.
+</div>
+{% endif %}
+
+<table>
+  <thead><tr><th>Account</th><th>Role</th><th>Two-factor</th><th>If required</th></tr></thead>
+  <tbody>
+  {% for a in local_accounts %}
+    <tr>
+      <td><strong>{{ a.username }}</strong></td>
+      <td>{{ 'Admin' if a.is_admin else 'Standard' }}</td>
+      <td>{% if a.totp_enabled %}<span class="ok">on</span>
+          {% elif a.sso %}<span class="meta">via single sign-on</span>
+          {% else %}<span class="tag">off</span>{% endif %}</td>
+      <td class="meta">
+        {% if a.totp_enabled or a.sso %}unaffected
+        {% else %}forced to set it up before using the app{% endif %}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="hint">Requiring two-factor does not lock anyone out: an account without
+  it can still sign in with its password, but reaches only its own account page
+  until it is set up. Accounts that sign in through single sign-on are exempt,
+  because Entra has already applied your MFA policy.</p>
+
 <h2>Set in .env only</h2>
 <p class="meta">These are read before the app can reach its own database, or are
   used by Docker rather than the app, so they cannot be edited here. Change them

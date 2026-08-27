@@ -207,6 +207,18 @@ shown once and stored only as hashes.
 - **Lost phone, no codes left** → an admin clears it under
   **Settings → Accounts → Reset 2FA**, which also signs that account out
   everywhere.
+
+Set it up under **My account**, which is linked from the Settings tabs as well
+as the header. Once it is on, **Test a code** there confirms your authenticator
+is in sync — it checks the code *without consuming it*, so your next sign-in
+still works with the same one.
+
+Before turning it on for everyone, **Settings → General** shows a two-factor
+readiness table: every sign-in account, whether it has two-factor, and what
+would happen to it if you required it. It warns if your own account is not
+covered yet — test it on your own phone first. Requiring it locks nobody out:
+an account without it still signs in with its password but reaches only its own
+account page until it is set up, and single-sign-on accounts are exempt.
 - **Require it for everyone** → set `ITAM_REQUIRE_2FA=1`. Accounts without it
   can reach only their own account page until they set it up, and nobody can
   then turn it off.
@@ -505,8 +517,15 @@ Intune reports; an asset is what you paid for. They are matched on **serial
 number** — where a serial matches, the device links to that asset. A link made
 by hand survives later syncs even if the serial never matches.
 
-For a device with no asset, **Create asset** makes one from the device details
-and links them, leaving you to fill in the cost.
+The **Linked or not** filter separates devices already in ITAM from those that
+are not — *"Show only missing from ITAM"* jumps straight to the gap.
+
+**Create asset** does one device. **Create assets for N device(s) not in ITAM**
+does the whole filtered set at once, so onboarding a delivery is one click
+rather than fifty. It is scoped to the filters showing, so you can bulk-create
+just the Macs, or just one model. Each asset is named after the model, linked to
+its device, and **priced from a matching pricing group** where one covers the
+spec. Re-running it finds nothing, since the devices are then linked.
 
 **macOS custom attributes** are shell scripts in Intune whose output Intune
 stores per device. Needs `DeviceManagementScripts.Read.All` — Microsoft moved
