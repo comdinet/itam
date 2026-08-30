@@ -57,6 +57,15 @@ check("an unknown group is refused",
 check("an unknown mode is refused",
       rules.add_group(rid, "g-cse", "maybe") is not None, True)
 
+print("\n--- exceptions can be set when the rule is created ---")
+# The create form posts exclude/include alongside the rule itself, so an
+# exception does not require a second trip to the rule's own page.
+rid2 = rules.create("Israel, not CSE", "g-il", "asset", 1, category="Monitor")
+check("exclusion applied at creation time", rules.add_group(rid2, "g-cse", "exclude"), None)
+check("covers the non-CSE members only", sorted(rules.covered_upns(rules.get(rid2))),
+      ["noa@x.com", "yael@x.com"])
+rules.delete(rid2)
+
 print("\n--- a rule serves each person once ---")
 for i in range(4):
     db.execute("INSERT INTO assets (name,category,cost_cents) VALUES (?,'Monitor',59900)",

@@ -1566,28 +1566,53 @@ def settings_rules(request: Request):
 
 
 @app.post("/settings/rules/new")
-def rule_new(name: str = Form(...), group_id: str = Form(...), kind: str = Form(...),
-             quantity: str = Form("1"), category: str = Form(""),
-             subscription_id: str = Form("")):
+async def rule_new(request: Request):
+    """Create a rule, with its exceptions, in one step."""
+    form = await request.form()
+    name = str(form.get("name") or "").strip()
+    group_id = str(form.get("group_id") or "")
+    kind = str(form.get("kind") or "")
+    category = str(form.get("category") or "").strip()
+    subscription_id = str(form.get("subscription_id") or "").strip()
+    quantity = str(form.get("quantity") or "1")
+    excludes = [g for g in form.getlist("exclude") if g]
+    includes = [g for g in form.getlist("include") if g]
+
+    if not name:
+        return back("/settings/rules", "Give the rule a name")
     if kind not in ("asset", "subscription"):
-        return back("/settings/rules", "Pick what the rule grants")
+        return back("/settings/rules",
+                    "Choose whether the rule grants an asset or a licence")
     if not db.q1("SELECT 1 FROM groups WHERE id = ?", (group_id,)):
-        return back("/settings/rules", "Unknown group - sync groups first")
+        return back("/settings/rules", "Choose the group the rule applies to")
     try:
         qty = max(1, int(quantity))
     except ValueError:
         return back("/settings/rules", "Quantity must be a whole number")
+
     if kind == "asset":
-        if not category.strip():
-            return back("/settings/rules", "Choose an asset category")
-        rules.create(name, group_id, "asset", qty, category=category.strip())
+        if not category:
+            return back("/settings/rules", "Choose what the rule grants")
+        rule_id = rules.create(name, group_id, "asset", qty, category=category)
     else:
         if not subscription_id.isdigit():
-            return back("/settings/rules", "Choose a subscription")
+            return back("/settings/rules", "Choose which subscription the rule grants")
         # One seat per person, regardless of what was typed.
-        rules.create(name, group_id, "subscription", 1,
-                     subscription_id=int(subscription_id))
-    return back("/settings/rules", "Rule created")
+        rule_id = rules.create(name, group_id, "subscription", 1,
+                               subscription_id=int(subscription_id))
+
+    refused = 0
+    for gid in excludes:
+        if rules.add_group(rule_id, gid, "exclude"):
+            refused += 1
+    for gid in includes:
+        if rules.add_group(rule_id, gid, "include"):
+            refused += 1
+
+    msg = "Rule created"
+    if excludes:
+        msg += f" with {len(excludes) - refused} exception(s)"
+    return back(f"/settings/rules/{rule_id}", msg)
 
 
 @app.post("/settings/rules/{rule_id}/delete")

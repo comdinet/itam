@@ -12,29 +12,80 @@
 <details class="panel" open>
   <summary>Add a rule</summary>
   <form class="grid-form" method="post" action="/settings/rules/new">
-    <label>Name<input name="name" required placeholder="Designers get two monitors"></label>
+    <label>Name<input name="name" required placeholder="Israel gets two monitors"></label>
+
     <label>Applies to<select name="group_id" required>
+      <option value="">&mdash; choose a group &mdash;</option>
       {% for g in groups %}
         <option value="{{ g.id }}">{{ g.display_name }}{% if g.id != all_users_group %} ({{ g.member_count }} in Entra){% endif %}</option>
       {% endfor %}
     </select></label>
-    <label>Grants<select name="kind" required>
+
+    <label>Grants<select name="kind" required id="rule-kind">
+      <option value="">&mdash; choose &mdash;</option>
       <option value="asset">an asset category</option>
       <option value="subscription">a subscription licence</option></select></label>
-    <label>Asset category<select name="category">
+
+    <label id="field-category" hidden>Which asset<select name="category">
       <option value="">&mdash; choose &mdash;</option>
       {% for c in categories() %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
     </select></label>
-    <label>Subscription<select name="subscription_id">
+
+    <label id="field-subscription" hidden>Which subscription<select name="subscription_id">
       <option value="">&mdash; choose &mdash;</option>
       {% for s in subs %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}
     </select></label>
-    <label>Quantity each<input name="quantity" type="number" min="1" value="1"></label>
+
+    <label id="field-quantity" hidden>How many each<input name="quantity" type="number" min="1" value="1"></label>
+
+    <label class="wide">Except members of
+      <select name="exclude" multiple size="4">
+        {% for g in groups %}
+          {% if g.id != all_users_group %}<option value="{{ g.id }}">{{ g.display_name }}</option>{% endif %}
+        {% endfor %}
+      </select>
+      <span class="hint">Optional. Anyone in a group picked here is left out, even if
+        the group above would include them. Hold Ctrl (or Command) to pick several.</span>
+    </label>
+
+    <label class="wide">Also include members of
+      <select name="include" multiple size="3">
+        {% for g in groups %}
+          {% if g.id != all_users_group %}<option value="{{ g.id }}">{{ g.display_name }}</option>{% endif %}
+        {% endfor %}
+      </select>
+      <span class="hint">Optional. Covers a second group under the same rule.</span>
+    </label>
+
     <button type="submit">Create rule</button>
   </form>
-  <p class="hint">Fill in the category for an asset rule, or the subscription for a
-     licence rule &mdash; whichever matches what the rule grants. Licences are one
-     per person, so quantity only applies to assets.</p>
+
+  <script>
+    // Show only the field that matches what the rule grants. Without
+    // JavaScript both stay visible and the server still validates, so the form
+    // works either way.
+    (function () {
+      var kind = document.getElementById('rule-kind');
+      if (!kind) return;
+      var cat = document.getElementById('field-category');
+      var sub = document.getElementById('field-subscription');
+      var qty = document.getElementById('field-quantity');
+      function sync() {
+        var isAsset = kind.value === 'asset';
+        var isSub = kind.value === 'subscription';
+        cat.hidden = !isAsset;
+        qty.hidden = !isAsset;            // a licence is one per person
+        sub.hidden = !isSub;
+        cat.querySelector('select').required = isAsset;
+        sub.querySelector('select').required = isSub;
+      }
+      kind.addEventListener('change', sync);
+      sync();
+    })();
+  </script>
+
+  <p class="hint">Licences are one per person, so a quantity only applies to
+     assets. Exceptions can be changed later on the rule's own page.</p>
   {% if groups|length <= 1 %}
     <p class="hint">Only <strong>{{ groups[0].display_name if groups else 'Everyone' }}</strong>
        is available so far. <a href="/settings/groups">Sync your Entra groups</a> to

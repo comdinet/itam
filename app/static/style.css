@@ -134,3 +134,8 @@ textarea.wide-input { font-family: ui-monospace, SFMono-Regular, Menlo, monospac
                       font-size: 12px; resize: vertical; }
 .check { display: inline-flex; align-items: center; gap: 7px; color: var(--ink); }
 .hidden-form { display: none; }
+
+/* The hidden attribute must beat the layout rules above: `.grid-form label`
+   sets display:flex, which outranks the browser's own [hidden] rule, so a
+   field marked hidden would otherwise still be visible. */
+[hidden] { display: none !important; }
