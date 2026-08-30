@@ -13,6 +13,7 @@ import os
 import httpx
 
 from . import db, settings
+from . import devices as devices_mod
 
 GRAPH = "https://graph.microsoft.com/v1.0"
 # Intune custom attribute shell scripts are only exposed on the beta endpoint.
@@ -51,7 +52,8 @@ def sku_display_name(part_number: str | None) -> str:
 
 DEVICE_SELECT = ("id,deviceName,serialNumber,manufacturer,model,operatingSystem,"
                  "osVersion,userPrincipalName,complianceState,enrolledDateTime,"
-                 "lastSyncDateTime,totalStorageSpaceInBytes,freeStorageSpaceInBytes")
+                 "lastSyncDateTime,totalStorageSpaceInBytes,freeStorageSpaceInBytes,"
+                 "azureADDeviceId")
 
 
 def is_configured() -> bool:
@@ -351,6 +353,7 @@ def sync_devices() -> dict:
                 continue
             serial = (d.get("serialNumber") or "").strip() or None
             upn = (d.get("userPrincipalName") or "").strip().lower() or None
+            azure_id = (d.get("azureADDeviceId") or "").strip().lower() or None
 
             # An asset with the same serial is the same physical thing.
             asset_id = None
@@ -365,13 +368,14 @@ def sync_devices() -> dict:
                 """INSERT INTO devices (id, device_name, serial_number, manufacturer, model,
                                         os, os_version, primary_upn, compliance_state,
                                         enrolled_at, last_contact, storage_total,
-                                        storage_free, synced_at, asset_id)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                        storage_free, azure_device_id, synced_at, asset_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(id) DO UPDATE SET
                        device_name=excluded.device_name, serial_number=excluded.serial_number,
                        manufacturer=excluded.manufacturer, model=excluded.model,
                        os=excluded.os, os_version=excluded.os_version,
                        primary_upn=excluded.primary_upn,
+                       azure_device_id=excluded.azure_device_id,
                        compliance_state=excluded.compliance_state,
                        enrolled_at=excluded.enrolled_at, last_contact=excluded.last_contact,
                        storage_total=excluded.storage_total, storage_free=excluded.storage_free,
@@ -382,7 +386,7 @@ def sync_devices() -> dict:
                  d.get("operatingSystem"), d.get("osVersion"), upn, d.get("complianceState"),
                  d.get("enrolledDateTime"), d.get("lastSyncDateTime"),
                  _int_or_none(d.get("totalStorageSpaceInBytes")),
-                 _int_or_none(d.get("freeStorageSpaceInBytes")), now, asset_id))
+                 _int_or_none(d.get("freeStorageSpaceInBytes")), azure_id, now, asset_id))
             if exists:
                 updated += 1
             else:
@@ -390,8 +394,47 @@ def sync_devices() -> dict:
             if asset_id:
                 linked += 1
 
+    # Group membership decides what to hide, so it has to be as fresh as the
+    # devices themselves - add a VM to the group in Entra and the next sync
+    # hides it, with no separate step to remember.
+    groups_refreshed = refresh_ignore_groups()
+    hidden = devices_mod.recompute()
+
     return {"devices": len(devices), "created": created, "updated": updated,
-            "linked_to_assets": linked}
+            "linked_to_assets": linked, "ignored": hidden,
+            "groups_refreshed": groups_refreshed}
+
+
+def fetch_group_devices(group_id: str) -> list[str]:
+    """Entra device ids in a group, following nested groups.
+
+    Cast to device for the same reason the user sync casts to user: /members
+    would give direct members only, and a group of groups would silently
+    resolve to nothing.
+    """
+    members = _get_all(f"/groups/{group_id}/transitiveMembers/microsoft.graph.device",
+                       {"$select": "id,deviceId,displayName", "$top": "999"})
+    return [(m.get("deviceId") or "").strip().lower()
+            for m in members if m.get("deviceId")]
+
+
+def refresh_ignore_groups() -> int:
+    """Re-read the device groups the ignore rules name. Returns how many."""
+    wanted = devices_mod.group_rules()
+    if not wanted:
+        db.execute("DELETE FROM device_group_members")
+        return 0
+    placeholders = ",".join("?" for _ in wanted)
+    db.execute(f"DELETE FROM device_group_members WHERE group_id NOT IN ({placeholders})",
+               wanted)
+    for group_id in wanted:
+        ids = fetch_group_devices(group_id)
+        db.execute("DELETE FROM device_group_members WHERE group_id = ?", (group_id,))
+        for azure_id in ids:
+            db.execute(
+                "INSERT OR IGNORE INTO device_group_members (group_id, azure_device_id) "
+                "VALUES (?,?)", (group_id, azure_id))
+    return len(wanted)
 
 
 # --- macOS custom attributes --------------------------------------------
@@ -627,54 +670,3 @@ def _get_all_once(path: str, params: dict, base: str = GRAPH) -> list[dict]:
         raise GraphError(_explain(resp, path))
     return (resp.json() or {}).get("value", [])
 
-
-def holder_gap() -> dict:
-    """Where ITAM and Intune disagree about who is holding a machine.
-
-    An asset takes its holder from the Intune device once, when the asset is
-    created, and only if that person is already in ITAM. Sync devices before
-    people - or take on somebody who joined afterwards - and the asset stays
-    unassigned for good, with nothing on screen to say why. That is the usual
-    reason for a pile of "unassigned" kit that is plainly on somebody's desk.
-
-    Reports, without changing anything:
-      fillable  - no holder in ITAM, and Intune names one we know
-      unknown   - Intune names somebody ITAM has never synced
-      nobody    - Intune has no primary user either (shared or never signed in)
-      mismatch  - both name a holder, and they differ
-    """
-    rows = db.q(
-        """SELECT d.id, d.device_name, d.primary_upn, a.id AS asset_id, a.name,
-                  a.assigned_upn,
-                  (SELECT display_name FROM users WHERE upn = d.primary_upn) AS intune_name,
-                  (SELECT display_name FROM users WHERE upn = a.assigned_upn) AS itam_name
-           FROM devices d JOIN assets a ON a.id = d.asset_id
-           ORDER BY d.device_name""")
-    out = {"fillable": [], "unknown": [], "nobody": [], "mismatch": []}
-    for r in rows:
-        if not r["assigned_upn"]:
-            if not r["primary_upn"]:
-                out["nobody"].append(r)
-            elif r["intune_name"] is None:
-                out["unknown"].append(r)
-            else:
-                out["fillable"].append(r)
-        elif r["primary_upn"] and r["primary_upn"] != r["assigned_upn"]:
-            out["mismatch"].append(r)
-    return out
-
-
-def fill_holders_from_intune() -> int:
-    """Give unassigned assets the holder Intune already knows about.
-
-    Only assets with no holder at all are touched. Where the two disagree the
-    difference is reported and left alone: somebody assigned that one by hand,
-    and a sync has no business overruling them.
-    """
-    gap = holder_gap()
-    today = datetime.date.today().isoformat()
-    for row in gap["fillable"]:
-        db.execute(
-            "UPDATE assets SET assigned_upn = ?, assigned_on = ? WHERE id = ?",
-            (row["primary_upn"], today, row["asset_id"]))
-    return len(gap["fillable"])

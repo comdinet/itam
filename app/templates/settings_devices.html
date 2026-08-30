@@ -71,6 +71,110 @@
 </form>
 {% endif %}
 
+<details class="panel" {% if ignore_counts.ignored_with_asset %}open{% endif %}>
+  <summary>Ignored devices
+    <span class="count">{{ ignore_counts.ignored }} of {{ ignore_counts.total }}</span></summary>
+  <p class="meta">Not everything Intune manages is kit somebody has. Virtual
+    machines live in a group, nobody carries one, and turning each into an asset
+    makes the estate look bigger than it is. Ignored devices are still synced
+    &mdash; so what is hidden, and why, is always answerable &mdash; but they are
+    kept off this list, never become assets, and are left out of the holder
+    check.</p>
+
+  <table>
+    <thead><tr><th>Rule</th><th class="num">Hiding</th><th></th></tr></thead>
+    <tbody>
+    {% for r in ignore_rules %}
+      <tr><td>{{ describe_rule(r) }}</td>
+          <td class="num">{{ ignored|selectattr('ignored_reason','equalto',describe_rule(r))|list|length }}</td>
+          <td class="row-actions">
+            <form method="post" action="/settings/devices/ignore/{{ r.id }}/delete">
+              <button class="link danger">Remove</button></form></td></tr>
+    {% else %}
+      <tr><td colspan="3" class="empty">Nothing is ignored &mdash; every managed
+        device shows up above.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  <form class="grid-form" method="post" action="/settings/devices/ignore/add" data-ignore>
+    <label>Ignore<select name="field" data-role="field">
+      {% for key, spec in ignore_fields.items() %}
+        {% if key != 'device' %}<option value="{{ key }}">{{ spec[0] }}</option>{% endif %}
+      {% endfor %}
+    </select></label>
+    <label data-role="group-label">Group<select name="value" data-role="group">
+      <option value="">&mdash; choose a group &mdash;</option>
+      {% for g in entra_groups %}<option value="{{ g.id }}">{{ g.display_name }}</option>{% endfor %}
+    </select></label>
+    <label data-role="op-label">Match<select name="op">
+      {% for key, spec in ignore_ops.items() %}<option value="{{ key }}"
+        {% if key == 'contains' %}selected{% endif %}>{{ spec[0] }}</option>{% endfor %}
+    </select></label>
+    <label data-role="text-label">Value<input name="value" data-role="text"
+           placeholder="Virtual Machine"></label>
+    <button type="submit">Ignore these</button>
+  </form>
+  <p class="hint">A device matching <em>any</em> rule is ignored. Group
+     membership follows nested groups and is re-read on every device sync, so
+     adding a VM to the group in Entra hides it next time round.
+     {%- if not entra_groups %} No groups synced yet &mdash;
+     <a href="/settings/groups">sync them</a> to ignore by group.{% endif %}</p>
+
+  {% if ignore_counts.ignored_with_asset %}
+  <form method="post" action="/settings/devices/ignore/unlink" class="inline-form"
+        onsubmit="return confirm('Unlink {{ ignore_counts.ignored_with_asset }} ignored device(s) from their assets?')">
+    <button type="submit">Unlink {{ ignore_counts.ignored_with_asset }} ignored device(s) from their assets</button>
+    <span class="hint">Assets made from these before the rule existed. The link
+      goes; the asset records stay, for you to delete on the
+      <a href="/assets">Assets page</a> if that is what you meant.</span>
+  </form>
+  {% endif %}
+
+  {% if ignored %}
+  <h3>Currently hidden <span class="count">{{ ignored|length }}</span></h3>
+  <table>
+    <thead><tr><th>Device</th><th>Model</th><th>Because</th><th>Asset</th></tr></thead>
+    <tbody>
+    {% for d in ignored %}
+      <tr class="disabled"><td>{{ d.device_name }}</td><td>{{ d.model or '' }}</td>
+          <td class="meta">{{ d.ignored_reason }}</td>
+          <td>{% if d.asset_name %}<a href="/assets/{{ d.asset_id }}">{{ d.asset_name }}</a>
+              {% else %}&mdash;{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p><a href="/settings/devices?show_ignored=1">Show them in the list above</a>
+     {%- if show_ignored %} &middot; <a href="/settings/devices">hide them again</a>{% endif %}</p>
+  {% endif %}
+</details>
+
+<script>
+  // Only the field that the chosen rule actually uses is shown, with an inline
+  // style: .grid-form label { display: flex } outranks [hidden].
+  (function () {
+    var form = document.querySelector('[data-ignore]');
+    if (!form) return;
+    var field = form.querySelector('[data-role=field]');
+    var group = form.querySelector('[data-role=group]');
+    var text = form.querySelector('[data-role=text]');
+    function show(el, on) { el.style.display = on ? 'flex' : 'none'; }
+    function sync() {
+      var isGroup = field.value === 'group';
+      show(form.querySelector('[data-role=group-label]'), isGroup);
+      show(form.querySelector('[data-role=op-label]'), !isGroup);
+      show(form.querySelector('[data-role=text-label]'), !isGroup);
+      // Both inputs are called "value"; disabling one keeps it out of the POST.
+      group.disabled = !isGroup;
+      text.disabled = isGroup;
+      group.required = isGroup;
+      text.required = !isGroup;
+    }
+    field.addEventListener('change', sync);
+    sync();
+  })();
+</script>
+
 {% if gap.fillable or gap.unknown or gap.nobody or gap.mismatch %}
 <details class="panel" {% if gap.fillable %}open{% endif %}>
   <summary>Holders: {{ gap.fillable|length }} asset(s) could take the person Intune
@@ -156,6 +260,10 @@
         {% else %}
           <form method="post" action="/settings/devices/{{ d.id }}/create-asset">
             <button class="link">Create asset</button></form>
+        {% endif %}
+        {% if not d.ignored_reason %}
+          <form method="post" action="/settings/devices/{{ d.id }}/ignore">
+            <button class="link danger">Ignore</button></form>
         {% endif %}</td></tr>
   {% else %}
     <tr><td colspan="7" class="empty">

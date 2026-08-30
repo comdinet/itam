@@ -11,7 +11,7 @@ os.environ["ITAM_ADMIN_PASSWORD"] = "DashTest!2345"
 os.environ["ITAM_COOKIE_SECURE"] = "0"
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import warnings; warnings.filterwarnings("ignore")
-from app import db, entra, fx, pooled
+from app import db, devices, fx, pooled
 db.init_db(); fx.ensure_base()
 
 fails = []
@@ -113,7 +113,7 @@ shared = asset("MacBook Air", None, 0, "ILS", "IL-11")
 device("dev-shared", shared, None)                        # genuinely nobody's
 device("dev-yael", db.q1("SELECT id FROM assets WHERE serial='IL-1'")["id"], "ollie@x.com")
 
-gap = entra.holder_gap()
+gap = devices.holder_gap()
 check("one asset can take a holder Intune knows",
       [r["primary_upn"] for r in gap["fillable"]], ["noa@x.com"])
 check("one names somebody ITAM has never seen", len(gap["unknown"]), 1)
@@ -122,7 +122,7 @@ check("one disagreement, reported not acted on",
       [(r["assigned_upn"], r["primary_upn"]) for r in gap["mismatch"]],
       [("yael@x.com", "ollie@x.com")])
 
-check("filling in touches exactly the fillable one", entra.fill_holders_from_intune(), 1)
+check("filling in touches exactly the fillable one", devices.fill_holders_from_intune(), 1)
 check("the orphan now has its holder",
       db.q1("SELECT assigned_upn FROM assets WHERE id = ?", (orphan,))["assigned_upn"],
       "noa@x.com")
@@ -131,7 +131,7 @@ check("the disagreement was left alone",
       "yael@x.com")
 check("the unknown one is untouched",
       db.q1("SELECT assigned_upn FROM assets WHERE id = ?", (ghost,))["assigned_upn"], None)
-check("running it again does nothing", entra.fill_holders_from_intune(), 0)
+check("running it again does nothing", devices.fill_holders_from_intune(), 0)
 
 print("\n--- the headline cards and the table must be the same number ---")
 # Three times now a figure on this page has disagreed with the table under it,

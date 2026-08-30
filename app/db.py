@@ -168,11 +168,37 @@ CREATE TABLE IF NOT EXISTS devices (
     last_contact     TEXT,
     storage_total    INTEGER,
     storage_free     INTEGER,
+    azure_device_id  TEXT,               -- Entra device object id (azureADDeviceId)
+    ignored_reason   TEXT,               -- which rule hid it, recomputed on sync
     synced_at        TEXT,
     asset_id         INTEGER REFERENCES assets(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_devices_serial ON devices(serial_number);
 CREATE INDEX IF NOT EXISTS idx_devices_upn ON devices(primary_upn);
+
+-- Devices you do not want to see. Virtual machines live in an Entra group and
+-- are not kit anybody holds; neither are test rigs or loan pool spares. They
+-- are still synced, so the list of what is being hidden - and why - is always
+-- answerable, and un-ignoring is instant rather than a re-sync.
+CREATE TABLE IF NOT EXISTS device_ignore_rules (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    field      TEXT NOT NULL,   -- group | device | device_name | model | manufacturer | os
+    op         TEXT NOT NULL DEFAULT 'contains',   -- eq | contains | starts
+    value      TEXT NOT NULL,   -- the Entra group id, Intune device id, or text
+    label      TEXT,            -- what to show for an id-shaped value
+    created_at TEXT
+);
+
+-- Which Entra devices are in a group an ignore rule names. Refreshed whenever
+-- devices are synced, so adding a VM to the group in Entra takes effect on the
+-- next sync like everything else.
+CREATE TABLE IF NOT EXISTS device_group_members (
+    group_id        TEXT NOT NULL,
+    azure_device_id TEXT NOT NULL,
+    PRIMARY KEY (group_id, azure_device_id)
+);
+CREATE INDEX IF NOT EXISTS idx_device_group_azure
+    ON device_group_members(azure_device_id);
 
 -- Intune custom attributes (macOS shell script results), merged onto a device.
 CREATE TABLE IF NOT EXISTS device_attributes (
@@ -420,6 +446,13 @@ def init_db():
         rcols = [r["name"] for r in conn.execute("PRAGMA table_info(rules)")]
         if "asset_name" not in rcols:
             conn.execute("ALTER TABLE rules ADD COLUMN asset_name TEXT")
+
+        # Migration: the Entra device object id, so a device can be matched
+        # against the groups it is in.
+        dcols = [r["name"] for r in conn.execute("PRAGMA table_info(devices)")]
+        for col in ("azure_device_id", "ignored_reason"):
+            if col not in dcols:
+                conn.execute(f"ALTER TABLE devices ADD COLUMN {col} TEXT")
 
         # Migration: counted assets no longer declare how many were bought.
         # What you owned but had not handed out is exactly what is on the shelf,

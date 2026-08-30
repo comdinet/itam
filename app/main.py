@@ -14,7 +14,8 @@ from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse,
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import api, auth, db, entra, fx, imports, pooled, pricing, rules, saml, settings
+from . import (api, auth, db, devices, entra, fx, imports, pooled, pricing,
+               rules, saml, settings)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -1207,10 +1208,16 @@ def group_detail(request: Request, group_id: str):
 
 # --- settings: devices (Intune) -----------------------------------------
 
-def _device_query(q: str, os_filter: str, linked: str) -> tuple[str, list]:
+def _device_query(q: str, os_filter: str, linked: str,
+                  include_ignored: bool = False) -> tuple[str, list]:
     sql = """SELECT d.*, a.name AS asset_name FROM devices d
              LEFT JOIN assets a ON a.id = d.asset_id"""
     where, params = [], []
+    if not include_ignored:
+        # Ignored devices are still synced, so every query that means "the kit
+        # we track" has to say so. Bulk-creating assets is the one that matters:
+        # a virtual machine must never quietly become an asset.
+        where.append("d.ignored_reason IS NULL")
     if q:
         where.append("(COALESCE(d.device_name,'') LIKE ? OR COALESCE(d.serial_number,'') LIKE ?"
                      " OR COALESCE(d.primary_upn,'') LIKE ?)")
@@ -1229,24 +1236,31 @@ def _device_query(q: str, os_filter: str, linked: str) -> tuple[str, list]:
 
 @app.get("/settings/devices", response_class=HTMLResponse)
 def settings_devices(request: Request, q: str = "", os_filter: str = "",
-                     linked: str = ""):
-    sql, params = _device_query(q, os_filter, linked)
-    devices = db.q(sql, params)
+                     linked: str = "", show_ignored: str = ""):
+    sql, params = _device_query(q, os_filter, linked, include_ignored=bool(show_ignored))
+    rows = db.q(sql, params)
     oses = db.q("SELECT DISTINCT COALESCE(os,'') o FROM devices ORDER BY o")
     attrs = {}
     for row in db.q("SELECT device_id, name, value FROM device_attributes ORDER BY name"):
         attrs.setdefault(row["device_id"], []).append(row)
     last = db.q1("SELECT MAX(synced_at) AS last FROM devices")
+    # Ignored devices are excluded here so the card agrees with what the
+    # "create assets" button will actually do.
     counts = db.q1(
         """SELECT COUNT(*) AS total,
                   SUM(CASE WHEN asset_id IS NULL THEN 1 ELSE 0 END) AS unlinked,
                   (SELECT COUNT(*) FROM device_attributes) AS attributes
-           FROM devices""")
-    unlinked_here = sum(1 for d in devices if not d["asset_id"])
-    return render(request, "settings_devices.html", devices=devices, attrs=attrs,
+           FROM devices WHERE ignored_reason IS NULL""")
+    unlinked_here = sum(1 for d in rows if not d["asset_id"])
+    return render(request, "settings_devices.html", devices=rows, attrs=attrs,
                   oses=oses, q=q, os_filter=os_filter, linked=linked,
+                  show_ignored=show_ignored,
+                  ignore_rules=devices.rules(), ignore_fields=devices.FIELDS,
+                  ignore_ops=devices.OPS, describe_rule=devices.describe,
+                  ignored=devices.ignored_listing(), ignore_counts=devices.counts(),
+                  entra_groups=entra_groups(),
                   unlinked_here=unlinked_here, last=last, counts=counts,
-                  gap=entra.holder_gap(),
+                  gap=devices.holder_gap(),
                   cfg=entra.config_status(),
                   attr_filter=settings.get("INTUNE_ATTRIBUTE_FILTER"),
                   attr_names=db.q("SELECT DISTINCT name FROM device_attributes ORDER BY name"),
@@ -1261,8 +1275,11 @@ def settings_devices_sync():
         r = entra.sync_devices()
     except Exception as exc:
         return back("/settings/devices", f"Device sync failed: {why(exc)}"[:300])
-    return back("/settings/devices",
-                f"Synced {r['devices']} device(s); {r['linked_to_assets']} matched an asset by serial")
+    msg = (f"Synced {r['devices']} device(s); {r['linked_to_assets']} matched an "
+           f"asset by serial")
+    if r["ignored"]:
+        msg += f"; {r['ignored']} ignored"
+    return back("/settings/devices", msg)
 
 
 @app.post("/settings/devices/sync-attributes")
@@ -1286,9 +1303,60 @@ def settings_devices_sync_attrs():
     return back("/settings/devices", msg[:400])
 
 
+@app.post("/settings/devices/ignore/add")
+def settings_devices_ignore_add(field: str = Form(...), op: str = Form("contains"),
+                                value: str = Form(""), label: str = Form("")):
+    if field == "group" and value:
+        row = db.q1("SELECT display_name FROM groups WHERE id = ?", (value,))
+        label = row["display_name"] if row else label
+    problem = devices.add_rule(field, op, value, label)
+    if problem:
+        return back("/settings/devices", problem)
+    msg = f"Now ignoring {devices.recompute()} device(s)"
+    if field == "group":
+        if not entra.is_configured():
+            return back("/settings/devices",
+                        "Rule added, but Entra ID is not configured - sync devices "
+                        "once it is, so the group's members can be read")
+        try:
+            entra.refresh_ignore_groups()
+        except Exception as exc:
+            return back("/settings/devices",
+                        f"Rule added, but reading the group failed: {why(exc)}"[:300])
+        msg = f"Now ignoring {devices.recompute()} device(s)"
+    return back("/settings/devices", msg)
+
+
+@app.post("/settings/devices/ignore/{rule_id}/delete")
+def settings_devices_ignore_delete(rule_id: int):
+    devices.delete_rule(rule_id)
+    return back("/settings/devices",
+                f"Rule removed - {devices.recompute()} device(s) still ignored")
+
+
+@app.post("/settings/devices/{device_id}/ignore")
+def settings_devices_ignore_one(device_id: str):
+    d = db.q1("SELECT device_name FROM devices WHERE id = ?", (device_id,))
+    if not d:
+        return back("/settings/devices", "No such device")
+    problem = devices.add_rule("device", "eq", device_id, d["device_name"])
+    if problem:
+        return back("/settings/devices", problem)
+    devices.recompute()
+    return back("/settings/devices", f"Ignoring {d['device_name']}")
+
+
+@app.post("/settings/devices/ignore/unlink")
+def settings_devices_ignore_unlink():
+    n = devices.unlink_ignored()
+    return back("/settings/devices",
+                f"Unlinked {n} ignored device(s). The assets themselves are "
+                f"untouched - delete them on the Assets page if that is what you meant.")
+
+
 @app.post("/settings/devices/fill-holders")
 def settings_devices_fill_holders():
-    filled = entra.fill_holders_from_intune()
+    filled = devices.fill_holders_from_intune()
     if not filled:
         return back("/settings/devices",
                     "Nothing to fill in - every linked asset either has a holder "
@@ -1336,6 +1404,12 @@ def device_create_asset(device_id: str):
         return back("/settings/devices", "No such device")
     if d["asset_id"]:
         return back("/settings/devices", "That device is already linked to an asset")
+    if d["ignored_reason"]:
+        # Reachable only while ignored devices are on screen, but an ignored
+        # device becoming an asset is the exact thing the rule exists to stop.
+        return back("/settings/devices",
+                    f"That device is ignored ({d['ignored_reason']}) - remove the "
+                    f"rule first if you want it tracked")
     _, hit = _asset_from_device(d)
     if hit:
         return back("/settings/devices",
@@ -1354,11 +1428,11 @@ def devices_create_assets(request: Request, q: str = Form(""), os_filter: str = 
     that subset rather than the whole estate.
     """
     sql, params = _device_query(q, os_filter, "unlinked")
-    devices = db.q(sql, params)
-    if not devices:
+    rows = db.q(sql, params)
+    if not rows:
         return back("/settings/devices", "No unlinked devices match those filters")
     created = priced = 0
-    for d in devices:
+    for d in rows:
         _, hit = _asset_from_device(d)
         created += 1
         if hit:

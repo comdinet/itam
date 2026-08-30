@@ -390,7 +390,8 @@ Sync behaviour:
   - **Entra ID** — configuration status and the user sync.
   - **Groups** — Entra groups and their membership; the basis for rules.
   - **Devices** — Intune devices, their macOS custom attributes, and the link
-    to assets.
+    to assets. Rules here **ignore** what is not kit — virtual machines by
+    group, or anything by model, name or OS.
   - **Currencies** — the currencies you buy in and their rates.
   - **Pricing** — price a fleet by specification, optionally narrowed to or
     held back from the people in an Entra group.
@@ -581,6 +582,45 @@ Which to use:
 
 Both kinds feed the People list, each person's page, their first-year total, the
 dashboard and the finance CSV (`pooled_units`, `pooled_value`, `onetime_total`).
+
+### Ignoring devices that are not kit
+
+Not everything Intune manages is a thing somebody holds. Virtual machines are
+the obvious case: they live in an Entra group, nobody carries one, and each one
+becoming an asset makes the estate look bigger than it is. Test rigs and kiosks
+are the same shape of problem.
+
+**Settings → Devices → Ignored devices** takes rules. A device matching *any* of
+them is ignored:
+
+| Match on | |
+|---|---|
+| **In Entra group** | The group your VMs are already in. Follows nested groups. |
+| **Model / Manufacturer / Device name / OS** | `contains`, `is exactly`, `starts with` — case-insensitive |
+| **This one device** | The **Ignore** link on any row in the list |
+
+An ignored device is:
+
+- **kept off the device list** (there is a link to show them anyway)
+- **never turned into an asset** — not by the bulk button, not by the per-device
+  one, which refuses and says which rule is hiding it
+- **left out of the holder check**, so it does not clutter the unassigned pile
+
+It is still **synced**, deliberately. Hiding by not fetching would mean never
+being able to answer "what is being hidden, and why", and un-ignoring would need
+a round trip to Graph. Instead they come down, get marked with the rule that hid
+them, and removing a rule un-hides them immediately.
+
+Group membership is re-read on **every device sync**, so adding a VM to the
+group in Entra hides it next time round with nothing to remember. Reading device
+members of a group uses the same `Group.Read.All` the group sync already needs;
+if your tenant refuses it, the error names the exact permission and where to
+consent it.
+
+If assets were already created from devices you now ignore, the panel says how
+many and offers to **unlink** them. The link goes; the asset records stay, for
+you to delete on the Assets page if that is what you meant — ignoring a device
+is not a licence to delete data.
 
 ### Why Intune-synced assets can read as unassigned
 
@@ -1029,13 +1069,17 @@ your backups as secrets either way.
 ./tests/run_all.sh
 ```
 
-Twenty suites covering money parsing, currencies and frozen rates, the
+Twenty-two suites covering money parsing, currencies and frozen rates, the
 dashboard's country filter, bulk assignment, CSV import, the Entra
-user/group/licence syncs, Intune devices and macOS custom attributes, OData
-filters, pricing groups and pricing by region, counted assets and their returns,
-the entitlement rules, the schema migrations, and two-factor authentication. Two of them guard
+user/group/licence syncs, Intune devices, ignored devices and macOS custom
+attributes, OData filters, pricing groups and pricing by region, counted assets
+and their returns, the entitlement rules, the schema migrations, and two-factor
+authentication. Two of them guard
 against rename damage: one signs in and GETs every page there is, the other
-statically checks that no template reads a name its route does not pass. Each uses a throwaway database and a mocked Graph, so none of
+statically checks that no template reads a name its route does not pass. A
+third checks that no function gives a local the name of a module its file
+imports, which has silently broken two features so far. Each uses a throwaway
+database and a mocked Graph, so none of
 them touch a real tenant or your data.
 
 The SAML suite is separate because it needs `xmlsec` to sign assertions, which
