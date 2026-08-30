@@ -626,3 +626,55 @@ def _get_all_once(path: str, params: dict, base: str = GRAPH) -> list[dict]:
     if resp.status_code >= 400:
         raise GraphError(_explain(resp, path))
     return (resp.json() or {}).get("value", [])
+
+
+def holder_gap() -> dict:
+    """Where ITAM and Intune disagree about who is holding a machine.
+
+    An asset takes its holder from the Intune device once, when the asset is
+    created, and only if that person is already in ITAM. Sync devices before
+    people - or take on somebody who joined afterwards - and the asset stays
+    unassigned for good, with nothing on screen to say why. That is the usual
+    reason for a pile of "unassigned" kit that is plainly on somebody's desk.
+
+    Reports, without changing anything:
+      fillable  - no holder in ITAM, and Intune names one we know
+      unknown   - Intune names somebody ITAM has never synced
+      nobody    - Intune has no primary user either (shared or never signed in)
+      mismatch  - both name a holder, and they differ
+    """
+    rows = db.q(
+        """SELECT d.id, d.device_name, d.primary_upn, a.id AS asset_id, a.name,
+                  a.assigned_upn,
+                  (SELECT display_name FROM users WHERE upn = d.primary_upn) AS intune_name,
+                  (SELECT display_name FROM users WHERE upn = a.assigned_upn) AS itam_name
+           FROM devices d JOIN assets a ON a.id = d.asset_id
+           ORDER BY d.device_name""")
+    out = {"fillable": [], "unknown": [], "nobody": [], "mismatch": []}
+    for r in rows:
+        if not r["assigned_upn"]:
+            if not r["primary_upn"]:
+                out["nobody"].append(r)
+            elif r["intune_name"] is None:
+                out["unknown"].append(r)
+            else:
+                out["fillable"].append(r)
+        elif r["primary_upn"] and r["primary_upn"] != r["assigned_upn"]:
+            out["mismatch"].append(r)
+    return out
+
+
+def fill_holders_from_intune() -> int:
+    """Give unassigned assets the holder Intune already knows about.
+
+    Only assets with no holder at all are touched. Where the two disagree the
+    difference is reported and left alone: somebody assigned that one by hand,
+    and a sync has no business overruling them.
+    """
+    gap = holder_gap()
+    today = datetime.date.today().isoformat()
+    for row in gap["fillable"]:
+        db.execute(
+            "UPDATE assets SET assigned_upn = ?, assigned_on = ? WHERE id = ?",
+            (row["primary_upn"], today, row["asset_id"]))
+    return len(gap["fillable"])

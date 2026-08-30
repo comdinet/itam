@@ -662,7 +662,7 @@ async def api_create_asset(request: Request):
 # --- dashboard -----------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
-def dashboard(request: Request):
+def dashboard(request: Request, country: str = ""):
     totals = db.q1(
         """SELECT (SELECT COUNT(*) FROM users)                                       AS users,
                   (SELECT COUNT(*) FROM users WHERE account_enabled = 0)             AS users_disabled,
@@ -672,6 +672,7 @@ def dashboard(request: Request):
                   (SELECT COUNT(*) FROM assets WHERE assigned_upn IS NULL)           AS spare,
                   (SELECT COALESCE(SUM(((cost_cents * COALESCE(rate_micro,1000000) + 500000) / 1000000)),0)
                      FROM assets WHERE assigned_upn IS NULL)                        AS spare_value,
+                  (SELECT COALESCE(SUM(spare),0) FROM pooled_items)                  AS shelf_units,
                   (SELECT COUNT(*) FROM subscriptions)                               AS subs,
                   (SELECT COALESCE(SUM(((sub.monthly_cost_cents * COALESCE(sub.rate_micro,1000000) + 500000) / 1000000)),0)
                      FROM subscription_seats ss
@@ -705,12 +706,28 @@ def dashboard(request: Request):
            JOIN users u ON u.upn = ss.upn
            WHERE u.account_enabled = 0 ORDER BY sub.name"""
     )
-    by_currency = fx.breakdown()
+    country = country.strip()
+    by_currency = fx.breakdown(country or None)
+    # The headline figures are the table's own totals, not a second query that
+    # happens to agree. Under a country filter they move together, because
+    # there is only one set of numbers.
+    totals = dict(totals)
+    totals["monthly"] = sum(r["monthly_rep"] for r in by_currency)
+    totals["asset_value"] = sum(r["oneoff_rep"] for r in by_currency)
+    if country:
+        totals["users"] = db.q1(
+            "SELECT COUNT(*) c FROM users WHERE TRIM(COALESCE(country,'')) = ?",
+            (country,))["c"]
+        totals["users_disabled"] = db.q1(
+            "SELECT COUNT(*) c FROM users WHERE account_enabled = 0 "
+            "AND TRIM(COALESCE(country,'')) = ?", (country,))["c"]
     rate_asof = db.q1(
         "SELECT MAX(rate_set_on) AS d FROM currencies WHERE rate_source != 'base'")
     return render(request, "dashboard.html", t=totals, by_dept=by_dept,
                   top_subs=top_subs, orphans=orphans, pool=pooled.totals(),
                   by_currency=by_currency, reporting=fx.reporting_code(),
+                  country=country, countries=fx.countries(),
+                  excluded=fx.excluded_by_country() if country else None,
                   rate_asof=rate_asof["d"] if rate_asof else None)
 
 
@@ -736,7 +753,66 @@ def users_list(request: Request, q: str = "", dept: str = "", country: str = "")
     depts = db.q("SELECT DISTINCT COALESCE(department,'') d FROM users ORDER BY d")
     countries = db.q("SELECT DISTINCT COALESCE(country,'') c FROM users ORDER BY c")
     return render(request, "users.html", users=rows, q=q, dept=dept, depts=depts,
-                  country=country, countries=countries)
+                  country=country, countries=countries,
+                  pooled_items=pooled.listing(),
+                  subs=db.q("SELECT id, name FROM subscriptions ORDER BY name"))
+
+
+@app.post("/users/bulk-assign")
+async def users_bulk_assign(request: Request):
+    """Give the same thing to everyone ticked on the People page.
+
+    Only counted assets and licence seats. A serial-tracked machine is one
+    specific piece of hardware with one serial - handing "one of those" to
+    forty people is not an operation that means anything.
+    """
+    form = await request.form()
+    upns = [u.strip().lower() for u in form.getlist("upn") if u.strip()]
+    target = str(form.get("target") or "")
+    if not upns:
+        return back("/users", "Tick somebody first")
+    if ":" not in target:
+        return back("/users", "Choose what to assign")
+    kind, _, raw_id = target.partition(":")
+    if not raw_id.isdigit():
+        return back("/users", "Choose what to assign")
+    target_id = int(raw_id)
+
+    back_to = str(form.get("back") or "/users")
+    if kind == "sub":
+        sub = db.q1("SELECT name FROM subscriptions WHERE id = ?", (target_id,))
+        if not sub:
+            return back(back_to, "No such subscription")
+        before = db.q1("SELECT COUNT(*) c FROM subscription_seats WHERE subscription_id = ?",
+                       (target_id,))["c"]
+        for upn in upns:
+            db.execute(
+                """INSERT OR IGNORE INTO subscription_seats
+                       (subscription_id, upn, assigned_on) VALUES (?,?,?)""",
+                (target_id, upn, today()))
+        after = db.q1("SELECT COUNT(*) c FROM subscription_seats WHERE subscription_id = ?",
+                      (target_id,))["c"]
+        granted = after - before
+        msg = f"Gave {granted} person/people a seat on {sub['name']}"
+        if granted < len(upns):
+            msg += f"; {len(upns) - granted} already had one"
+        return back(back_to, msg)
+
+    if kind != "pooled":
+        return back(back_to, "Choose what to assign")
+    item = pooled.get(target_id)
+    if not item:
+        return back(back_to, "No such item")
+    try:
+        qty = max(1, int(str(form.get("quantity") or "1")))
+    except ValueError:
+        return back(back_to, "Quantity must be a whole number")
+    problems = [p for p in (pooled.assign(target_id, upn, qty) for upn in upns) if p]
+    given = len(upns) - len(problems)
+    msg = f"Gave {given} person/people {qty} \u00d7 {item['name']}"
+    if problems:
+        msg += f"; {len(problems)} could not be done ({problems[0]})"
+    return back(back_to, msg)
 
 
 @app.get("/users/{upn}", response_class=HTMLResponse)
@@ -1170,6 +1246,7 @@ def settings_devices(request: Request, q: str = "", os_filter: str = "",
     return render(request, "settings_devices.html", devices=devices, attrs=attrs,
                   oses=oses, q=q, os_filter=os_filter, linked=linked,
                   unlinked_here=unlinked_here, last=last, counts=counts,
+                  gap=entra.holder_gap(),
                   cfg=entra.config_status(),
                   attr_filter=settings.get("INTUNE_ATTRIBUTE_FILTER"),
                   attr_names=db.q("SELECT DISTINCT name FROM device_attributes ORDER BY name"),
@@ -1207,6 +1284,17 @@ def settings_devices_sync_attrs():
     if r["available"]:
         msg += ". Available: " + ", ".join(r["available"][:8])
     return back("/settings/devices", msg[:400])
+
+
+@app.post("/settings/devices/fill-holders")
+def settings_devices_fill_holders():
+    filled = entra.fill_holders_from_intune()
+    if not filled:
+        return back("/settings/devices",
+                    "Nothing to fill in - every linked asset either has a holder "
+                    "already or Intune does not know one either")
+    return back("/settings/devices",
+                f"Gave {filled} asset(s) the holder Intune already knew about")
 
 
 def _asset_from_device(d) -> tuple[int, int | None]:

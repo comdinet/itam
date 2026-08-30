@@ -371,6 +371,11 @@ Sync behaviour:
   a reclaim list of licences on disabled accounts.
 - **People** — everyone with their asset count, asset value, licence count and
   monthly/annual licence cost. Searchable, filterable by department.
+- **People** — filter by name, department or country, then tick people and
+  **assign in bulk**: a counted asset (any quantity each) or a licence seat.
+  The header checkbox takes everyone the filter is showing, so "everyone in
+  Israel gets two monitors" is one pass. Serial-tracked machines are not
+  offered: each is one specific piece of hardware.
 - **Person detail** — assign or return assets, grant or revoke licences, and a
   first-year total cost (assets + 12 months of licences).
 - **Assets** — one tab per category. Each tab lists what you own in it, both
@@ -509,7 +514,11 @@ fixing a typo in a name never revalues the purchase.
   condition.
 - The dashboard's **By currency** table lists every active currency, including
   ones you have not spent in yet, and shows each one's own total alongside the
-  converted figure. Anything with **no currency recorded** gets its own row:
+  converted figure. A **country** filter narrows it to what people there hold —
+  which for Israel means shekels for the kit and dollars for the SaaS, in one
+  table. Kit with no holder has no country, so it falls out; the page says how
+  much was left out rather than letting the totals quietly disagree. The cards
+  above are computed *from* that table, so they always match it. Anything with **no currency recorded** gets its own row:
   those are counted at a rate of 1 in the headline figures, so hiding them made
   the table and the cards disagree.
 
@@ -572,6 +581,24 @@ Which to use:
 
 Both kinds feed the People list, each person's page, their first-year total, the
 dashboard and the finance CSV (`pooled_units`, `pooled_value`, `onetime_total`).
+
+### Why Intune-synced assets can read as unassigned
+
+An asset takes its holder from the Intune device **once**, when the asset is
+created, and only if that person was already synced into ITAM. Sync devices
+before people — or take somebody on afterwards — and the asset stays unassigned
+for good, with nothing on screen to say why. That is the usual reason for a pile
+of "unassigned" kit that is plainly on somebody's desk.
+
+**Settings → Devices** now shows the gap and offers to close it, splitting it
+four ways so you can tell a fixable case from a real one:
+
+| | |
+|---|---|
+| **Can be filled in** | ITAM has no holder, Intune names one we know. One button assigns them. |
+| **Disagreement** | Both name a holder and they differ. Reported and **left alone** — somebody assigned that by hand, and a sync should not overrule them. |
+| **Unknown person** | Intune names somebody ITAM has never seen: a guest, a disabled account, or someone outside your user filter. Nothing is invented. |
+| **Nobody** | Intune has no primary user either — a shared machine, or nobody has signed in. Genuinely unassigned. |
 
 ## Pricing by specification
 
@@ -1002,11 +1029,11 @@ your backups as secrets either way.
 ./tests/run_all.sh
 ```
 
-Eighteen suites covering money parsing, currencies and frozen rates, CSV import,
-the Entra user/group/licence syncs, Intune devices and macOS custom attributes,
-OData filters, pricing groups and pricing by region, counted assets and their
-returns, the entitlement rules, the schema migrations, and two-factor
-authentication. Two of them guard
+Twenty suites covering money parsing, currencies and frozen rates, the
+dashboard's country filter, bulk assignment, CSV import, the Entra
+user/group/licence syncs, Intune devices and macOS custom attributes, OData
+filters, pricing groups and pricing by region, counted assets and their returns,
+the entitlement rules, the schema migrations, and two-factor authentication. Two of them guard
 against rename damage: one signs in and GETs every page there is, the other
 statically checks that no template reads a name its route does not pass. Each uses a throwaway database and a mocked Graph, so none of
 them touch a real tenant or your data.

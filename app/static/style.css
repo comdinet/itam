@@ -39,6 +39,10 @@ a { color: var(--accent); }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin: 18px 0; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px;
         display: flex; flex-direction: column; gap: 2px; }
+/* A card that links somewhere should look like it does, and not like a link. */
+a.card { text-decoration: none; color: inherit; transition: border-color .12s, transform .12s; }
+a.card:hover { border-color: var(--accent); transform: translateY(-1px); }
+a.card .big { color: var(--ink); }
 .card .label { color: var(--muted); font-size: 13px; }
 .card .big { font-size: 24px; font-weight: 650; }
 .card .sub { color: var(--muted); font-size: 13px; }
@@ -52,6 +56,15 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
 tr.disabled { opacity: .62; }
 /* A wide table scrolls inside itself rather than pushing the page sideways. */
 .scroller { overflow-x: auto; }
+
+/* Bulk-select bar on People. Hidden until something is ticked, so the page is
+   unchanged for anyone not using it. */
+.bulkbar { display: none; align-items: center; gap: 12px; flex-wrap: wrap;
+           background: var(--panel); border: 1px solid var(--accent);
+           border-radius: 10px; padding: 10px 14px; margin: 0 0 14px; }
+.bulkbar label { display: inline-flex; align-items: center; gap: 6px; margin: 0; }
+th.pickcol, td.pickcol { width: 1%; padding-right: 0; }
+.pick, #pickall { width: 15px; height: 15px; cursor: pointer; }
 .empty { color: var(--muted); text-align: center; padding: 22px; }
 
 .tag { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 99px;

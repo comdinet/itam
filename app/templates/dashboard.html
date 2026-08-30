@@ -11,22 +11,26 @@
   <a href="/subscriptions">Subscriptions</a>.
 </div>
 {% endif %}
+{% if country %}
+<p class="meta">Showing <strong>{{ country }}</strong> only &mdash; everything below
+  counts what people there hold. <a href="/">Show everywhere</a>.</p>
+{% endif %}
 <div class="cards">
-  <div class="card"><span class="label">Monthly SaaS run-rate</span>
+  <a class="card" href="/subscriptions"><span class="label">Monthly SaaS run-rate</span>
     <span class="big">{{ currency }} {{ t.monthly|money }}</span>
-    <span class="sub">{{ currency }} {{ (t.monthly * 12)|money }} / year</span></div>
-  <div class="card"><span class="label">Hardware &amp; software value</span>
+    <span class="sub">{{ currency }} {{ (t.monthly * 12)|money }} / year</span></a>
+  <a class="card" href="/assets"><span class="label">Hardware &amp; software value</span>
     <span class="big">{{ currency }} {{ t.asset_value|money }}</span>
-    <span class="sub">{{ t.assets }} assets tracked</span></div>
-  <div class="card"><span class="label">People</span>
+    <span class="sub">{% if country %}held by people in {{ country }}
+      {%- else %}{{ t.assets }} tracked by serial, {{ pool.units }} counted unit(s){% endif %}</span></a>
+  <a class="card" href="/users{{ '?country=' ~ country|urlencode if country else '' }}"><span class="label">People</span>
     <span class="big">{{ t.users }}</span>
-    <span class="sub">{{ t.users_disabled }} disabled account(s)</span></div>
-  <div class="card"><span class="label">Counted assets</span>
-    <span class="big">{{ currency }} {{ pool.value|money }}</span>
-    <span class="sub">{{ pool.units }} unit(s), {{ pool.spare_units }} back on the shelf</span></div>
-  <div class="card"><span class="label">Spare / unassigned</span>
-    <span class="big">{{ t.spare }}</span>
-    <span class="sub">{{ currency }} {{ t.spare_value|money }} sitting idle</span></div>
+    <span class="sub">{{ t.users_disabled }} disabled account(s)</span></a>
+  <a class="card" href="/assets?state=spare"><span class="label">Unassigned</span>
+    <span class="big">{{ t.spare + t.shelf_units }}</span>
+    <span class="sub">{{ t.spare }} tracked by serial, {{ t.shelf_units }} on the shelf
+      {%- if country %} &mdash; estate-wide, since kit with no holder has no
+      country{% endif %}</span></a>
 </div>
 
 {% if orphans %}
@@ -37,10 +41,22 @@
 {% endif %}
 
 <h2>By currency</h2>
+<form class="filters" method="get" action="/">
+  <select name="country" onchange="this.form.submit()">
+    <option value="">Everywhere</option>
+    {% for c in countries %}
+      <option value="{{ c }}" {% if c == country %}selected{% endif %}>{{ c }}</option>
+    {% endfor %}
+  </select>
+  <noscript><button type="submit">Filter</button></noscript>
+  {% if country %}<a class="btn light" href="/">Clear</a>{% endif %}
+</form>
 <p class="meta">What was actually paid, in the money it was paid in, and the same
   figures in {{ reporting }}. {% if rate_asof %}Rates set {{ rate_asof }}.{% endif %}
   The amounts on the left are exact; a consolidated total is only as good as
-  those rates.</p>
+  those rates.
+  {%- if country %} Showing only what is held by people in
+  <strong>{{ country }}</strong>.{% endif %}</p>
 <div class="scroller">
 <table>
   <thead><tr><th>Currency</th>
@@ -78,6 +94,15 @@
   {% endif %}
 </table>
 </div>
+{% if excluded %}
+<p class="hint">Filtering by country counts what people <em>hold</em>, so kit with
+  no holder is left out: <strong>{{ excluded.assets }}</strong> unassigned
+  asset(s) and <strong>{{ excluded.shelf_units }}</strong> unit(s) on the shelf,
+  {{ reporting }} {{ excluded.value|money }} between them.
+  {%- if excluded.people_without_country %} <strong>{{ excluded.people_without_country }}</strong>
+  person/people have no country recorded in Entra, so their kit is left out
+  too.{% endif %}</p>
+{% endif %}
 {% if by_currency|selectattr('unset')|selectattr('used')|list %}
 <p class="hint">A row with <strong>no currency recorded</strong> is counted at a
   rate of 1, as if it were {{ reporting }}. That is a guess. Open those records

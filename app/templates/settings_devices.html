@@ -71,6 +71,66 @@
 </form>
 {% endif %}
 
+{% if gap.fillable or gap.unknown or gap.nobody or gap.mismatch %}
+<details class="panel" {% if gap.fillable %}open{% endif %}>
+  <summary>Holders: {{ gap.fillable|length }} asset(s) could take the person Intune
+    already knows</summary>
+  <p class="meta">An asset takes its holder from Intune once, when the asset is
+    created, and only if that person was already synced. Sync devices before
+    people &mdash; or take somebody on afterwards &mdash; and the asset stays
+    unassigned for good. That is usually why kit sitting on somebody's desk
+    reads as spare.</p>
+
+  {% if gap.fillable %}
+  <form method="post" action="/settings/devices/fill-holders" class="inline-form"
+        onsubmit="return confirm('Assign {{ gap.fillable|length }} asset(s) to the people Intune names?')">
+    <button type="submit">Fill in {{ gap.fillable|length }} holder(s) from Intune</button>
+    <span class="hint">Only assets with no holder at all. Nothing already
+      assigned is touched.</span>
+  </form>
+  <table>
+    <thead><tr><th>Device</th><th>Asset</th><th>Intune says</th></tr></thead>
+    <tbody>
+    {% for r in gap.fillable %}
+      <tr><td>{{ r.device_name }}</td>
+          <td><a href="/assets/{{ r.asset_id }}">{{ r.name }}</a></td>
+          <td>{{ r.intune_name }} <span class="meta mono">{{ r.primary_upn }}</span></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if gap.mismatch %}
+  <h3>Disagreements <span class="count">{{ gap.mismatch|length }}</span></h3>
+  <p class="meta">Both name a holder and they differ. Left alone on purpose:
+    somebody assigned these by hand, and a sync should not overrule that. Change
+    it on the asset if Intune is right.</p>
+  <table>
+    <thead><tr><th>Device</th><th>ITAM says</th><th>Intune says</th></tr></thead>
+    <tbody>
+    {% for r in gap.mismatch %}
+      <tr><td>{{ r.device_name }}</td>
+          <td><a href="/users/{{ r.assigned_upn }}">{{ r.itam_name or r.assigned_upn }}</a></td>
+          <td>{{ r.intune_name or r.primary_upn }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if gap.unknown %}
+  <p class="hint"><strong>{{ gap.unknown|length }}</strong> device(s) name somebody
+     ITAM has never seen &mdash; a guest, a disabled account, or someone outside
+     your <a href="/settings/entra">user filter</a>. Nothing is invented for
+     these; sync your users and check back.</p>
+  {% endif %}
+  {% if gap.nobody %}
+  <p class="hint"><strong>{{ gap.nobody|length }}</strong> device(s) have no primary
+     user in Intune either &mdash; shared machines, or nobody has signed in yet.
+     Those are genuinely unassigned.</p>
+  {% endif %}
+</details>
+{% endif %}
+
 <table>
   <thead><tr><th>Device</th><th>OS</th><th>Model</th><th>Serial</th>
     <th>Primary user</th><th>Compliance</th><th>Asset</th></tr></thead>

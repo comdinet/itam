@@ -19,13 +19,43 @@
   <button type="submit">Filter</button>
   <a class="btn light" href="/users">Reset</a>
 </form>
+<form method="post" action="/users/bulk-assign" id="bulk"
+      onsubmit="return confirm('Assign to ' + document.querySelectorAll('.pick:checked').length + ' person/people?')">
+<input type="hidden" name="back" value="/users{{ '?' ~ request.url.query if request.url.query else '' }}">
+<div class="bulkbar" id="bulkbar">
+  <strong><span id="bulkcount">0</span> selected</strong>
+  <label>Assign
+    <select name="target" id="bulktarget">
+      <option value="">&mdash; choose &mdash;</option>
+      {% if pooled_items %}
+      <optgroup label="Counted assets">
+        {% for i in pooled_items %}
+          <option value="pooled:{{ i.id }}">{{ i.name }} &mdash; {{ i.category }}</option>
+        {% endfor %}
+      </optgroup>
+      {% endif %}
+      {% if subs %}
+      <optgroup label="Licences">
+        {% for sub in subs %}<option value="sub:{{ sub.id }}">{{ sub.name }}</option>{% endfor %}
+      </optgroup>
+      {% endif %}
+    </select>
+  </label>
+  <label id="bulkqty">&times;<input name="quantity" type="number" min="1" value="1"
+         style="width:4.5rem"></label>
+  <button type="submit">Assign</button>
+  <span class="hint" id="bulkhint"></span>
+</div>
+
 <table>
-  <thead><tr><th>Name</th><th>UPN</th><th>Department</th><th>Country</th>
+  <thead><tr><th class="pickcol"><input type="checkbox" id="pickall"
+    title="Select everyone shown"></th><th>Name</th><th>UPN</th><th>Department</th><th>Country</th>
     <th class="num">Assets</th><th class="num">Asset value</th><th class="num">Pooled</th>
     <th class="num">Licences</th><th class="num">Monthly</th><th class="num">Annual</th></tr></thead>
   <tbody>
   {% for u in users %}
     <tr {% if not u.account_enabled %}class="disabled"{% endif %}>
+      <td class="pickcol"><input type="checkbox" class="pick" name="upn" value="{{ u.upn }}"></td>
       <td><a href="/users/{{ u.upn }}">{{ u.display_name }}</a>
           {% if not u.account_enabled %}<span class="tag">disabled</span>{% endif %}</td>
       <td class="mono">{{ u.upn }}</td>
@@ -44,8 +74,47 @@
       <td class="num">{{ u.monthly_total|money }}</td>
       <td class="num">{{ (u.monthly_total * 12)|money }}</td></tr>
   {% else %}
-    <tr><td colspan="10" class="empty">No people yet &mdash; run an Entra ID sync from <a href="/settings/entra">Settings</a>.</td></tr>
+    <tr><td colspan="11" class="empty">No people yet &mdash; run an Entra ID sync from <a href="/settings/entra">Settings</a>.</td></tr>
   {% endfor %}
   </tbody>
 </table>
+</form>
+
+<script>
+  // The bar only appears once something is ticked, so an untouched page looks
+  // exactly as it did. "Select everyone shown" means the current filter, which
+  // is the point: filter to Israel, tick the header, assign.
+  (function () {
+    var bar = document.getElementById('bulkbar');
+    if (!bar) return;
+    var all = document.getElementById('pickall');
+    var picks = Array.prototype.slice.call(document.querySelectorAll('.pick'));
+    var count = document.getElementById('bulkcount');
+    var target = document.getElementById('bulktarget');
+    var qty = document.getElementById('bulkqty');
+    var hint = document.getElementById('bulkhint');
+
+    function sync() {
+      var n = picks.filter(function (p) { return p.checked; }).length;
+      bar.style.display = n ? 'flex' : 'none';
+      count.textContent = n;
+      // A licence is one seat per person; a quantity would be meaningless.
+      var isLicence = target.value.indexOf('sub:') === 0;
+      qty.style.display = isLicence ? 'none' : 'inline-flex';
+      hint.textContent = isLicence
+        ? 'One seat each. Anyone who already has one is left alone.'
+        : (target.value ? 'Anything on the shelf is used first.' : '');
+      all.checked = n === picks.length && n > 0;
+      all.indeterminate = n > 0 && n < picks.length;
+    }
+
+    all.addEventListener('change', function () {
+      picks.forEach(function (p) { p.checked = all.checked; });
+      sync();
+    });
+    picks.forEach(function (p) { p.addEventListener('change', sync); });
+    target.addEventListener('change', sync);
+    sync();
+  })();
+</script>
 {% endblock %}

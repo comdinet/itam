@@ -264,8 +264,12 @@ def fetch_boi() -> dict:
             "source": "boi", "proposals": proposals}
 
 
-def breakdown() -> list[dict]:
+def breakdown(country: str | None = None) -> list[dict]:
     """What was paid, per currency, with the reporting-currency equivalent.
+
+    With a country, only money attached to people in it counts: assets assigned
+    to them, counted units in their hands, licence seats they hold. Anything
+    with no holder has no country, so it drops out - see excluded_by_country().
 
     Every active currency gets a row, even at zero. A table that quietly omits
     the currencies you deal in is not a picture of the estate - and worse, the
@@ -278,23 +282,52 @@ def breakdown() -> list[dict]:
     """
     from . import pooled
 
-    owned = pooled.owned_expr("p")
-    sources = {
-        "asset": ("""SELECT COALESCE(NULLIF(TRIM(a.currency),''),'') AS code,
-                            SUM(a.cost_cents) AS raw,
-                            SUM(""" + db.conv("a.cost_cents", "a.rate_micro") + """) AS rep
-                     FROM assets a GROUP BY code"""),
-        "pooled": ("""SELECT COALESCE(NULLIF(TRIM(p.currency),''),'') AS code,
-                             SUM(""" + owned + """ * p.unit_cost_cents) AS raw,
-                             SUM(""" + db.conv(owned + " * p.unit_cost_cents", "p.rate_micro") + """) AS rep
-                      FROM pooled_items p GROUP BY code"""),
-        "monthly": ("""SELECT COALESCE(NULLIF(TRIM(s.currency),''),'') AS code,
-                              SUM(s.monthly_cost_cents) AS raw,
-                              SUM(""" + db.conv("s.monthly_cost_cents", "s.rate_micro") + """) AS rep
-                       FROM subscription_seats ss
-                       JOIN subscriptions s ON s.id = ss.subscription_id
-                       GROUP BY code"""),
-    }
+    params: list = []
+    if country:
+        # Counted items are shared across people, so under a country filter the
+        # unit of account is the allocation, not the item: what these people are
+        # actually holding. Unallocated units belong to nobody and drop out.
+        held = pooled.assigned_expr("p")
+        sources = {
+            "asset": ("""SELECT COALESCE(NULLIF(TRIM(a.currency),''),'') AS code,
+                                SUM(a.cost_cents) AS raw,
+                                SUM(""" + db.conv("a.cost_cents", "a.rate_micro") + """) AS rep
+                         FROM assets a JOIN users u ON u.upn = a.assigned_upn
+                         WHERE COALESCE(u.country,'') = ? GROUP BY code"""),
+            "pooled": ("""SELECT COALESCE(NULLIF(TRIM(p.currency),''),'') AS code,
+                                 SUM(al.quantity * p.unit_cost_cents) AS raw,
+                                 SUM(""" + db.conv("al.quantity * p.unit_cost_cents", "p.rate_micro") + """) AS rep
+                          FROM pooled_allocations al
+                          JOIN pooled_items p ON p.id = al.item_id
+                          JOIN users u ON u.upn = al.upn
+                          WHERE COALESCE(u.country,'') = ? GROUP BY code"""),
+            "monthly": ("""SELECT COALESCE(NULLIF(TRIM(s.currency),''),'') AS code,
+                                  SUM(s.monthly_cost_cents) AS raw,
+                                  SUM(""" + db.conv("s.monthly_cost_cents", "s.rate_micro") + """) AS rep
+                           FROM subscription_seats ss
+                           JOIN subscriptions s ON s.id = ss.subscription_id
+                           JOIN users u ON u.upn = ss.upn
+                           WHERE COALESCE(u.country,'') = ? GROUP BY code"""),
+        }
+        params = [country]
+    else:
+        owned = pooled.owned_expr("p")
+        sources = {
+            "asset": ("""SELECT COALESCE(NULLIF(TRIM(a.currency),''),'') AS code,
+                                SUM(a.cost_cents) AS raw,
+                                SUM(""" + db.conv("a.cost_cents", "a.rate_micro") + """) AS rep
+                         FROM assets a GROUP BY code"""),
+            "pooled": ("""SELECT COALESCE(NULLIF(TRIM(p.currency),''),'') AS code,
+                                 SUM(""" + owned + """ * p.unit_cost_cents) AS raw,
+                                 SUM(""" + db.conv(owned + " * p.unit_cost_cents", "p.rate_micro") + """) AS rep
+                          FROM pooled_items p GROUP BY code"""),
+            "monthly": ("""SELECT COALESCE(NULLIF(TRIM(s.currency),''),'') AS code,
+                                  SUM(s.monthly_cost_cents) AS raw,
+                                  SUM(""" + db.conv("s.monthly_cost_cents", "s.rate_micro") + """) AS rep
+                           FROM subscription_seats ss
+                           JOIN subscriptions s ON s.id = ss.subscription_id
+                           GROUP BY code"""),
+        }
 
     rows: dict[str, dict] = {}
 
@@ -316,7 +349,7 @@ def breakdown() -> list[dict]:
     for code in [c["code"] for c in listing(active_only=True)]:
         row(code)
     for kind, sql in sources.items():
-        for found in db.q(sql):
+        for found in db.q(sql, params):
             here = row(found["code"])
             here[f"{kind}_raw"] += found["raw"] or 0
             here[f"{kind}_rep"] += found["rep"] or 0
@@ -332,3 +365,32 @@ def breakdown() -> list[dict]:
     # rather than a currency.
     out.sort(key=lambda e: (e["unset"], not e["used"], e["code"]))
     return out
+
+
+def countries() -> list[str]:
+    """Countries people are in, for the dashboard filter."""
+    return [r["c"] for r in db.q(
+        """SELECT DISTINCT TRIM(country) AS c FROM users
+           WHERE TRIM(COALESCE(country,'')) != '' ORDER BY c""")]
+
+
+def excluded_by_country() -> dict:
+    """What a country filter necessarily leaves out.
+
+    Kit with no holder has no country. Saying so under the table is the
+    difference between a filtered figure and a wrong one.
+    """
+    from . import pooled
+    assets = db.q1(
+        """SELECT COUNT(*) AS n,
+                  COALESCE(SUM(""" + db.conv("cost_cents", "rate_micro") + """),0) AS value
+           FROM assets WHERE assigned_upn IS NULL""")
+    shelf = db.q1(
+        """SELECT COALESCE(SUM(p.spare),0) AS n,
+                  COALESCE(SUM(""" + db.conv("p.spare * p.unit_cost_cents", "p.rate_micro") + """),0) AS value
+           FROM pooled_items p""")
+    nocountry = db.q1(
+        "SELECT COUNT(*) AS n FROM users WHERE TRIM(COALESCE(country,'')) = ''")
+    return {"assets": assets["n"], "shelf_units": shelf["n"],
+            "value": assets["value"] + shelf["value"],
+            "people_without_country": nocountry["n"]}
