@@ -257,3 +257,50 @@ def group_members(group_id: str):
            LEFT JOIN assets a ON a.id = d.asset_id
            WHERE m.group_id = ?
            ORDER BY COALESCE(d.device_name, m.device_name)""", (group_id,))
+
+
+def filter_groups(rows, q: str = "", state: str = ""):
+    """Narrow the group catalogue.
+
+    The search runs over the name, the description AND the membership rule, so
+    "device." finds every dynamic device group without anybody knowing what its
+    groups happen to be called. A * is a wildcard; without one the search is a
+    plain substring, because that is what people expect from a search box.
+    """
+    import fnmatch
+
+    out = []
+    needle = (q or "").strip().lower()
+    for r in rows:
+        haystack = " ".join(str(r[k] or "") for k in
+                            ("display_name", "description", "membership_rule")).lower()
+        if needle:
+            hit = (fnmatch.fnmatch(haystack, f"*{needle}*") if "*" in needle
+                   else needle in haystack)
+            if not hit:
+                continue
+        out.append(r)
+
+    if state == "ticked":
+        out = [r for r in out if r["ticked"]]
+    elif state == "unticked":
+        out = [r for r in out if not r["ticked"]]
+    elif state == "members":
+        out = [r for r in out if r["synced"]]
+    elif state == "empty":
+        out = [r for r in out if not r["synced"]]
+    elif state in ("device", "user", "assigned"):
+        out = [r for r in out if r["looks_like"] == state]
+    return out
+
+
+GROUP_STATES = [
+    ("", "Any"),
+    ("ticked", "Ticked"),
+    ("unticked", "Not ticked"),
+    ("members", "Has members here"),
+    ("empty", "No members here"),
+    ("device", "Dynamic \u00b7 devices"),
+    ("user", "Dynamic \u00b7 users"),
+    ("assigned", "Assigned membership"),
+]

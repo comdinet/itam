@@ -82,6 +82,7 @@ PERMISSION_FOR = [
     ("/deviceManagement/deviceCustomAttributeShellScripts",
      "DeviceManagementScripts.Read.All"),
     ("/deviceManagement/managedDevices", "DeviceManagementManagedDevices.Read.All"),
+    ("/devices", "Device.Read.All"),
     ("/subscribedSkus", "Organization.Read.All"),
     ("/groups", "Group.Read.All"),
     ("/users", "User.Read.All"),
@@ -532,21 +533,45 @@ def fetch_group_devices(group_id: str) -> dict:
     would give direct members only, and a group of groups would silently
     resolve to nothing.
 
-    Returns the members AND the counts behind them, because "0 devices" has
-    three different causes and they need telling apart:
-      - the group really has no device members
-      - the cast came back empty even though the group has devices
-      - members came back but carried no deviceId to key on
-    An earlier version returned a bare list and dropped members with no
-    deviceId on the floor, which made the second and third look like the first.
+    No $select. Asking for id,deviceId,displayName came back with the right
+    three device objects and no deviceId on any of them, while the portal was
+    showing a Device Id for each - so the projection was the problem, not the
+    permission. Taking whatever Graph offers costs nothing here: a group holds
+    tens of devices, not thousands.
+
+    Where a member still arrives without one, it is looked up by object id
+    rather than dropped. deviceId is what Intune's azureADDeviceId matches on,
+    so a member without it is useless, and silently discarding it is how "0
+    devices" came to mean four different things.
     """
     members = _get_all(f"/groups/{group_id}/transitiveMembers/microsoft.graph.device",
-                       {"$select": "id,deviceId,displayName", "$top": "999"})
-    usable = [{"azure_device_id": (m.get("deviceId") or "").strip().lower(),
-               "device_name": m.get("displayName")}
-              for m in members if (m.get("deviceId") or "").strip()]
+                       {"$top": "999"})
+    usable, unresolved = [], []
+    for m in members:
+        device_id = (m.get("deviceId") or "").strip().lower()
+        if device_id:
+            usable.append({"azure_device_id": device_id,
+                           "device_name": m.get("displayName")})
+        elif m.get("id"):
+            unresolved.append(m)
+
+    looked_up = 0
+    lookup_error = None
+    for m in unresolved:
+        try:
+            row = _get_one(f"/devices/{m['id']}")
+        except GraphError as exc:
+            lookup_error = str(exc)
+            break
+        device_id = (row.get("deviceId") or "").strip().lower()
+        if device_id:
+            looked_up += 1
+            usable.append({"azure_device_id": device_id,
+                           "device_name": row.get("displayName") or m.get("displayName")})
+
     out = {"devices": usable, "returned": len(members),
-           "no_device_id": len(members) - len(usable), "probe": None}
+           "no_device_id": len(members) - len(usable), "looked_up": looked_up,
+           "lookup_error": lookup_error, "probe": None}
     if members:
         return out
 
@@ -554,8 +579,7 @@ def fetch_group_devices(group_id: str) -> dict:
     # actually in there, so the page can say whether the group is empty or the
     # cast is being refused.
     try:
-        raw = _get_all(f"/groups/{group_id}/transitiveMembers",
-                       {"$select": "id", "$top": "999"})
+        raw = _get_all(f"/groups/{group_id}/transitiveMembers", {"$top": "999"})
     except GraphError:
         return out
     kinds: dict[str, int] = {}
@@ -657,7 +681,7 @@ def sync_device_groups() -> dict:
     picked = db.q("SELECT * FROM entra_groups WHERE sync_devices = 1 "
                   "ORDER BY display_name")
     now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
-    total_devices = 0
+    total_devices = looked_up = 0
     kept_ids, empty = [], []
     for g in picked:
         gid = g["id"]
@@ -667,10 +691,12 @@ def sync_device_groups() -> dict:
             empty.append({"id": gid, "name": g["display_name"],
                           "returned": found["returned"],
                           "no_device_id": found["no_device_id"],
+                          "lookup_error": found["lookup_error"],
                           "probe": found["probe"]})
             continue
         kept_ids.append(gid)
         total_devices += len(members)
+        looked_up += found["looked_up"]
         db.execute(
             """INSERT INTO device_groups (id, display_name, description, device_count,
                                           dynamic, membership_rule, synced_at)
@@ -698,7 +724,8 @@ def sync_device_groups() -> dict:
             dropped += 1
 
     return {"picked": len(picked), "device_groups": len(kept_ids),
-            "devices": total_devices, "dropped": dropped, "empty": empty}
+            "devices": total_devices, "dropped": dropped, "empty": empty,
+            "looked_up": looked_up}
 
 
 def refresh_ignore_groups() -> int:
@@ -934,6 +961,18 @@ def test_connection() -> dict:
         result["probes"].append({"label": probe["label"], "ok": ok,
                                  "permission": probe["permission"], "detail": detail})
     return result
+
+
+def _get_one(path: str, params: dict | None = None, base: str = GRAPH) -> dict:
+    """A single Graph object, not a collection."""
+    token = _token()
+    with httpx.Client(timeout=30) as client:
+        resp = client.get(f"{base}{path}",
+                          headers={"Authorization": f"Bearer {token}"},
+                          params=params or {})
+    if resp.status_code >= 400:
+        raise GraphError(_explain(resp, path))
+    return resp.json() or {}
 
 
 def _get_all_once(path: str, params: dict, base: str = GRAPH,

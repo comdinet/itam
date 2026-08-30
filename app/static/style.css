@@ -65,6 +65,8 @@ tr.disabled { opacity: .62; }
 .bulkbar label { display: inline-flex; align-items: center; gap: 6px; margin: 0; }
 th.pickcol, td.pickcol { width: 1%; padding-right: 0; }
 .pick, #pickall { width: 15px; height: 15px; cursor: pointer; }
+.inline-check { display: inline-flex; align-items: center; gap: 6px;
+                white-space: nowrap; }
 .empty { color: var(--muted); text-align: center; padding: 22px; }
 
 .tag { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 99px;

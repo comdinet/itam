@@ -16,6 +16,12 @@
       <option value="{{ c.c }}" {% if c.c == country %}selected{% endif %}>{{ c.c or '(none)' }}</option>
     {% endfor %}
   </select>
+  <select name="holdings">
+    <option value="">Holding anything</option>
+    <option value="no-assets" {% if holdings=='no-assets' %}selected{% endif %}>No assets</option>
+    <option value="none" {% if holdings=='none' %}selected{% endif %}>No assets at all, counted or not</option>
+    <option value="no-licences" {% if holdings=='no-licences' %}selected{% endif %}>No licences</option>
+  </select>
   <button type="submit">Filter</button>
   <a class="btn light" href="/users">Reset</a>
 </form>

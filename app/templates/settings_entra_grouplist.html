@@ -1,14 +1,31 @@
 {# The catalogue of every group, ticked for one purpose or the other. Shared by
    the Groups and Device groups sub-tabs, which differ only in which column they
    tick and what they say about it. #}
-{% macro group_table(groups, kind, discovered, group_filter) %}
-{% set ticking = 'sync_devices' if kind == 'device' else 'sync_users' %}
+
+{% macro group_filters(here, q, state, states, shown, total) %}
+<form class="filters" method="get" action="{{ here }}">
+  <input type="search" name="q" value="{{ q }}"
+         placeholder="Name, description or membership rule — * for wildcard">
+  <select name="state">
+    {% for key, label in states %}
+      <option value="{{ key }}" {% if key == state %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit">Filter</button>
+  {% if q or state %}<a class="btn light" href="{{ here }}">Reset</a>{% endif %}
+  <span class="hint">Showing {{ shown }} of {{ total }}.
+    Try <span class="mono">device.</span> to find the dynamic device groups.</span>
+</form>
+{% endmacro %}
+
+{% macro group_table(groups, kind, discovered, group_filter, filtered) %}
 <form method="post" action="/settings/entra/{{ 'device-groups' if kind == 'device' else 'groups' }}/pick">
 <div class="inline-form">
   <button type="submit">Save what is ticked</button>
-  <span class="hint">{{ groups|selectattr(ticking)|list|length }} of
-    {{ groups|length }} ticked. Saving only records the choice &mdash; nothing is
-    fetched until you sync.</span>
+  <span class="hint">{{ groups|selectattr('ticked')|list|length }} of
+    {{ groups|length }} shown are ticked. Saving records the choice and nothing
+    else &mdash; nothing is fetched until you sync.
+    {%- if filtered %} Groups the filter is hiding are left exactly as they are.{% endif %}</span>
 </div>
 <table>
   <thead><tr><th class="pickcol"></th><th>Group</th><th>Membership</th>
@@ -17,8 +34,10 @@
   <tbody>
   {% for g in groups %}
     <tr>
-      <td class="pickcol"><input type="checkbox" name="pick" value="{{ g.id }}"
-          {% if g[ticking] %}checked{% endif %}></td>
+      <td class="pickcol">
+        <input type="hidden" name="shown" value="{{ g.id }}">
+        <input type="checkbox" name="pick" value="{{ g.id }}"
+          {% if g.ticked %}checked{% endif %}></td>
       <td><strong>{{ g.display_name }}</strong>
         {% if g.description %}<div class="meta">{{ g.description }}</div>{% endif %}
         {% if g.membership_rule %}<div class="meta mono">{{ g.membership_rule }}</div>{% endif %}</td>
@@ -29,12 +48,13 @@
           {% else %}<span class="meta">&mdash;</span>{% endif %}</td>
       <td class="row-actions">
         {% if g.synced is not none %}
-          <a href="/settings/{{ 'device-groups' if kind == 'device' else 'groups' }}/{{ g.id }}">Open</a>
+          <a href="/settings/entra/{{ 'device-groups' if kind == 'device' else 'groups' }}/{{ g.id }}">Open</a>
         {% endif %}</td></tr>
   {% else %}
     <tr><td colspan="5" class="empty">
-      {% if discovered %}No groups match
-        {% if group_filter %}<span class="mono">{{ group_filter }}</span>{% endif %}.
+      {% if filtered %}No group matches that filter.
+      {% elif discovered %}No groups
+        {% if group_filter %}match <span class="mono">{{ group_filter }}</span>{% endif %}.
       {% else %}No groups listed yet &mdash; press <strong>Refresh the group list</strong>.{% endif %}</td></tr>
   {% endfor %}
   </tbody>

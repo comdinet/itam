@@ -14,8 +14,8 @@ from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse,
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import (api, auth, db, devices, entra, fx, imports, pooled, pricing,
-               rules, saml, settings)
+from . import (api, auth, db, devices, entra, fx, imports, people, pooled,
+               pricing, rules, saml, settings)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -735,9 +735,12 @@ def dashboard(request: Request, country: str = ""):
 # --- users ---------------------------------------------------------------
 
 @app.get("/users", response_class=HTMLResponse)
-def users_list(request: Request, q: str = "", dept: str = "", country: str = ""):
+def users_list(request: Request, q: str = "", dept: str = "", country: str = "",
+               holdings: str = ""):
     sql = USER_COSTS
-    where, params = [], []
+    # Ignored people are still synced and still hold what they hold; they are
+    # simply not part of "our people" for reporting.
+    where, params = ["u.ignored_reason IS NULL"], []
     if q:
         where.append("(u.upn LIKE ? OR u.display_name LIKE ?)")
         params += [f"%{q}%", f"%{q}%"]
@@ -747,6 +750,12 @@ def users_list(request: Request, q: str = "", dept: str = "", country: str = "")
     if country:
         where.append("COALESCE(u.country,'') = ?")
         params.append(country)
+    if holdings == "none":
+        where.append("COALESCE(a.asset_count,0) = 0 AND COALESCE(k.pooled_units,0) = 0")
+    elif holdings == "no-assets":
+        where.append("COALESCE(a.asset_count,0) = 0")
+    elif holdings == "no-licences":
+        where.append("COALESCE(s.sub_count,0) = 0")
     if where:
         sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY u.display_name"
@@ -754,7 +763,7 @@ def users_list(request: Request, q: str = "", dept: str = "", country: str = "")
     depts = db.q("SELECT DISTINCT COALESCE(department,'') d FROM users ORDER BY d")
     countries = db.q("SELECT DISTINCT COALESCE(country,'') c FROM users ORDER BY c")
     return render(request, "users.html", users=rows, q=q, dept=dept, depts=depts,
-                  country=country, countries=countries,
+                  country=country, countries=countries, holdings=holdings,
                   pooled_items=pooled.listing(),
                   subs=db.q("SELECT id, name FROM subscriptions ORDER BY name"))
 
@@ -956,9 +965,10 @@ def pooled_detail(request: Request, item_id: int):
     item = pooled.get(item_id)
     if not item:
         return HTMLResponse("<h1>404</h1><p>No such item.</p>", status_code=404)
-    people = db.q("SELECT upn, display_name FROM users ORDER BY display_name")
+    everyone = db.q("SELECT upn, display_name FROM users WHERE ignored_reason IS NULL "
+                    "ORDER BY display_name")
     return render(request, "pooled_detail.html", i=item, s=pooled.summary(item),
-                  people=people, currencies=fx.listing(active_only=True))
+                  people=everyone, currencies=fx.listing(active_only=True))
 
 
 @app.post("/assets/pooled/{item_id}/edit")
@@ -1176,16 +1186,18 @@ def settings_licences_moved():
     return RedirectResponse("/settings/entra/licences", status_code=307)
 
 
-def _group_catalogue(kind: str):
+def _group_catalogue(kind: str, q: str = "", state: str = ""):
     """Every discovered group, with how many members ITAM holds for it."""
     synced = ("(SELECT COUNT(*) FROM device_group_members m WHERE m.group_id = e.id)"
               if kind == "device"
               else "(SELECT COUNT(*) FROM group_members m WHERE m.group_id = e.id)")
     present = ("(SELECT 1 FROM device_groups x WHERE x.id = e.id)"
                if kind == "device" else "(SELECT 1 FROM groups x WHERE x.id = e.id)")
-    return db.q(f"""SELECT e.*,
+    ticked = "e.sync_devices" if kind == "device" else "e.sync_users"
+    rows = db.q(f"""SELECT e.*, {ticked} AS ticked,
                            CASE WHEN {present} IS NULL THEN NULL ELSE {synced} END AS synced
                     FROM entra_groups e ORDER BY e.display_name""")
+    return devices.filter_groups(rows, q, state)
 
 
 def _entra_ctx(sub: str) -> dict:
@@ -1199,9 +1211,11 @@ EMPTY_DEVICE_GROUPS: dict = {}
 
 
 @app.get("/settings/entra/groups", response_class=HTMLResponse)
-def settings_entra_groups(request: Request):
+def settings_entra_groups(request: Request, q: str = "", state: str = ""):
     return render(request, "settings_entra_groups.html",
-                  groups=_group_catalogue("user"),
+                  groups=_group_catalogue("user", q, state), q=q, state=state,
+                  states=devices.GROUP_STATES,
+                  total=db.q1("SELECT COUNT(*) c FROM entra_groups")["c"],
                   discovered=db.q1("SELECT MAX(discovered_at) d FROM entra_groups")["d"],
                   last=db.q1("SELECT MAX(synced_at) AS last FROM groups"),
                   group_filter=settings.get("ENTRA_GROUP_FILTER"),
@@ -1209,9 +1223,11 @@ def settings_entra_groups(request: Request):
 
 
 @app.get("/settings/entra/device-groups", response_class=HTMLResponse)
-def settings_entra_device_groups(request: Request):
+def settings_entra_device_groups(request: Request, q: str = "", state: str = ""):
     return render(request, "settings_entra_device_groups.html",
-                  groups=_group_catalogue("device"),
+                  groups=_group_catalogue("device", q, state), q=q, state=state,
+                  states=devices.GROUP_STATES,
+                  total=db.q1("SELECT COUNT(*) c FROM entra_groups")["c"],
                   discovered=db.q1("SELECT MAX(discovered_at) d FROM entra_groups")["d"],
                   last=db.q1("SELECT MAX(synced_at) AS last FROM device_groups"),
                   group_filter=settings.get("ENTRA_GROUP_FILTER"),
@@ -1236,13 +1252,28 @@ def settings_entra_discover():
 
 
 async def _pick_groups(request: Request, column: str, where: str):
-    """Record the ticks. Nothing is fetched here - that is the sync's job."""
+    """Record the ticks. Nothing is fetched here - that is the sync's job.
+
+    Only the rows the form actually showed are cleared. An unticked box means
+    "not this one" only for a group that was on screen; with a filter applied,
+    clearing every row would untick everything the filter hid, which is the
+    opposite of what saving a filtered page should do.
+    """
     form = await request.form()
+    shown = [g for g in form.getlist("shown") if g]
     picked = {g for g in form.getlist("pick") if g}
-    db.execute(f"UPDATE entra_groups SET {column} = 0")
+    if not shown:
+        return back(where, "Nothing on screen to save")
+    marks = ",".join("?" for _ in shown)
+    db.execute(f"UPDATE entra_groups SET {column} = 0 WHERE id IN ({marks})", shown)
     for gid in picked:
         db.execute(f"UPDATE entra_groups SET {column} = 1 WHERE id = ?", (gid,))
-    return back(where, f"{len(picked)} group(s) ticked - now run the sync")
+    total = db.q1(f"SELECT COUNT(*) c FROM entra_groups WHERE {column} = 1")["c"]
+    msg = f"{total} group(s) ticked in total - now run the sync"
+    if len(shown) < db.q1("SELECT COUNT(*) c FROM entra_groups")["c"]:
+        msg = (f"{len(picked)} of the {len(shown)} shown ticked; {total} in total. "
+               f"Groups the filter hid were left alone.")
+    return back(where, msg)
 
 
 @app.post("/settings/entra/groups/pick")
@@ -1271,6 +1302,8 @@ def settings_entra_device_groups_sync():
                     "No groups are ticked - tick the ones holding devices first")
     msg = (f"Synced {r['device_groups']} of {r['picked']} ticked group(s); "
            f"{r['devices']} membership(s) recorded")
+    if r["looked_up"]:
+        msg += (f" ({r['looked_up']} needed a second call to find their device id)")
     if r["empty"]:
         msg += f"; {len(r['empty'])} came back with nothing - see below"
     if r["dropped"]:
@@ -2213,20 +2246,39 @@ def _apply(data: dict, group: str, by: str, redirect: str):
 @app.get("/settings/entra", response_class=HTMLResponse)
 def admin_entra(request: Request):
     last = db.q1("SELECT MAX(synced_at) AS last, COUNT(*) AS n FROM users WHERE source='entra'")
-    people = db.q1("SELECT COUNT(*) c FROM users")["c"]
+    headcount = db.q1("SELECT COUNT(*) c FROM users")["c"]
     return render(request, "settings_entra.html", last=last,
-                  people=people, fields=settings.group("entra"), probe=None,
+                  people=headcount, fields=settings.group("entra"), probe=None,
                   filter_checks=_filter_checks(), filter_test=None,
                   **_entra_ctx("general"))
 
 
 @app.get("/settings/entra/users", response_class=HTMLResponse)
-def settings_entra_users(request: Request):
+def settings_entra_users(request: Request, q: str = "", show_ignored: str = ""):
     last = db.q1("SELECT MAX(synced_at) AS last, COUNT(*) AS n FROM users WHERE source='entra'")
     return render(request, "settings_entra_users.html", last=last,
-                  people=db.q1("SELECT COUNT(*) c FROM users")["c"],
-                  filter_checks=_filter_checks(), filter_test=None,
+                  users=people.listing(q, bool(show_ignored)), q=q,
+                  show_ignored=show_ignored, counts=people.counts(),
+                  rules=people.rules(), describe_rule=people.describe,
+                  hiding=people.hiding(),
+                  ignore_fields=people.FIELDS, ignore_ops=people.OPS,
                   **_entra_ctx("users"))
+
+
+@app.post("/settings/entra/users/ignore/add")
+def settings_users_ignore_add(field: str = Form(...), op: str = Form("contains"),
+                              value: str = Form("")):
+    problem = people.add_rule(field, op, value)
+    if problem:
+        return back("/settings/entra/users", problem)
+    return back("/settings/entra/users", f"Now ignoring {people.recompute()} person/people")
+
+
+@app.post("/settings/entra/users/ignore/{rule_id}/delete")
+def settings_users_ignore_delete(rule_id: int):
+    people.delete_rule(rule_id)
+    return back("/settings/entra/users",
+                f"Rule removed - {people.recompute()} person/people still ignored")
 
 
 @app.post("/settings/entra/test", response_class=HTMLResponse)
@@ -2237,9 +2289,9 @@ def admin_entra_test(request: Request):
     if not entra.is_configured():
         return back("/settings/entra", "Fill in the tenant, client and secret first")
     last = db.q1("SELECT MAX(synced_at) AS last, COUNT(*) AS n FROM users WHERE source='entra'")
-    people = db.q1("SELECT COUNT(*) c FROM users")["c"]
+    headcount = db.q1("SELECT COUNT(*) c FROM users")["c"]
     return render(request, "settings_entra.html", last=last,
-                  people=people, fields=settings.group("entra"),
+                  people=headcount, fields=settings.group("entra"),
                   filter_checks=_filter_checks(), filter_test=None,
                   probe=entra.test_connection(), **_entra_ctx("general"))
 
@@ -2263,9 +2315,9 @@ def admin_entra_test_filter(request: Request, kind: str = Form(...)):
     if not result.get("verdict", {}).get("dialect") and not entra.is_configured():
         return back("/settings/entra", "Fill in the tenant, client and secret first")
     last = db.q1("SELECT MAX(synced_at) AS last, COUNT(*) AS n FROM users WHERE source='entra'")
-    people = db.q1("SELECT COUNT(*) c FROM users")["c"]
+    headcount = db.q1("SELECT COUNT(*) c FROM users")["c"]
     return render(request, "settings_entra_users.html", last=last,
-                  people=people, filter_checks=_filter_checks(),
+                  people=headcount, filter_checks=_filter_checks(),
                   filter_test={"kind": kind, **result}, **_entra_ctx("users"))
 
 
@@ -2276,8 +2328,14 @@ def admin_sync():
     try:
         r = entra.sync()
     except Exception as exc:  # surface the Graph error rather than a 500 page
-        return back("/settings/entra", f"Sync failed: {why(exc)}"[:300])
-    return back("/settings/entra", f"Synced {r['fetched']} users ({r['created']} new, {r['updated']} updated)")
+        return back("/settings/entra/users", f"Sync failed: {why(exc)}"[:300])
+    # Re-apply the ignore rules, or somebody who joins after a rule was written
+    # walks straight past it.
+    ignored = people.recompute()
+    msg = f"Synced {r['fetched']} users ({r['created']} new, {r['updated']} updated)"
+    if ignored:
+        msg += f"; {ignored} ignored by your rules"
+    return back("/settings/entra/users", msg)
 
 
 # --- settings: local accounts -------------------------------------------

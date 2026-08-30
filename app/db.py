@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS users (
     country        TEXT,
     usage_location TEXT,
     source         TEXT NOT NULL DEFAULT 'manual',
+    ignored_reason TEXT,          -- which rule keeps them out of ITAM's lists
     synced_at      TEXT
 );
 
@@ -186,6 +187,18 @@ CREATE TABLE IF NOT EXISTS device_ignore_rules (
     op         TEXT NOT NULL DEFAULT 'contains',   -- eq | contains | starts
     value      TEXT NOT NULL,   -- the Entra group id, Intune device id, or text
     label      TEXT,            -- what to show for an id-shaped value
+    created_at TEXT
+);
+
+-- People Entra returns that ITAM should not track: service accounts, shared
+-- mailboxes, test identities. Same shape as the device rules, and for the same
+-- reason - an OData filter cannot express "except these", and getting it wrong
+-- means a sync that silently brings in nothing.
+CREATE TABLE IF NOT EXISTS user_ignore_rules (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    field      TEXT NOT NULL,   -- upn | display_name | department | job_title | country
+    op         TEXT NOT NULL DEFAULT 'contains',
+    value      TEXT NOT NULL,
     created_at TEXT
 );
 
@@ -538,7 +551,7 @@ def init_db():
 
         # Migration: country and usage location arrived after the first release.
         ucols = [r["name"] for r in conn.execute("PRAGMA table_info(users)")]
-        for col in ("country", "usage_location"):
+        for col in ("country", "usage_location", "ignored_reason"):
             if col not in ucols:
                 conn.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT")
         # NULLs repeat freely in a SQLite unique index, so only real ids are

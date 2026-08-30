@@ -1,5 +1,5 @@
 {% extends "settings_entra_base.html" %}
-{% from "settings_entra_grouplist.html" import group_table %}
+{% from "settings_entra_grouplist.html" import group_table, group_filters %}
 {% block title %}Groups &middot; ITAM{% endblock %}
 {% block entra %}
 <p class="meta">Every group Entra knows about. Tick the ones whose <strong>people</strong>
@@ -20,7 +20,8 @@
     Last member sync: {{ last.last or 'never' }}.</span>
 </div>
 
-{{ group_table(groups, 'user', discovered, group_filter) }}
+{{ group_filters('/settings/entra/groups', q, state, states, groups|length, total) }}
+{{ group_table(groups, 'user', discovered, group_filter, q or state) }}
 
 <p class="hint">Refreshing the list is one call for the whole tenant and keeps
   your ticks. Narrow what appears with <span class="mono">ENTRA_GROUP_FILTER</span>

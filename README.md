@@ -371,7 +371,8 @@ Sync behaviour:
   a reclaim list of licences on disabled accounts.
 - **People** — everyone with their asset count, asset value, licence count and
   monthly/annual licence cost. Searchable, filterable by department.
-- **People** — filter by name, department or country, then tick people and
+- **People** — filter by name, department, country, or **what they are not
+  holding** (no assets, no licences, nothing at all), then tick people and
   **assign in bulk**: a counted asset (any quantity each) or a licence seat.
   The header checkbox takes everyone the filter is showing, so "everyone in
   Israel gets two monitors" is one pass. Serial-tracked machines are not
@@ -631,6 +632,15 @@ track its **devices**. The two are independent, and both are yours to choose:
 guessing from a name filter or a membership rule was never going to be right for
 everybody's tenant.
 
+The list is searchable. The search runs over the name, the description **and the
+membership rule**, so typing `device.` finds every dynamic device group whatever
+they happen to be called. A `*` is a wildcard; without one it is a plain
+substring. The dropdown narrows to ticked, not ticked, with or without members
+here, or by membership kind.
+
+**Saving a filtered page leaves the groups the filter hid exactly as they are.**
+An unticked box means "not this one" only for a group that was on screen.
+
 **Refresh the group list** is one call for the whole tenant and keeps your ticks.
 **Sync the ticked groups** fetches membership, one call per ticked group and not
 one more. The `membership` column is a hint for the eye — a dynamic group whose
@@ -650,6 +660,28 @@ while the group demonstrably holds members — in which case the app registratio
 most likely wants `Device.Read.All` alongside `Group.Read.All`. What it already
 had is kept, because an empty answer is as likely to be a permission as a real
 change.
+
+### Ignoring people who are not people
+
+**Settings → Entra ID → Users** lists everyone synced, with the display name,
+UPN, job title, department and country the sync brings across, plus how many
+assets and licences each holds.
+
+Service accounts, shared mailboxes and meeting rooms are not staff. The OData
+filter can say *these*; it is poor at *these, except those*, and a filter Graph
+declines to run comes back as an empty sync rather than an error. So exceptions
+are matched here instead, on UPN, display name, department, job title or
+country, with **contains** / **is exactly** / **starts with** / **is blank**:
+
+```
+UPN starts with "svc-"              hiding 2
+Display name contains "Meeting Room"  hiding 1
+```
+
+An ignored person is still synced and still holds whatever they held — they are
+kept out of the People page, the totals and the assignment pickers. Removing the
+rule brings them back at once, and the rules are re-applied after every user
+sync, so somebody who joins later does not walk past them.
 
 ### Ignoring devices that are not kit
 
@@ -1137,9 +1169,9 @@ your backups as secrets either way.
 ./tests/run_all.sh
 ```
 
-Twenty-four suites covering money parsing, currencies and frozen rates, the
+Twenty-five suites covering money parsing, currencies and frozen rates, the
 dashboard's country filter, bulk assignment, CSV import, the Entra
-user/group/licence syncs, device groups, Intune devices, ignored devices and
+user/group/licence syncs, device groups, Intune devices, ignored devices and people,
 macOS custom attributes, OData filters and the dynamic-group syntax they get
 confused with, pricing groups and pricing by region, counted assets and their
 returns, the entitlement rules, the schema migrations, and two-factor
