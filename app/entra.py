@@ -9,6 +9,7 @@ UPN (userPrincipalName) is the unique key used throughout the app.
 import datetime
 import fnmatch
 import os
+import re
 
 import httpx
 
@@ -122,6 +123,19 @@ def _explain(resp, path: str) -> str:
         hint = ""
         if "filter" in message.lower() or "filter" in code.lower():
             hint = " -- check the OData filters on this page."
+            # Graph says "syntax error at position N" and stops there. Nearly
+            # every time, the filter was copied from an Intune dynamic group
+            # rule, which is a different language that looks similar.
+            for text in (settings.get("ENTRA_USER_FILTER"),
+                         settings.get("ENTRA_GROUP_FILTER"),
+                         settings.get("INTUNE_DEVICE_FILTER")):
+                verdict = check_filter(text or "")
+                if verdict["dialect"]:
+                    hint = (f" -- that filter is {verdict['dialect']}, not OData: "
+                            f"{verdict['why'][0]}."
+                            + (f" In OData it is: {verdict['suggestion']}"
+                               if verdict["suggestion"] else ""))
+                    break
         elif "page size" in message.lower():
             hint = (" -- this endpoint rejects a page-size argument; that is a "
                     "bug in the caller, not your configuration.")
@@ -130,6 +144,111 @@ def _explain(resp, path: str) -> str:
         return (f"429 Throttled by Graph: {message} -- too many requests; "
                 f"try again shortly.")
     return f"{resp.status_code} from Graph ({code}): {message}"
+
+
+# Intune dynamic-group membership rules and OData $filter look alike and are
+# not the same language. Pasting the first into the second is the single most
+# common way these filters fail, so it is worth naming rather than leaving
+# somebody to read "syntax error at position 20".
+_DYNAMIC_OPS = re.compile(
+    r"-(eq|ne|co|notContains|contains|startsWith|notStartsWith|match|in|notIn|any|all)\b",
+    re.IGNORECASE)
+_DYNAMIC_PROP = re.compile(r"\b(device|user)\.(\w+)")
+_DOUBLE_QUOTED = re.compile(r'"[^"]*"')
+
+# Dynamic-group property -> the managedDevice property OData knows it by.
+DEVICE_PROPERTY_MAP = {
+    "devicemodel": "model",
+    "devicemanufacturer": "manufacturer",
+    "deviceostype": "operatingSystem",
+    "deviceosversion": "osVersion",
+    "displayname": "deviceName",
+    "deviceid": "azureADDeviceId",
+    "deviceownership": "managedDeviceOwnerType",
+    "devicecategory": "deviceCategoryDisplayName",
+}
+
+
+def check_filter(text: str) -> dict:
+    """Is this OData, or an Intune dynamic-group rule wearing its clothes?
+
+    Pure - no network. Returns the dialect it looks like, why, and the OData
+    form where the translation is unambiguous.
+    """
+    text = (text or "").strip()
+    out = {"dialect": None, "why": [], "suggestion": None}
+    if not text:
+        return out
+    if _DYNAMIC_OPS.search(text):
+        out["why"].append("operators are written -eq / -ne, where OData uses eq / ne")
+    if _DYNAMIC_PROP.search(text):
+        out["why"].append("properties are prefixed device. or user., which OData has no notion of")
+    if _DOUBLE_QUOTED.search(text):
+        out["why"].append("values are in double quotes, where OData wants single quotes")
+    if not out["why"]:
+        return out
+    out["dialect"] = "an Intune dynamic-group membership rule"
+
+    # Translate the shape people actually paste: one property, one operator,
+    # one quoted value, optionally wrapped in brackets.
+    simple = re.fullmatch(
+        r'\(?\s*(?:device|user)\.(\w+)\s+-(eq|ne|startsWith|contains)\s+"([^"]*)"\s*\)?',
+        text, re.IGNORECASE)
+    if simple:
+        prop, op, value = simple.group(1), simple.group(2), simple.group(3)
+        mapped = DEVICE_PROPERTY_MAP.get(prop.lower(), prop[0].lower() + prop[1:])
+        value = value.replace("'", "''")
+        if op.lower() in ("eq", "ne"):
+            out["suggestion"] = f"{mapped} {op.lower()} '{value}'"
+        elif op.lower() == "startswith":
+            out["suggestion"] = f"startsWith({mapped}, '{value}')"
+        else:
+            out["suggestion"] = f"contains({mapped}, '{value}')"
+    return out
+
+
+FILTER_TARGETS = {
+    "user":   ("ENTRA_USER_FILTER", "/users", {"$select": "id", "$top": "1"}, True),
+    "group":  ("ENTRA_GROUP_FILTER", "/groups", {"$select": "id", "$top": "1"}, True),
+    "device": ("INTUNE_DEVICE_FILTER", "/deviceManagement/managedDevices",
+               {"$select": "id", "$top": "1"}, False),
+}
+
+
+def try_filter(kind: str) -> dict:
+    """Send the configured filter to Graph and report what it says.
+
+    The only way to know whether an endpoint accepts a filter is to ask it.
+    managedDevices in particular supports $filter on far fewer properties than
+    /users does, and the documented list has moved; guessing on somebody's
+    behalf is how they end up debugging a sync at 6pm.
+    """
+    if kind not in FILTER_TARGETS:
+        return {"ok": False, "detail": "Unknown filter"}
+    key, path, params, advanced = FILTER_TARGETS[kind]
+    text = (settings.get(key) or "").strip()
+    verdict = check_filter(text)
+    if not text:
+        return {"ok": True, "empty": True, "verdict": verdict,
+                "detail": "No filter set - everything is synced."}
+    if verdict["dialect"]:
+        return {"ok": False, "verdict": verdict,
+                "detail": f"This is {verdict['dialect']}, not OData. "
+                          + "; ".join(verdict["why"]) + "."}
+    params = dict(params)
+    params["$filter"] = text
+    try:
+        rows = _get_all_once(path, params, advanced=advanced)
+    except GraphError as exc:
+        return {"ok": False, "verdict": verdict, "detail": str(exc)}
+    except Exception as exc:
+        return {"ok": False, "verdict": verdict,
+                "detail": f"{type(exc).__name__}: {exc}"}
+    return {"ok": True, "verdict": verdict,
+            "detail": ("Accepted by Graph, and at least one record matches."
+                       if rows else
+                       "Accepted by Graph, but nothing matches it - a sync would "
+                       "bring in nothing.")}
 
 
 def _token() -> str:
@@ -659,13 +778,20 @@ def test_connection() -> dict:
     return result
 
 
-def _get_all_once(path: str, params: dict, base: str = GRAPH) -> list[dict]:
+def _get_all_once(path: str, params: dict, base: str = GRAPH,
+                  advanced: bool = False) -> list[dict]:
     """One page only - enough to prove a permission works, without walking a
     whole tenant just to run a test."""
     token = _token()
+    headers = {"Authorization": f"Bearer {token}"}
+    if advanced:
+        # Same opt-in the real sync uses, or a filter that works in production
+        # would fail its own test.
+        headers["ConsistencyLevel"] = "eventual"
+        params = dict(params)
+        params["$count"] = "true"
     with httpx.Client(timeout=30) as client:
-        resp = client.get(f"{base}{path}", headers={"Authorization": f"Bearer {token}"},
-                          params=params)
+        resp = client.get(f"{base}{path}", headers=headers, params=params)
     if resp.status_code >= 400:
         raise GraphError(_explain(resp, path))
     return (resp.json() or {}).get("value", [])

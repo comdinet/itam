@@ -101,6 +101,9 @@ summary.link { font-weight: 400; color: var(--accent); font-size: 13px; }
 .row-actions form + a::before,
 .row-actions a + form::before { content: "\00b7"; color: var(--muted); margin: 0 6px; }
 
+.ok-panel { background: var(--panel); border: 1px solid var(--ok);
+            border-left-width: 4px; border-radius: 8px; padding: 10px 14px;
+            margin: 14px 0; }
 .flash { background: var(--panel); border: 1px solid var(--accent); border-left-width: 4px;
          border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; }
 .warn { background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 10px;

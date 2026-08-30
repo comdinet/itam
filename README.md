@@ -583,6 +583,31 @@ Which to use:
 Both kinds feed the People list, each person's page, their first-year total, the
 dashboard and the finance CSV (`pooled_units`, `pooled_value`, `onetime_total`).
 
+### OData filters are not dynamic-group rules
+
+The filter boxes on **Settings → Entra ID** take an OData `$filter`. Intune
+dynamic-group membership rules look almost identical and are a different
+language, so pasting one in gets you `Syntax error at position 20` and nothing
+else:
+
+| | Dynamic-group rule | OData `$filter` |
+|---|---|---|
+| Operator | `-eq`, `-ne`, `-contains` | `eq`, `ne`, `contains(...)` |
+| Quotes | `"double"` | `'single'` |
+| Property | `device.deviceModel` | `model` |
+
+So `device.deviceModel -ne "Virtual Machine"` is `model ne 'Virtual Machine'`.
+
+ITAM now spots the wrong language **before you sync**, says which of the three
+tells it found, and offers the translation. **Test it** sends the filter to
+Graph and reports what Graph actually says — worth doing, because
+`managedDevices` accepts `$filter` on far fewer properties than `/users` does,
+and no amount of correct syntax gets round that.
+
+A filter is optional. Leaving it blank and narrowing inside ITAM is the more
+reliable path, since nothing there depends on which properties Graph will filter
+on — which is exactly what the next section is for.
+
 ### Ignoring devices that are not kit
 
 Not everything Intune manages is a thing somebody holds. Virtual machines are
@@ -1069,12 +1094,12 @@ your backups as secrets either way.
 ./tests/run_all.sh
 ```
 
-Twenty-two suites covering money parsing, currencies and frozen rates, the
+Twenty-three suites covering money parsing, currencies and frozen rates, the
 dashboard's country filter, bulk assignment, CSV import, the Entra
 user/group/licence syncs, Intune devices, ignored devices and macOS custom
-attributes, OData filters, pricing groups and pricing by region, counted assets
-and their returns, the entitlement rules, the schema migrations, and two-factor
-authentication. Two of them guard
+attributes, OData filters and the dynamic-group syntax they get confused with,
+pricing groups and pricing by region, counted assets and their returns, the
+entitlement rules, the schema migrations, and two-factor authentication. Two of them guard
 against rename damage: one signs in and GETs every page there is, the other
 statically checks that no template reads a name its route does not pass. A
 third checks that no function gives a local the name of a module its file

@@ -2109,7 +2109,7 @@ def admin_entra(request: Request):
     people = db.q1("SELECT COUNT(*) c FROM users")["c"]
     return render(request, "settings_entra.html", cfg=entra.config_status(), last=last,
                   people=people, fields=settings.group("entra"), probe=None,
-                  section="entra")
+                  filter_checks=_filter_checks(), filter_test=None, section="entra")
 
 
 @app.post("/settings/entra/test", response_class=HTMLResponse)
@@ -2123,7 +2123,34 @@ def admin_entra_test(request: Request):
     people = db.q1("SELECT COUNT(*) c FROM users")["c"]
     return render(request, "settings_entra.html", cfg=entra.config_status(), last=last,
                   people=people, fields=settings.group("entra"),
+                  filter_checks=_filter_checks(), filter_test=None,
                   probe=entra.test_connection(), section="entra")
+
+
+def _filter_checks() -> dict:
+    """Offline verdict on each filter, so a wrong dialect is caught on sight."""
+    return {kind: entra.check_filter(settings.get(key) or "")
+            for kind, (key, *_rest) in entra.FILTER_TARGETS.items()}
+
+
+@app.post("/settings/entra/test-filter", response_class=HTMLResponse)
+def admin_entra_test_filter(request: Request, kind: str = Form(...)):
+    """Ask Graph whether it accepts a filter, rather than anybody guessing.
+
+    Which properties an endpoint will filter on is a question only that tenant's
+    Graph can answer - managedDevices takes far fewer than /users does.
+    """
+    if not require_admin(request):
+        return back("/settings/entra", "Admin accounts only")
+    result = entra.try_filter(kind)
+    if not result.get("verdict", {}).get("dialect") and not entra.is_configured():
+        return back("/settings/entra", "Fill in the tenant, client and secret first")
+    last = db.q1("SELECT MAX(synced_at) AS last, COUNT(*) AS n FROM users WHERE source='entra'")
+    people = db.q1("SELECT COUNT(*) c FROM users")["c"]
+    return render(request, "settings_entra.html", cfg=entra.config_status(), last=last,
+                  people=people, fields=settings.group("entra"), probe=None,
+                  filter_checks=_filter_checks(),
+                  filter_test={"kind": kind, **result}, section="entra")
 
 
 @app.post("/settings/entra/sync")
