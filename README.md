@@ -386,6 +386,9 @@ Sync behaviour:
   - **Groups** — Entra groups and their membership; the basis for rules.
   - **Devices** — Intune devices, their macOS custom attributes, and the link
     to assets.
+  - **Currencies** — the currencies you buy in and their rates.
+  - **Pricing** — price a fleet by specification, optionally narrowed to or
+    held back from the people in an Entra group.
   - **Rules** — entitlement rules and who is short against them.
   - **Accounts** (admins only) — create, delete, and reset local sign-in accounts.
   - **API** (admins only) — API keys, field mapping, and the recent call log.
@@ -568,7 +571,9 @@ dashboard and the finance CSV (`pooled_units`, `pooled_value`, `onetime_total`).
 A group is a set of criteria with a price; applying it writes that price onto
 every asset matching them.
 
-The simple case — everything of one model:
+A group is created with its first criterion and its conditions in **one step** —
+there is no create-then-go-elsewhere-to-configure detour. The simple case,
+everything of one model:
 
 | | |
 |---|---|
@@ -595,6 +600,35 @@ custom attribute, with **is exactly**, **contains**, or **starts with** — all
 case-insensitive. Model falls back to the asset name for assets with no linked
 Intune device.
 
+The **value box suggests what your estate actually reports** — the models seen,
+the manufacturers, and for a custom attribute the values collected for that
+attribute. Typing `16 GB` when every Mac reports `16GB` produces a group that
+matches nothing and no explanation why, which is a bad half-hour.
+
+### Pricing by region: who holds the device
+
+Price follows the purchase, and the purchase follows the region. The same
+MacBook bought in Israel and in the UK carries two prices, and a shekel group
+must not rewrite the pound one. So a group can also be narrowed by **who holds
+the device**:
+
+| | |
+|---|---|
+| Name | MacBook Air 13 M4 16/512 (Israel) |
+| Price | 8990.00 ILS |
+| Criterion | Attribute `CPU and RAM` **contains** `16GB` |
+| Condition | **Not** devices held by `United Kingdom` |
+
+Applying that leaves Ollie's UK laptop on its £1,199 and prices the rest in
+shekels. The mirror image works too — **Only** devices held by `United Kingdom`,
+for the group carrying the pound price.
+
+- **Excluding beats including**, exactly as it does for entitlement rules.
+- An **unassigned asset has no holder**, so an *only* condition leaves it out
+  and a *not* condition leaves it in.
+- A condition only ever **narrows**. It cannot make a group with no criteria
+  start matching things.
+
 Notes on behaviour:
 
 - A group with **no criteria matches nothing**, deliberately. An empty group
@@ -604,8 +638,11 @@ Notes on behaviour:
 - Deleting a group leaves the prices it set alone. It is a pricing tool, not
   an owner of the data.
 - Creating an asset from an Intune device **prices it automatically** if a
-  group covers its specification, so a new machine of a known spec never lands
-  at zero.
+  group covers its specification — holder conditions included, so the same
+  model lands in shekels for an Israeli holder and pounds for a UK one.
+- Name, price, currency and notes are **editable** on the group's own page, at
+  the top. Changing the price there touches no asset until you apply the group
+  again.
 
 ## Groups, devices and rules
 
@@ -905,10 +942,10 @@ your backups as secrets either way.
 ./tests/run_all.sh
 ```
 
-Sixteen suites covering money parsing, currencies and frozen rates, the Entra
+Seventeen suites covering money parsing, currencies and frozen rates, the Entra
 user/group/licence syncs, Intune devices and macOS custom attributes, OData
-filters, pricing groups, counted assets and their returns, the entitlement
-rules, the schema migrations, and two-factor authentication. Two of them guard
+filters, pricing groups and pricing by region, counted assets and their returns,
+the entitlement rules, the schema migrations, and two-factor authentication. Two of them guard
 against rename damage: one signs in and GETs every page there is, the other
 statically checks that no template reads a name its route does not pass. Each uses a throwaway database and a mocked Graph, so none of
 them touch a real tenant or your data.

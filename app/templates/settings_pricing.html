@@ -1,5 +1,6 @@
 {% extends "settings_base.html" %}
 {% from "_currency.html" import currency_select %}
+{% from "_criterion.html" import criterion_fields, criterion_script %}
 {% block title %}Pricing &middot; ITAM{% endblock %}
 {% block admin %}
 <h2>Pricing groups <span class="count">{{ groups|length }}</span></h2>
@@ -7,25 +8,50 @@
   and disk that arrive as Intune custom attributes &mdash; with a price attached.
   Applying it writes that price onto every asset matching the specification, so
   a fleet is priced by spec rather than one machine at a time.</p>
+<p class="meta">A price can also be tied to <strong>who holds the device</strong>.
+  A shekel price belongs to the fleet bought in Israel; the same laptop on a UK
+  desk should keep its pounds. Exclude a group and its members' devices are left
+  alone.</p>
 
 <details class="panel" open>
   <summary>Add a pricing group</summary>
-  <form class="grid-form" method="post" action="/settings/pricing/new">
+  <form class="grid-form" method="post" action="/settings/pricing/new" data-criterion>
     <label>Name<input name="name" required placeholder="MacBook Air 13 M4 16/512"></label>
     <label>Price<input name="price" inputmode="decimal" placeholder="1299.00"></label>
     <label>Priced in{{ currency_select(currencies) }}</label>
-    <label>Model (optional starting point)<input name="model" list="known-models"
-           placeholder="Latitude 5450"></label>
-    <datalist id="known-models">
-      {% for m in models %}<option value="{{ m }}">{% endfor %}
-    </datalist>
     <label class="wide">Notes<input name="notes" placeholder="quote reference, purchase date…"></label>
+
+    {{ criterion_fields(fields, ops, attribute_names, optional=true) }}
+
+    <label class="wide">Only devices held by members of
+      <select name="include" multiple size="3">
+        {% for g in entra_groups %}<option value="{{ g.id }}">{{ g.display_name }}</option>{% endfor %}
+      </select>
+      <span class="hint">Optional. An unassigned asset has no holder, so it falls
+        outside this and is not priced by the group.</span>
+    </label>
+
+    <label class="wide">Except devices held by members of
+      <select name="exclude" multiple size="3">
+        {% for g in entra_groups %}<option value="{{ g.id }}">{{ g.display_name }}</option>{% endfor %}
+      </select>
+      <span class="hint">Optional. Excluding beats including, as it does for
+        entitlement rules. Hold Ctrl (or Command) to pick several.</span>
+    </label>
+
     <button type="submit">Create group</button>
   </form>
-  <p class="hint">Create it, then narrow it with criteria on its own page. A group
-     with no criteria matches nothing &mdash; deliberately, so an empty group can
-     never reprice the whole estate.</p>
+  <p class="hint">A group with no criteria matches nothing &mdash; deliberately,
+     so an empty group can never reprice the whole estate. Holder conditions only
+     narrow, so they cannot make an empty group match either.</p>
+  {% if entra_groups|length <= 1 %}
+    <p class="hint">Only <strong>{{ entra_groups[0].display_name if entra_groups else 'Everyone' }}</strong>
+       is available so far. <a href="/settings/groups">Sync your Entra groups</a>
+       to price by region.</p>
+  {% endif %}
 </details>
+
+{{ criterion_script(field_values, attribute_values) }}
 
 <table>
   <thead><tr><th>Group</th><th>Specification</th><th class="num">Price</th>
@@ -37,15 +63,17 @@
         {% if row.g.notes %}<div class="meta">{{ row.g.notes }}</div>{% endif %}</td>
       <td>{% if row.describe %}
             {% for d in row.describe %}<div class="meta">{{ d }}</div>{% endfor %}
-          {% else %}<span class="tag">no criteria yet</span>{% endif %}</td>
+          {% else %}<span class="tag">no criteria yet</span>{% endif %}
+          {% for c in row.conditions %}<div class="meta">{{ c }}</div>{% endfor %}</td>
       <td class="num">{{ row.g.price_cents|money }}
         <span class="chip">{{ row.g.currency or currency }}</span></td>
       <td class="num">{{ row.matched }}</td>
       <td class="num">{% if row.to_change %}<strong>{{ row.to_change }}</strong>{% else %}0{% endif %}</td>
       <td class="row-actions">
+        <a href="/settings/pricing/{{ row.g.id }}">Edit</a>
         {% if row.to_change %}
         <form method="post" action="/settings/pricing/{{ row.g.id }}/apply"
-              onsubmit="return confirm('Set {{ row.to_change }} asset(s) to {{ currency }} {{ row.g.price_cents|money }}?')">
+              onsubmit="return confirm('Set {{ row.to_change }} asset(s) to {{ row.g.currency or currency }} {{ row.g.price_cents|money }}?')">
           <button class="link">Apply price</button></form>
         {% endif %}
         <form method="post" action="/settings/pricing/{{ row.g.id }}/delete"

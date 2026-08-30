@@ -227,6 +227,17 @@ CREATE TABLE IF NOT EXISTS price_group_criteria (
 CREATE INDEX IF NOT EXISTS idx_price_criteria_group
     ON price_group_criteria(group_id);
 
+-- Who holds the device, as a condition on the price. A shekel price belongs to
+-- the fleet bought in Israel, and the machine on a UK desk should keep its
+-- pounds - so a group can be narrowed to, or held back from, the people in an
+-- Entra group.
+CREATE TABLE IF NOT EXISTS price_group_groups (
+    group_id  INTEGER NOT NULL REFERENCES price_groups(id) ON DELETE CASCADE,
+    entra_id  TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    mode      TEXT NOT NULL,   -- 'include' or 'exclude'
+    PRIMARY KEY (group_id, entra_id, mode)
+);
+
 -- Entitlement rules: what members of a group should have.
 CREATE TABLE IF NOT EXISTS rules (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,

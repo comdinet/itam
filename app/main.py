@@ -1494,6 +1494,12 @@ def currencies_toggle(request: Request, code: str, active: str = Form("")):
 
 # --- settings: pricing groups -------------------------------------------
 
+def entra_groups():
+    return db.q("""SELECT * FROM groups
+                   ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, display_name""",
+                (db.ALL_USERS_GROUP,))
+
+
 @app.get("/settings/pricing", response_class=HTMLResponse)
 def settings_pricing(request: Request):
     groups = []
@@ -1501,25 +1507,59 @@ def settings_pricing(request: Request):
         s = pricing.summary(g)
         groups.append({"g": g, "criteria": s["criteria"], "matched": s["matched"],
                        "to_change": s["to_change"],
-                       "describe": [pricing.describe(c) for c in s["criteria"]]})
+                       "describe": [pricing.describe(c) for c in s["criteria"]],
+                       "conditions": [pricing.describe_condition(c)
+                                      for c in s["conditions"]]})
     return render(request, "settings_pricing.html", groups=groups,
-                  models=pricing.known_models(),
+                  fields=pricing.FIELDS, ops=pricing.OPS,
+                  attribute_names=pricing.attribute_names(),
+                  field_values=pricing.field_values(),
+                  attribute_values=pricing.attribute_values(),
+                  entra_groups=entra_groups(), all_users_group=db.ALL_USERS_GROUP,
                   currencies=fx.listing(active_only=True), section="pricing")
 
 
 @app.post("/settings/pricing/new")
-def pricing_new(name: str = Form(...), price: str = Form("0"), currency: str = Form(""),
-                notes: str = Form(""), model: str = Form("")):
-    if not name.strip():
+async def pricing_new(request: Request):
+    """Create a group with its first criterion and its holder conditions.
+
+    All in one step: a group with no criteria matches nothing, so making people
+    create it and then go somewhere else to make it do anything was a detour
+    through a state nobody wants.
+    """
+    form = await request.form()
+    name = str(form.get("name") or "").strip()
+    if not name:
         return back("/settings/pricing", "Give the group a name")
-    code, rate, problem = pick_currency(currency)
+    code, rate, problem = pick_currency(str(form.get("currency") or ""))
     if problem:
         return back("/settings/pricing", problem)
-    gid = pricing.create(name, db.to_cents(price), notes, currency=code, rate_micro=rate)
-    # A model is the usual starting point, so offer it on creation.
-    if model.strip():
-        pricing.add_criterion(gid, "model", "eq", model)
-    return back(f"/settings/pricing/{gid}", "Group created - add criteria to narrow it")
+
+    field = str(form.get("field") or "").strip()
+    value = str(form.get("value") or "").strip()
+    attr_name = str(form.get("attr_name") or "").strip()
+    op = str(form.get("op") or "eq").strip()
+    if field and not value:
+        return back("/settings/pricing", "Give the criterion a value, or leave the field blank")
+    if field == "attribute" and not attr_name:
+        return back("/settings/pricing", "An attribute criterion needs the attribute name")
+
+    gid = pricing.create(name, db.to_cents(str(form.get("price") or "0")),
+                         str(form.get("notes") or ""), currency=code, rate_micro=rate)
+    if field:
+        try:
+            pricing.add_criterion(gid, field, op, value, attr_name)
+        except ValueError as exc:
+            return back(f"/settings/pricing/{gid}", str(exc))
+    for mode in ("include", "exclude"):
+        for entra_id in form.getlist(mode):
+            if entra_id:
+                pricing.add_group(gid, entra_id, mode)
+
+    if not field:
+        return back(f"/settings/pricing/{gid}",
+                    "Group created - it matches nothing until you add a criterion")
+    return back(f"/settings/pricing/{gid}", "Group created")
 
 
 @app.get("/settings/pricing/{group_id}", response_class=HTMLResponse)
@@ -1529,9 +1569,13 @@ def pricing_detail(request: Request, group_id: int):
         return HTMLResponse("<h1>404</h1><p>No such pricing group.</p>", status_code=404)
     s = pricing.summary(group)
     return render(request, "settings_pricing_detail.html", g=group, s=s,
-                  describe=pricing.describe, fields=pricing.FIELDS, ops=pricing.OPS,
+                  describe=pricing.describe,
+                  describe_condition=pricing.describe_condition,
+                  fields=pricing.FIELDS, ops=pricing.OPS,
                   attribute_names=pricing.attribute_names(),
-                  models=pricing.known_models(),
+                  field_values=pricing.field_values(),
+                  attribute_values=pricing.attribute_values(),
+                  entra_groups=entra_groups(), all_users_group=db.ALL_USERS_GROUP,
                   currencies=fx.listing(active_only=True), section="pricing")
 
 
@@ -1571,6 +1615,20 @@ def pricing_criterion_add(group_id: int, field: str = Form(...), op: str = Form(
     return back(f"/settings/pricing/{group_id}", "Criterion added")
 
 
+@app.post("/settings/pricing/{group_id}/groups/add")
+def pricing_group_add(group_id: int, entra_id: str = Form(...), mode: str = Form(...)):
+    if not pricing.get(group_id):
+        return back("/settings/pricing", "No such group")
+    problem = pricing.add_group(group_id, entra_id, mode)
+    return back(f"/settings/pricing/{group_id}", problem or "Condition added")
+
+
+@app.post("/settings/pricing/{group_id}/groups/remove")
+def pricing_group_remove(group_id: int, entra_id: str = Form(...), mode: str = Form(...)):
+    pricing.remove_group(group_id, entra_id, mode)
+    return back(f"/settings/pricing/{group_id}", "Condition removed")
+
+
 @app.post("/settings/pricing/{group_id}/criteria/{criterion_id}/delete")
 def pricing_criterion_delete(group_id: int, criterion_id: int):
     pricing.delete_criterion(criterion_id)
@@ -1586,8 +1644,11 @@ def pricing_apply(group_id: int):
         return back(f"/settings/pricing/{group_id}",
                     "Add at least one criterion first - an empty group would match nothing")
     r = pricing.apply(group)
+    # The group's own currency, not the reporting one: it just wrote shekels
+    # onto those assets, and saying "USD" would misreport what it did.
     return back(f"/settings/pricing/{group_id}",
-                f"Priced {r['changed']} asset(s) at {settings.currency()} "
+                f"Priced {r['changed']} asset(s) at "
+                f"{group['currency'] or settings.currency()} "
                 f"{db.money(group['price_cents'])}")
 
 

@@ -1,0 +1,89 @@
+{# One criterion: field, attribute name when it needs one, operator, value.
+
+   The value box suggests what the estate actually reports. Typing "16 GB"
+   when every Mac says "16GB" produces a group matching nothing, with no clue
+   why - so the values a criterion can usefully take are offered rather than
+   remembered. #}
+
+{% macro criterion_fields(fields, ops, attribute_names, optional=false) %}
+  <label>Field<select name="field" data-role="field">
+    {% if optional %}<option value="">&mdash; add one later &mdash;</option>{% endif %}
+    {% for key, spec in fields.items() %}<option value="{{ key }}"
+      {% if key == 'model' and optional %}selected{% endif %}>{{ spec[0] }}</option>{% endfor %}
+  </select></label>
+
+  <label data-role="attr-label">Attribute name<input name="attr_name" list="attr-names"
+         data-role="attr" placeholder="CPU and RAM"></label>
+  <datalist id="attr-names">
+    {% for a in attribute_names %}<option value="{{ a }}">{% endfor %}
+  </datalist>
+
+  <label data-role="op-label">Match<select name="op">
+    {% for key, spec in ops.items() %}<option value="{{ key }}">{{ spec[0] }}</option>{% endfor %}
+  </select></label>
+
+  <label data-role="value-label">Value<input name="value" list="value-suggestions"
+         data-role="value" autocomplete="off" placeholder="Latitude 5450"></label>
+  <datalist id="value-suggestions"></datalist>
+{% endmacro %}
+
+{% macro criterion_script(field_values, attribute_values) %}
+<script>
+  // Fields are shown or hidden with an inline style rather than the hidden
+  // attribute: .grid-form label { display: flex } outranks [hidden], and a
+  // cached stylesheet would leave them on screen.
+  (function () {
+    var FIELD_VALUES = {{ field_values | tojson }};
+    var ATTR_VALUES = {{ attribute_values | tojson }};
+    var form = document.querySelector('[data-criterion]');
+    if (!form) return;
+    var field = form.querySelector('[data-role=field]');
+    var attr = form.querySelector('[data-role=attr]');
+    var value = form.querySelector('[data-role=value]');
+    var list = document.getElementById('value-suggestions');
+    var attrLabel = form.querySelector('[data-role=attr-label]');
+    var opLabel = form.querySelector('[data-role=op-label]');
+    var valueLabel = form.querySelector('[data-role=value-label]');
+
+    function show(el, on) { el.style.display = on ? 'flex' : 'none'; }
+
+    function attrValues() {
+      var wanted = (attr.value || '').trim().toLowerCase();
+      var hit = Object.keys(ATTR_VALUES).filter(function (k) {
+        return k.toLowerCase() === wanted;
+      })[0];
+      return hit ? ATTR_VALUES[hit] : [];
+    }
+
+    function fill() {
+      var values = field.value === 'attribute'
+        ? attrValues()
+        : (FIELD_VALUES[field.value] || []);
+      list.innerHTML = '';
+      values.forEach(function (v) {
+        var o = document.createElement('option');
+        o.value = v;
+        list.appendChild(o);
+      });
+      value.placeholder = values.length
+        ? values[0]
+        : (field.value === 'attribute' ? 'no values reported yet' : 'type a value');
+    }
+
+    function sync() {
+      var chosen = !!field.value;
+      show(attrLabel, field.value === 'attribute');
+      show(opLabel, chosen);
+      show(valueLabel, chosen);
+      value.required = chosen;
+      attr.required = field.value === 'attribute';
+      fill();
+    }
+
+    field.addEventListener('change', sync);
+    attr.addEventListener('input', fill);
+    attr.addEventListener('change', fill);
+    sync();
+  })();
+</script>
+{% endmacro %}

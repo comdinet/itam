@@ -1,5 +1,6 @@
 {% extends "settings_base.html" %}
 {% from "_currency.html" import currency_select %}
+{% from "_criterion.html" import criterion_fields, criterion_script %}
 {% block title %}{{ g.name }} &middot; ITAM{% endblock %}
 {% block admin %}
 <p class="crumb"><a href="/settings/pricing">&larr; Pricing</a></p>
@@ -22,11 +23,24 @@
 
 {% if s.to_change %}
 <form method="post" action="/settings/pricing/{{ g.id }}/apply" class="inline-form"
-      onsubmit="return confirm('Set {{ s.to_change }} asset(s) to {{ currency }} {{ g.price_cents|money }}?')">
+      onsubmit="return confirm('Set {{ s.to_change }} asset(s) to {{ g.currency or currency }} {{ g.price_cents|money }}?')">
   <button type="submit">Apply this price to {{ s.to_change }} asset(s)</button>
   <span class="hint">Writes the price onto matching assets. Nothing else changes.</span>
 </form>
 {% endif %}
+
+<details class="panel" {% if not s.criteria %}open{% endif %}>
+  <summary>Name, price and notes</summary>
+  <form class="grid-form" method="post" action="/settings/pricing/{{ g.id }}/edit">
+    <label>Name<input name="name" value="{{ g.name }}" required></label>
+    <label>Price<input name="price" value="{{ g.price_cents|money }}" inputmode="decimal"></label>
+    <label>Priced in{{ currency_select(currencies, g.currency) }}</label>
+    <label class="wide">Notes<input name="notes" value="{{ g.notes or '' }}"></label>
+    <button type="submit">Save</button>
+  </form>
+  <p class="hint">Changing the price here does not touch any asset until you apply
+     the group again. Changing the currency re-freezes the rate at today's.</p>
+</details>
 
 <h2>Specification <span class="count">{{ s.criteria|length }}</span></h2>
 <p class="meta">All criteria must match. Adding one narrows the group.</p>
@@ -45,40 +59,58 @@
   </tbody>
 </table>
 
-<form class="grid-form" method="post" action="/settings/pricing/{{ g.id }}/criteria/add">
-  <label>Field<select name="field">
-    {% for key, spec in fields.items() %}<option value="{{ key }}">{{ spec[0] }}</option>{% endfor %}
-  </select></label>
-  <label>Attribute name<input name="attr_name" list="attr-names"
-         placeholder="only for Custom attribute"></label>
-  <datalist id="attr-names">
-    {% for a in attribute_names %}<option value="{{ a }}">{% endfor %}
-  </datalist>
-  <label>Match<select name="op">
-    {% for key, spec in ops.items() %}<option value="{{ key }}">{{ spec[0] }}</option>{% endfor %}
-  </select></label>
-  <label>Value<input name="value" list="known-models" required placeholder="Latitude 5450"></label>
-  <datalist id="known-models">
-    {% for m in models %}<option value="{{ m }}">{% endfor %}
-  </datalist>
+<form class="grid-form" method="post" action="/settings/pricing/{{ g.id }}/criteria/add"
+      data-criterion>
+  {{ criterion_fields(fields, ops, attribute_names) }}
   <button type="submit">Add criterion</button>
 </form>
+{{ criterion_script(field_values, attribute_values) }}
 <p class="hint">For a Mac spec, add <em>Model contains &ldquo;MacBook Air&rdquo;</em> and then a
   <em>Custom attribute</em> criterion such as attribute
   {% if attribute_names %}&ldquo;{{ attribute_names[0] }}&rdquo;{% else %}&ldquo;CPU and RAM&rdquo;{% endif %}
-  contains &ldquo;16 GB&rdquo;. Attribute criteria only match assets linked to an
-  Intune device that reports that attribute.</p>
+  contains &ldquo;16 GB&rdquo;. The value box offers what your devices actually
+  report, so the spelling matches. Attribute criteria only match assets linked to
+  an Intune device that reports that attribute.</p>
 
-<details class="panel">
-  <summary>Edit name, price and notes</summary>
-  <form class="grid-form" method="post" action="/settings/pricing/{{ g.id }}/edit">
-    <label>Name<input name="name" value="{{ g.name }}" required></label>
-    <label>Price<input name="price" value="{{ g.price_cents|money }}"></label>
-    <label>Priced in{{ currency_select(currencies, g.currency) }}</label>
-    <label class="wide">Notes<input name="notes" value="{{ g.notes or '' }}"></label>
-    <button type="submit">Save</button>
-  </form>
-</details>
+<h2>Who holds the device <span class="count">{{ s.conditions|length }}</span></h2>
+<p class="meta">Price follows the purchase, and the purchase follows the region.
+  Narrow the group to a region's people, or hold it back from another's, so a
+  shekel price never lands on a laptop bought in the UK.</p>
+<table>
+  <thead><tr><th>Condition</th><th></th></tr></thead>
+  <tbody>
+  {% for c in s.conditions %}
+    <tr><td>{{ describe_condition(c) }}</td>
+        <td class="row-actions">
+          <form method="post" action="/settings/pricing/{{ g.id }}/groups/remove">
+            <input type="hidden" name="entra_id" value="{{ c.entra_id }}">
+            <input type="hidden" name="mode" value="{{ c.mode }}">
+            <button class="link danger">Remove</button></form></td></tr>
+  {% else %}
+    <tr><td colspan="2" class="empty">No condition &mdash; the price applies
+      whoever holds the device.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<form class="grid-form" method="post" action="/settings/pricing/{{ g.id }}/groups/add">
+  <label>Condition<select name="mode">
+    <option value="exclude">Not devices held by</option>
+    <option value="include">Only devices held by</option>
+  </select></label>
+  <label>Group<select name="entra_id" required>
+    <option value="">&mdash; choose a group &mdash;</option>
+    {% for grp in entra_groups %}<option value="{{ grp.id }}">{{ grp.display_name }}</option>{% endfor %}
+  </select></label>
+  <button type="submit">Add condition</button>
+</form>
+<p class="hint">Excluding beats including. An unassigned asset has no holder, so
+  an <em>only</em> condition leaves it out and a <em>not</em> condition leaves it
+  in.
+  {%- if entra_groups|length <= 1 %} Only
+  <strong>{{ entra_groups[0].display_name if entra_groups else 'Everyone' }}</strong>
+  is available so far &mdash; <a href="/settings/groups">sync your Entra groups</a>
+  to price by region.{% endif %}</p>
 
 <h2>Matching assets <span class="count">{{ s.assets|length }}</span></h2>
 <table>

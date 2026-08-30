@@ -6,6 +6,12 @@ disk, which on macOS arrive as Intune custom attributes. So a group is a set of
 criteria (all must match) over the asset, its linked Intune device, and that
 device's custom attributes, and the group carries the price.
 
+A group can also be narrowed by who holds the device. Price follows the
+purchase, and the purchase follows the region: a shekel price belongs to the
+fleet bought in Israel, and the identical laptop on a UK desk should keep its
+pounds. So a group may be restricted to, or held back from, the members of an
+Entra group.
+
 Applying a group writes its price onto every matching asset. It never deletes
 or reassigns anything.
 """
@@ -61,6 +67,30 @@ def update(group_id: int, name: str, price_cents: int, notes: str | None,
          currency, rate_micro, group_id))
 
 
+def group_conditions(group_id: int):
+    return db.q(
+        """SELECT pg.*, g.display_name FROM price_group_groups pg
+           JOIN groups g ON g.id = pg.entra_id
+           WHERE pg.group_id = ? ORDER BY pg.mode, g.display_name""", (group_id,))
+
+
+def add_group(group_id: int, entra_id: str, mode: str) -> str | None:
+    if mode not in ("include", "exclude"):
+        return "Unknown condition"
+    if not db.q1("SELECT 1 FROM groups WHERE id = ?", (entra_id,)):
+        return "No such group"
+    db.execute(
+        "INSERT OR IGNORE INTO price_group_groups (group_id, entra_id, mode) "
+        "VALUES (?,?,?)", (group_id, entra_id, mode))
+    return None
+
+
+def remove_group(group_id: int, entra_id: str, mode: str) -> None:
+    db.execute(
+        "DELETE FROM price_group_groups WHERE group_id = ? AND entra_id = ? AND mode = ?",
+        (group_id, entra_id, mode))
+
+
 def criteria(group_id: int):
     return db.q("SELECT * FROM price_group_criteria WHERE group_id = ? ORDER BY id",
                 (group_id,))
@@ -80,6 +110,48 @@ def add_criterion(group_id: int, field: str, op: str, value: str,
 
 def delete_criterion(criterion_id: int) -> None:
     db.execute("DELETE FROM price_group_criteria WHERE id = ?", (criterion_id,))
+
+
+def _holder_sql(entra_id: str) -> tuple[str, list]:
+    """Whether the asset's holder is in one Entra group.
+
+    An unassigned asset has no holder, so it is never *included* by one of
+    these and never *excluded* either - it sits outside the question.
+    """
+    if entra_id == db.ALL_USERS_GROUP:
+        return "a.assigned_upn IS NOT NULL", []
+    return ("EXISTS (SELECT 1 FROM group_members gm "
+            "WHERE gm.upn = a.assigned_upn AND gm.group_id = ?)", [entra_id])
+
+
+def _holder_where(group_id: int) -> tuple[list, list]:
+    """Clauses narrowing a group by who holds the device.
+
+    Includes are ORed together - being in any one of them is enough. Excludes
+    are ANDed, and being in any excluded group is disqualifying, so exclusion
+    wins over inclusion exactly as it does for entitlement rules.
+    """
+    includes, excludes = [], []
+    for cond in group_conditions(group_id):
+        (includes if cond["mode"] == "include" else excludes).append(cond["entra_id"])
+    clauses, params = [], []
+    if includes:
+        parts = []
+        for entra_id in includes:
+            sql, extra = _holder_sql(entra_id)
+            parts.append(sql)
+            params.extend(extra)
+        clauses.append("(" + " OR ".join(parts) + ")")
+    for entra_id in excludes:
+        sql, extra = _holder_sql(entra_id)
+        clauses.append(f"NOT ({sql})")
+        params.extend(extra)
+    return clauses, params
+
+
+def describe_condition(cond) -> str:
+    verb = "Only devices held by" if cond["mode"] == "include" else "Not devices held by"
+    return f"{verb} {cond['display_name']}"
 
 
 def describe(criterion) -> str:
@@ -111,10 +183,18 @@ def _where(rows) -> tuple[str, list]:
 
 
 def matching_assets(group_id: int):
-    """Assets a group covers. No criteria matches nothing, deliberately - an
-    empty group silently repricing the whole estate would be worse."""
+    """Assets a group covers.
+
+    No criteria matches nothing, deliberately - an empty group silently
+    repricing the whole estate would be worse. A holder condition only ever
+    narrows, so it cannot turn an empty group into a matching one.
+    """
     rows = criteria(group_id)
     where, params = _where(rows)
+    holder_clauses, holder_params = _holder_where(group_id)
+    if holder_clauses:
+        where = where + " AND " + " AND ".join(holder_clauses)
+        params = params + holder_params
     return db.q(
         f"""SELECT a.*, d.model AS device_model, d.os AS device_os,
                    d.manufacturer AS device_manufacturer, d.device_name
@@ -130,7 +210,8 @@ def summary(group) -> dict:
                 if a["cost_cents"] == group["price_cents"]
                 and (a["currency"] or "") == (group["currency"] or "")]
     from . import fx
-    return {"criteria": criteria(group["id"]), "matched": len(assets),
+    return {"criteria": criteria(group["id"]),
+            "conditions": group_conditions(group["id"]), "matched": len(assets),
             "at_price": len(at_price), "to_change": len(assets) - len(at_price),
             "assets": assets,
             "current_total": sum(fx.to_reporting(a["cost_cents"], a["rate_micro"])
@@ -166,6 +247,10 @@ def price_for_asset(asset_id: int) -> dict | None:
         if not criteria(group["id"]):
             continue
         where, params = _where(criteria(group["id"]))
+        holder_clauses, holder_params = _holder_where(group["id"])
+        if holder_clauses:
+            where = where + " AND " + " AND ".join(holder_clauses)
+            params = params + holder_params
         hit = db.q1(
             f"""SELECT a.id FROM assets a
                 LEFT JOIN devices d ON d.asset_id = a.id
@@ -187,3 +272,30 @@ def known_models() -> list[str]:
         """SELECT DISTINCT COALESCE(NULLIF(TRIM(d.model),''), a.name) AS m
            FROM assets a LEFT JOIN devices d ON d.asset_id = a.id
            WHERE m IS NOT NULL AND TRIM(m) != '' ORDER BY m""")]
+
+
+def attribute_values() -> dict:
+    """Values actually reported for each custom attribute, for the value box.
+
+    Typing "16 GB" when every Mac reports "16GB" produces a group that matches
+    nothing and no explanation why, so the values a criterion can usefully take
+    should be offered rather than remembered.
+    """
+    out: dict[str, list[str]] = {}
+    for row in db.q("""SELECT DISTINCT name, value FROM device_attributes
+                       WHERE TRIM(COALESCE(value,'')) != ''
+                       ORDER BY name, value"""):
+        out.setdefault(row["name"], []).append(row["value"])
+    return out
+
+
+def field_values() -> dict:
+    """Values seen for each non-attribute field, for the same reason."""
+    def distinct(column):
+        return [r["v"] for r in db.q(
+            f"""SELECT DISTINCT {column} AS v FROM devices
+                WHERE TRIM(COALESCE({column},'')) != '' ORDER BY v""")]
+    return {"model": known_models(),
+            "manufacturer": distinct("manufacturer"),
+            "os": distinct("os"),
+            "category": db.categories()}
