@@ -1,0 +1,46 @@
+{% extends "settings_base.html" %}
+{% block title %}{{ g.display_name }} &middot; ITAM{% endblock %}
+{% block admin %}
+<p class="crumb"><a href="/settings/device-groups">&larr; Device groups</a></p>
+<h2>{{ g.display_name }}
+  {% if ignoring %}<span class="tag">its devices are ignored</span>{% endif %}</h2>
+{% if g.description %}<p class="meta">{{ g.description }}</p>{% endif %}
+<p class="meta mono">{{ g.id }} &middot; synced {{ g.synced_at or 'never' }}</p>
+
+{% if not ignoring %}
+<form method="post" action="/settings/device-groups/{{ g.id }}/ignore"
+      class="inline-form"
+      onsubmit="return confirm('Ignore the devices in {{ g.display_name }}?')">
+  <button type="submit">Ignore these devices</button>
+  <span class="hint">Adds one rule. Removable under
+    <a href="/settings/devices">Devices</a>, and nothing is deleted.</span>
+</form>
+{% endif %}
+
+<h3>Members <span class="count">{{ members|length }}</span></h3>
+<table>
+  <thead><tr><th>Device</th><th>Model</th><th>OS</th><th>Serial</th>
+    <th>In ITAM</th><th>Asset</th></tr></thead>
+  <tbody>
+  {% for m in members %}
+    <tr {% if m.ignored_reason %}class="disabled"{% endif %}>
+      <td>{{ m.device_name or m.entra_name or '(unnamed)' }}</td>
+      <td>{{ m.model or '' }}</td>
+      <td>{{ m.os or '' }}</td>
+      <td class="mono">{{ m.serial_number or '' }}</td>
+      <td>{% if m.device_id %}
+            {% if m.ignored_reason %}<span class="tag">ignored</span>
+            {% else %}<span class="ok">synced</span>{% endif %}
+          {% else %}<span class="tag">not synced from Intune</span>{% endif %}</td>
+      <td>{% if m.asset_name %}<a href="/assets/{{ m.asset_id }}">{{ m.asset_name }}</a>
+          {% else %}&mdash;{% endif %}</td></tr>
+  {% else %}
+    <tr><td colspan="6" class="empty">No devices recorded for this group.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="hint">A member showing <em>not synced from Intune</em> is in the Entra
+  group but has no Intune record here &mdash; usually the device sync has not run
+  since it was enrolled, or the <span class="mono">INTUNE_DEVICE_FILTER</span> is
+  keeping it out.</p>
+{% endblock %}

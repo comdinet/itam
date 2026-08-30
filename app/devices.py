@@ -219,3 +219,41 @@ def fill_holders_from_intune() -> int:
             "UPDATE assets SET assigned_upn = ?, assigned_on = ? WHERE id = ?",
             (row["primary_upn"], today, row["asset_id"]))
     return len(gap["fillable"])
+
+
+# --- Entra device groups -------------------------------------------------
+
+def groups_listing():
+    """Device groups, with how many of their members ITAM actually knows."""
+    return db.q(
+        """SELECT dg.*,
+                  (SELECT COUNT(*) FROM device_group_members m
+                    WHERE m.group_id = dg.id) AS members,
+                  (SELECT COUNT(*) FROM device_group_members m
+                     JOIN devices d ON d.azure_device_id = m.azure_device_id
+                    WHERE m.group_id = dg.id) AS matched,
+                  (SELECT COUNT(*) FROM device_ignore_rules r
+                    WHERE r.field = 'group' AND r.value = dg.id) AS ignoring
+           FROM device_groups dg ORDER BY dg.display_name""")
+
+
+def group(group_id: str):
+    return db.q1("SELECT * FROM device_groups WHERE id = ?", (group_id,))
+
+
+def group_members(group_id: str):
+    """The group's devices, paired with the Intune record where there is one.
+
+    A member with no Intune record is worth showing rather than dropping: it
+    usually means the device sync has not run, or a filter is keeping it out.
+    """
+    return db.q(
+        """SELECT m.azure_device_id, m.device_name AS entra_name,
+                  d.id AS device_id, d.device_name, d.model, d.os,
+                  d.serial_number, d.ignored_reason, d.asset_id,
+                  a.name AS asset_name
+           FROM device_group_members m
+           LEFT JOIN devices d ON d.azure_device_id = m.azure_device_id
+           LEFT JOIN assets a ON a.id = d.asset_id
+           WHERE m.group_id = ?
+           ORDER BY COALESCE(d.device_name, m.device_name)""", (group_id,))

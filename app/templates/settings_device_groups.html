@@ -1,0 +1,62 @@
+{% extends "settings_base.html" %}
+{% block title %}Device groups &middot; ITAM{% endblock %}
+{% block admin %}
+<h2>Entra device groups <span class="count">{{ groups|length }}</span></h2>
+<p class="meta">Groups whose members are <strong>devices</strong>. These are kept
+  apart from <a href="/settings/groups">Groups</a>, which syncs the people in a
+  group: that sync asks Entra for member <em>users</em>, so a group full of
+  virtual machines comes back empty there and looks like nothing.</p>
+
+{% if not cfg.configured %}
+<div class="warn"><strong>Entra ID is not configured</strong> &mdash; set the
+  credentials under <a href="/settings/entra">Entra ID</a> first.</div>
+{% endif %}
+
+<p class="meta">Last sync: {{ last.last or 'never' }}.
+  Filter in effect: <span class="mono">{{ group_filter or 'none — every group is scanned' }}</span></p>
+
+<form method="post" action="/settings/device-groups/sync" class="inline-form">
+  <button type="submit" {% if not cfg.configured %}disabled{% endif %}>Sync device groups</button>
+  <span class="hint">There is no way to ask Entra "which groups hold devices", so
+    this looks in each group in turn &mdash; one call per group. On a large tenant
+    narrow it with <span class="mono">ENTRA_DEVICE_GROUP_FILTER</span> under
+    <a href="/settings/entra">Entra ID</a>, for example
+    <span class="mono">startsWith(displayName, 'Devices-')</span>. Only groups
+    that turn out to hold devices are kept.</span>
+</form>
+
+<table>
+  <thead><tr><th>Group</th><th class="num">Devices</th><th class="num">Known to ITAM</th>
+    <th></th><th></th></tr></thead>
+  <tbody>
+  {% for g in groups %}
+    <tr>
+      <td><a href="/settings/device-groups/{{ g.id }}"><strong>{{ g.display_name }}</strong></a>
+        {% if g.description %}<div class="meta">{{ g.description }}</div>{% endif %}</td>
+      <td class="num">{{ g.members }}</td>
+      <td class="num">{{ g.matched }}
+        {% if g.members > g.matched %}
+          <div class="meta">{{ g.members - g.matched }} not synced from Intune</div>
+        {% endif %}</td>
+      <td>{% if g.ignoring %}<span class="tag">ignored</span>{% endif %}</td>
+      <td class="row-actions">
+        {% if not g.ignoring %}
+        <form method="post" action="/settings/device-groups/{{ g.id }}/ignore"
+              onsubmit="return confirm('Ignore the {{ g.matched }} device(s) in {{ g.display_name }}?')">
+          <button class="link">Ignore its devices</button></form>
+        {% else %}
+          <a href="/settings/devices">Manage rules</a>
+        {% endif %}</td></tr>
+  {% else %}
+    <tr><td colspan="5" class="empty">
+      {% if last.last %}No group scanned held any devices.
+      {% else %}Nothing synced yet &mdash; run a sync above.{% endif %}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<p class="hint">Ignoring a group's devices keeps them off the
+  <a href="/settings/devices">Devices</a> list, stops them ever becoming assets,
+  and leaves them out of the holder check. That is the point of this page:
+  virtual machines are managed by Intune but nobody holds one.</p>
+{% endblock %}

@@ -524,35 +524,97 @@ def sync_devices() -> dict:
             "groups_refreshed": groups_refreshed}
 
 
-def fetch_group_devices(group_id: str) -> list[str]:
-    """Entra device ids in a group, following nested groups.
+def fetch_group_devices(group_id: str) -> list[dict]:
+    """Devices in a group, following nested groups.
 
     Cast to device for the same reason the user sync casts to user: /members
     would give direct members only, and a group of groups would silently
-    resolve to nothing.
+    resolve to nothing. The user-group sync casts to user, which is exactly why
+    a group full of virtual machines shows up there as empty.
     """
     members = _get_all(f"/groups/{group_id}/transitiveMembers/microsoft.graph.device",
                        {"$select": "id,deviceId,displayName", "$top": "999"})
-    return [(m.get("deviceId") or "").strip().lower()
+    return [{"azure_device_id": (m.get("deviceId") or "").strip().lower(),
+             "device_name": m.get("displayName")}
             for m in members if m.get("deviceId")]
 
 
+def _store_group_devices(group_id: str, members: list[dict]) -> None:
+    db.execute("DELETE FROM device_group_members WHERE group_id = ?", (group_id,))
+    for m in members:
+        db.execute(
+            """INSERT OR IGNORE INTO device_group_members
+                   (group_id, azure_device_id, device_name) VALUES (?,?,?)""",
+            (group_id, m["azure_device_id"], m["device_name"]))
+
+
+def sync_device_groups() -> dict:
+    """Find the Entra groups that contain devices, and what is in them.
+
+    One Graph call per group, because there is no way to ask "which groups have
+    device members" in one go. On a large tenant that is a lot of calls, so
+    ENTRA_DEVICE_GROUP_FILTER narrows which groups are looked at - and the
+    result says how many were scanned, so the cost is never a surprise.
+
+    Needs Group.Read.All, the same as the user-group sync.
+    """
+    group_filter = settings.get("ENTRA_DEVICE_GROUP_FILTER")
+    params = {"$select": "id,displayName,description", "$top": "999"}
+    if group_filter:
+        params["$filter"] = group_filter
+    groups = _get_all("/groups", params, advanced=bool(group_filter))
+
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    total_devices = 0
+    scanned_ids, kept_ids = [], []
+    for g in groups:
+        gid = g.get("id")
+        if not gid:
+            continue
+        scanned_ids.append(gid)
+        members = fetch_group_devices(gid)
+        if not members:
+            continue
+        kept_ids.append(gid)
+        total_devices += len(members)
+        db.execute(
+            """INSERT INTO device_groups (id, display_name, description,
+                                          device_count, synced_at)
+               VALUES (?,?,?,?,?)
+               ON CONFLICT(id) DO UPDATE SET
+                   display_name=excluded.display_name,
+                   description=excluded.description,
+                   device_count=excluded.device_count,
+                   synced_at=excluded.synced_at""",
+            (gid, g.get("displayName") or "(no name)", g.get("description"),
+             len(members), now))
+        _store_group_devices(gid, members)
+
+    # A group we looked at this run and found no devices in is no longer a
+    # device group. Groups outside the filter were never looked at, so nothing
+    # was learned about them and they are left exactly as they were.
+    emptied = set(scanned_ids) - set(kept_ids)
+    dropped = 0
+    for gid in emptied:
+        if db.q1("SELECT 1 FROM device_groups WHERE id = ?", (gid,)):
+            db.execute("DELETE FROM device_groups WHERE id = ?", (gid,))
+            db.execute("DELETE FROM device_group_members WHERE group_id = ?", (gid,))
+            dropped += 1
+
+    return {"scanned": len(scanned_ids), "device_groups": len(kept_ids),
+            "devices": total_devices, "dropped": dropped}
+
+
 def refresh_ignore_groups() -> int:
-    """Re-read the device groups the ignore rules name. Returns how many."""
+    """Re-read just the groups the ignore rules name.
+
+    Cheap - only the groups actually in use - so it can run on every device
+    sync. It also means an ignore rule works for a group that the device-group
+    sync never looked at, because a filter excluded it.
+    """
     wanted = devices_mod.group_rules()
-    if not wanted:
-        db.execute("DELETE FROM device_group_members")
-        return 0
-    placeholders = ",".join("?" for _ in wanted)
-    db.execute(f"DELETE FROM device_group_members WHERE group_id NOT IN ({placeholders})",
-               wanted)
     for group_id in wanted:
-        ids = fetch_group_devices(group_id)
-        db.execute("DELETE FROM device_group_members WHERE group_id = ?", (group_id,))
-        for azure_id in ids:
-            db.execute(
-                "INSERT OR IGNORE INTO device_group_members (group_id, azure_device_id) "
-                "VALUES (?,?)", (group_id, azure_id))
+        _store_group_devices(group_id, fetch_group_devices(group_id))
     return len(wanted)
 
 

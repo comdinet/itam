@@ -1175,6 +1175,61 @@ def settings_groups(request: Request):
                   cfg=entra.config_status(), section="groups")
 
 
+# --- settings: device groups --------------------------------------------
+
+@app.get("/settings/device-groups", response_class=HTMLResponse)
+def settings_device_groups(request: Request):
+    last = db.q1("SELECT MAX(synced_at) AS last FROM device_groups")
+    return render(request, "settings_device_groups.html",
+                  groups=devices.groups_listing(), last=last,
+                  cfg=entra.config_status(),
+                  group_filter=settings.get("ENTRA_DEVICE_GROUP_FILTER"),
+                  section="device-groups")
+
+
+@app.post("/settings/device-groups/sync")
+def settings_device_groups_sync():
+    if not entra.is_configured():
+        return back("/settings/device-groups", "Entra ID is not configured yet")
+    try:
+        r = entra.sync_device_groups()
+    except Exception as exc:
+        return back("/settings/device-groups",
+                    f"Device group sync failed: {why(exc)}"[:300])
+    devices.recompute()
+    msg = (f"Scanned {r['scanned']} group(s); {r['device_groups']} contain devices, "
+           f"{r['devices']} membership(s) recorded")
+    if r["dropped"]:
+        msg += f"; {r['dropped']} no longer hold devices"
+    return back("/settings/device-groups", msg)
+
+
+@app.get("/settings/device-groups/{group_id}", response_class=HTMLResponse)
+def settings_device_group_detail(request: Request, group_id: str):
+    grp = devices.group(group_id)
+    if not grp:
+        return HTMLResponse("<h1>404</h1><p>No such device group.</p>", status_code=404)
+    return render(request, "settings_device_group_detail.html", g=grp,
+                  members=devices.group_members(group_id),
+                  ignoring=bool(db.q1(
+                      "SELECT 1 FROM device_ignore_rules WHERE field='group' AND value=?",
+                      (group_id,))),
+                  section="device-groups")
+
+
+@app.post("/settings/device-groups/{group_id}/ignore")
+def settings_device_group_ignore(group_id: str):
+    grp = devices.group(group_id)
+    if not grp:
+        return back("/settings/device-groups", "No such device group")
+    problem = devices.add_rule("group", "eq", group_id, grp["display_name"])
+    if problem:
+        return back("/settings/device-groups", problem)
+    return back("/settings/device-groups",
+                f"Ignoring {devices.recompute()} device(s) - "
+                f"“{grp['display_name']}” and any other rule")
+
+
 @app.post("/settings/groups/sync")
 def settings_groups_sync():
     if not entra.is_configured():
@@ -1258,7 +1313,7 @@ def settings_devices(request: Request, q: str = "", os_filter: str = "",
                   ignore_rules=devices.rules(), ignore_fields=devices.FIELDS,
                   ignore_ops=devices.OPS, describe_rule=devices.describe,
                   ignored=devices.ignored_listing(), ignore_counts=devices.counts(),
-                  entra_groups=entra_groups(),
+                  entra_groups=devices.groups_listing(),
                   unlinked_here=unlinked_here, last=last, counts=counts,
                   gap=devices.holder_gap(),
                   cfg=entra.config_status(),
@@ -1307,7 +1362,9 @@ def settings_devices_sync_attrs():
 def settings_devices_ignore_add(field: str = Form(...), op: str = Form("contains"),
                                 value: str = Form(""), label: str = Form("")):
     if field == "group" and value:
-        row = db.q1("SELECT display_name FROM groups WHERE id = ?", (value,))
+        # A device group, not a user group: the two lists are deliberately
+        # separate, and a VM group does not appear in the user one.
+        row = devices.group(value)
         label = row["display_name"] if row else label
     problem = devices.add_rule(field, op, value, label)
     if problem:

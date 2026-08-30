@@ -189,12 +189,24 @@ CREATE TABLE IF NOT EXISTS device_ignore_rules (
     created_at TEXT
 );
 
--- Which Entra devices are in a group an ignore rule names. Refreshed whenever
--- devices are synced, so adding a VM to the group in Entra takes effect on the
+-- Entra groups whose members are DEVICES. The user-group sync casts members to
+-- microsoft.graph.user, so a group full of virtual machines syncs as empty and
+-- looks like nothing - these are kept apart so each list means one thing.
+CREATE TABLE IF NOT EXISTS device_groups (
+    id           TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    description  TEXT,
+    device_count INTEGER NOT NULL DEFAULT 0,
+    synced_at    TEXT
+);
+
+-- Which Entra devices are in such a group. Refreshed whenever devices or device
+-- groups are synced, so adding a VM to the group in Entra takes effect on the
 -- next sync like everything else.
 CREATE TABLE IF NOT EXISTS device_group_members (
     group_id        TEXT NOT NULL,
     azure_device_id TEXT NOT NULL,
+    device_name     TEXT,
     PRIMARY KEY (group_id, azure_device_id)
 );
 CREATE INDEX IF NOT EXISTS idx_device_group_azure
@@ -453,6 +465,9 @@ def init_db():
         for col in ("azure_device_id", "ignored_reason"):
             if col not in dcols:
                 conn.execute(f"ALTER TABLE devices ADD COLUMN {col} TEXT")
+        gcols = [r["name"] for r in conn.execute("PRAGMA table_info(device_group_members)")]
+        if "device_name" not in gcols:
+            conn.execute("ALTER TABLE device_group_members ADD COLUMN device_name TEXT")
 
         # Migration: counted assets no longer declare how many were bought.
         # What you owned but had not handed out is exactly what is on the shelf,

@@ -392,6 +392,8 @@ Sync behaviour:
   - **Devices** — Intune devices, their macOS custom attributes, and the link
     to assets. Rules here **ignore** what is not kit — virtual machines by
     group, or anything by model, name or OS.
+  - **Device groups** — Entra groups whose members are devices, which the
+    Groups tab cannot show because it syncs people.
   - **Currencies** — the currencies you buy in and their rates.
   - **Pricing** — price a fleet by specification, optionally narrowed to or
     held back from the people in an Entra group.
@@ -608,6 +610,41 @@ A filter is optional. Leaving it blank and narrowing inside ITAM is the more
 reliable path, since nothing there depends on which properties Graph will filter
 on — which is exactly what the next section is for.
 
+### Device groups
+
+**Settings → Groups** syncs the *people* in a group: it asks Graph for
+`transitiveMembers/microsoft.graph.user`. A group full of virtual machines has
+no user members, so it comes back **empty** and looks like nothing is in it.
+That is why a group filter there is no help for leaving VMs out.
+
+**Settings → Device groups** is the other cast — `microsoft.graph.device` — kept
+in its own list so each page means one thing:
+
+```
+GROUP                DEVICES   KNOWN TO ITAM
+Kiosks & signage           2               2       [Ignore its devices]
+Virtual machines           7               6       ignored
+  Build agents             1 not synced from Intune
+```
+
+Opening a group lists its devices, matched to their Intune records, and each row
+says whether ITAM has it. A member reading **not synced from Intune** is in the
+Entra group but has no Intune record here — usually the device sync has not run
+since it was enrolled, or `INTUNE_DEVICE_FILTER` is keeping it out.
+
+**Ignore its devices** is one click from this page, and creates the ignore rule
+described below.
+
+There is no way to ask Entra *"which groups hold devices"*, so the sync looks in
+each group in turn — **one Graph call per group**. On a large tenant, narrow it
+with `ENTRA_DEVICE_GROUP_FILTER` (for example `startsWith(displayName,
+'Devices-')`); the result always says how many groups were scanned, so the cost
+is never a surprise. Only groups that turn out to hold devices are kept, and a
+group scanned but found empty is dropped. Groups outside the filter are left
+alone — they were not looked at, so nothing was learned about them.
+
+It needs `Group.Read.All`, the same as the user-group sync.
+
 ### Ignoring devices that are not kit
 
 Not everything Intune manages is a thing somebody holds. Virtual machines are
@@ -620,7 +657,7 @@ them is ignored:
 
 | Match on | |
 |---|---|
-| **In Entra group** | The group your VMs are already in. Follows nested groups. |
+| **In Entra group** | Picked from **Device groups**. Follows nested groups. |
 | **Model / Manufacturer / Device name / OS** | `contains`, `is exactly`, `starts with` — case-insensitive |
 | **This one device** | The **Ignore** link on any row in the list |
 
@@ -1094,12 +1131,13 @@ your backups as secrets either way.
 ./tests/run_all.sh
 ```
 
-Twenty-three suites covering money parsing, currencies and frozen rates, the
+Twenty-four suites covering money parsing, currencies and frozen rates, the
 dashboard's country filter, bulk assignment, CSV import, the Entra
-user/group/licence syncs, Intune devices, ignored devices and macOS custom
-attributes, OData filters and the dynamic-group syntax they get confused with,
-pricing groups and pricing by region, counted assets and their returns, the
-entitlement rules, the schema migrations, and two-factor authentication. Two of them guard
+user/group/licence syncs, device groups, Intune devices, ignored devices and
+macOS custom attributes, OData filters and the dynamic-group syntax they get
+confused with, pricing groups and pricing by region, counted assets and their
+returns, the entitlement rules, the schema migrations, and two-factor
+authentication. Two of them guard
 against rename damage: one signs in and GETs every page there is, the other
 statically checks that no template reads a name its route does not pass. A
 third checks that no function gives a local the name of a module its file

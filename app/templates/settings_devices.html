@@ -105,7 +105,8 @@
     </select></label>
     <label data-role="group-label">Group<select name="value" data-role="group">
       <option value="">&mdash; choose a group &mdash;</option>
-      {% for g in entra_groups %}<option value="{{ g.id }}">{{ g.display_name }}</option>{% endfor %}
+      {% for g in entra_groups %}<option value="{{ g.id }}">{{ g.display_name }}
+        ({{ g.members }} device{{ '' if g.members == 1 else 's' }})</option>{% endfor %}
     </select></label>
     <label data-role="op-label">Match<select name="op">
       {% for key, spec in ignore_ops.items() %}<option value="{{ key }}"
@@ -118,8 +119,10 @@
   <p class="hint">A device matching <em>any</em> rule is ignored. Group
      membership follows nested groups and is re-read on every device sync, so
      adding a VM to the group in Entra hides it next time round.
-     {%- if not entra_groups %} No groups synced yet &mdash;
-     <a href="/settings/groups">sync them</a> to ignore by group.{% endif %}</p>
+     {%- if not entra_groups %} No device groups synced yet &mdash;
+     <a href="/settings/device-groups">sync them</a> to ignore by group. The
+     <a href="/settings/groups">Groups</a> tab is people; a group of virtual
+     machines is empty there.{% endif %}</p>
 
   {% if ignore_counts.ignored_with_asset %}
   <form method="post" action="/settings/devices/ignore/unlink" class="inline-form"
