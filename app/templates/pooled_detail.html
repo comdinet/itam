@@ -5,22 +5,24 @@
 <p class="crumb"><a href="/assets">&larr; Assets</a> <span class="crumb-sep">&rsaquo;</span> <a href="/assets/c/{{ i.category|urlencode }}">{{ i.category }}</a></p>
 <h1>{{ i.name }}</h1>
 <p class="meta">{{ i.category }}{% if i.vendor %} &middot; {{ i.vendor }}{% endif %}
-  &middot; {{ i.currency or currency }} {{ i.unit_cost_cents|money }} per unit
+  &middot; {{ i.currency or currency }} {{ i.unit_cost_cents|money }} each
   {%- if (i.currency or currency) != currency %}
     <span class="hint">&asymp; {{ currency }} {{ (i.unit_cost_cents * (i.rate_micro or 1000000) // 1000000)|money }}</span>
   {%- endif %}</p>
 {% if i.notes %}<p class="meta">{{ i.notes }}</p>{% endif %}
 
 <div class="cards">
-  <div class="card"><span class="label">Owned</span><span class="big">{{ i.quantity }}</span>
-    <span class="sub">{{ i.currency or currency }} {{ s.total_value|money }} total
-      {%- if (i.currency or currency) != currency %} &asymp; {{ currency }} {{ s.total_value_rep|money }}{% endif %}</span></div>
-  <div class="card"><span class="label">Handed out</span><span class="big">{{ s.allocated }}</span>
-    <span class="sub">{{ i.currency or currency }} {{ s.allocated_value|money }} out
-      {%- if (i.currency or currency) != currency %} &asymp; {{ currency }} {{ s.allocated_value_rep|money }}{% endif %}</span></div>
-  <div class="card"><span class="label">Spare</span><span class="big">{{ s.available }}</span></div>
+  <div class="card"><span class="label">Handed out</span><span class="big">{{ s.assigned }}</span>
+    <span class="sub">{{ i.currency or currency }} {{ s.assigned_value|money }} out
+      {%- if (i.currency or currency) != currency %} &asymp; {{ currency }} {{ s.assigned_value_rep|money }}{% endif %}</span></div>
+  <div class="card"><span class="label">On the shelf</span><span class="big">{{ s.spare }}</span>
+    <span class="sub">returned, ready to re-issue</span></div>
   <div class="card"><span class="label">People holding it</span>
     <span class="big">{{ s.holders|length }}</span></div>
+  <div class="card"><span class="label">Total spent</span>
+    <span class="big">{{ i.currency or currency }} {{ s.total_value|money }}</span>
+    <span class="sub">{{ s.owned }} unit(s)
+      {%- if (i.currency or currency) != currency %} &asymp; {{ currency }} {{ s.total_value_rep|money }}{% endif %}</span></div>
 </div>
 
 <h2>Who has them</h2>
@@ -56,8 +58,10 @@
     {% for p in people %}<option value="{{ p.upn }}">{{ p.display_name }}</option>{% endfor %}
   </select>
   <input name="quantity" type="number" min="1" value="1" style="width:5rem">
-  <button type="submit" {% if s.available < 1 %}disabled{% endif %}>Hand out</button>
-  {% if s.available < 1 %}<span class="hint">None left &mdash; raise the quantity owned below.</span>{% endif %}
+  <button type="submit">Hand out</button>
+  <span class="hint">{% if s.spare %}Takes one off the shelf first &mdash;
+    {{ s.spare }} there.{% else %}Nothing on the shelf, so this counts as a new
+    unit and adds {{ i.currency or currency }} {{ i.unit_cost_cents|money }} each.{% endif %}</span>
 </form>
 
 <details class="panel">
@@ -67,15 +71,17 @@
     <label>Category<select name="category">
       {% for c in categories() %}<option value="{{ c }}"
         {% if c == i.category %}selected{% endif %}>{{ c }}</option>{% endfor %}</select></label>
-    <label>Unit price<input name="unit_cost" value="{{ i.unit_cost_cents|money }}"></label>
+    <label>Price each<input name="unit_cost" value="{{ i.unit_cost_cents|money }}"></label>
     <label>Paid in{{ currency_select(currencies, i.currency) }}</label>
-    <label>Quantity owned<input name="quantity" type="number" min="0" value="{{ i.quantity }}"></label>
+    <label>On the shelf<input name="spare" type="number" min="0" value="{{ i.spare }}"></label>
     <label>Vendor<input name="vendor" value="{{ i.vendor or '' }}"></label>
     <label class="wide">Notes<input name="notes" value="{{ i.notes or '' }}"></label>
     <button type="submit">Save</button>
   </form>
-  <p class="hint">Bought more? Raise the quantity owned. It cannot go below the
-     {{ s.allocated }} unit(s) already handed out.</p>
+  <p class="hint">&ldquo;On the shelf&rdquo; is what came back and has not gone
+     out again. It fills itself when you take something back, so you only need
+     to touch it to correct a miscount. Handing units out is never blocked by
+     it.</p>
   <form method="post" action="/assets/pooled/{{ i.id }}/delete"
         onsubmit="return confirm('Delete {{ i.name }} and its {{ s.holders|length }} allocation(s)?')">
     <button class="link danger">Delete item</button></form>

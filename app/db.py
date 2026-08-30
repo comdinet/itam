@@ -8,7 +8,7 @@ DB_PATH = os.environ.get("ITAM_DB") or os.path.join(
     os.path.dirname(os.path.dirname(__file__)), "itam.db")
 
 
-DEFAULT_CATEGORIES = ["Laptop", "Desktop", "Monitor", "Phone", "Peripheral", "Software", "Other"]
+DEFAULT_CATEGORIES = ["Laptop", "Desktop", "Monitor", "Peripheral", "Software", "Other"]
 
 # Fields an incoming webhook payload is allowed to populate.
 ASSET_FIELDS = ["name", "category", "cost", "serial", "purchased_on", "notes",
@@ -294,17 +294,22 @@ CREATE TABLE IF NOT EXISTS rate_history (
 );
 CREATE INDEX IF NOT EXISTS idx_rate_history_code ON rate_history(code, id DESC);
 
--- Pooled assets: one row for many identical units. Mice, keyboards, headsets
--- and bulk-bought licences have no serial and are interchangeable, so a row
--- per unit would be noise. Instead the row carries a unit price and how many
--- are owned, and allocations count against it. Same categories as assets:
+-- Counted assets: one row for many identical units. Mice, keyboards, headsets,
+-- monitors and bulk-bought licences have no serial and are interchangeable, so
+-- a row per unit would be noise. The row carries a unit price; handing one out
+-- raises the count against it. Same categories as the serial-tracked assets:
 -- these are assets, counted rather than listed.
+--
+-- There is deliberately no "how many did we buy" field. We are not a warehouse:
+-- units come into existence by being handed to somebody. `spare` is what came
+-- BACK - kit returned when someone left or swapped machines - waiting to go out
+-- again without costing anything new.
 CREATE TABLE IF NOT EXISTS pooled_items (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     name            TEXT NOT NULL,
     category        TEXT NOT NULL DEFAULT 'Peripheral',
     unit_cost_cents INTEGER NOT NULL DEFAULT 0,
-    quantity        INTEGER NOT NULL DEFAULT 0,   -- units owned
+    spare           INTEGER NOT NULL DEFAULT 0,   -- returned, not yet re-issued
     vendor          TEXT,
     notes           TEXT,
     created_at      TEXT,
@@ -404,6 +409,23 @@ def init_db():
         rcols = [r["name"] for r in conn.execute("PRAGMA table_info(rules)")]
         if "asset_name" not in rcols:
             conn.execute("ALTER TABLE rules ADD COLUMN asset_name TEXT")
+
+        # Migration: counted assets no longer declare how many were bought.
+        # What you owned but had not handed out is exactly what is on the shelf,
+        # so that becomes `spare` and the typed quantity goes away.
+        pcols = [r["name"] for r in conn.execute("PRAGMA table_info(pooled_items)")]
+        if "quantity" in pcols and "spare" not in pcols:
+            conn.execute("ALTER TABLE pooled_items ADD COLUMN spare INTEGER NOT NULL DEFAULT 0")
+            conn.execute(
+                """UPDATE pooled_items SET spare = MAX(0, quantity - COALESCE(
+                       (SELECT SUM(quantity) FROM pooled_allocations a
+                        WHERE a.item_id = pooled_items.id), 0))""")
+            try:
+                conn.execute("ALTER TABLE pooled_items DROP COLUMN quantity")
+            except Exception:
+                # Pre-3.35 SQLite cannot drop a column. Leaving it is harmless -
+                # nothing reads it - but it must not keep rejecting inserts.
+                pass
 
         # Migration: money-bearing rows gain the currency they were paid in and
         # the rate that applied then. Existing rows inherit the reporting

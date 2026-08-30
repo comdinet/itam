@@ -5,7 +5,7 @@ People come from **Entra ID**, keyed on **UPN**. Two kinds of cost:
 
 | | What it is | Cost model |
 |---|---|---|
-| **Assets** | Kit you own, by category: laptops, monitors, phones, peripherals, software | one-off cost in any currency — serial-tracked items get a row each, interchangeable ones are counted in bulk |
+| **Assets** | Kit you own, by category: laptops, monitors, peripherals, software | one-off cost in any currency — machines with a serial get a row each, interchangeable kit is counted |
 | **Subscriptions** | SaaS licences (M365, GitHub, Slack, …) | cost per seat, per month |
 
 Repository: <https://github.com/comdinet/itam>
@@ -374,7 +374,7 @@ Sync behaviour:
 - **Person detail** — assign or return assets, grant or revoke licences, and a
   first-year total cost (assets + 12 months of licences).
 - **Assets** — one tab per category. Each tab lists what you own in it, both
-  the serial-tracked items and the ones counted in bulk, with an **Add** for
+  the machines tracked by serial and the counted items, with an **Add** for
   each kind that files it under the category you are on. Search by name or
   serial and filter by assigned/spare.
 - **Subscriptions** — per-seat cost, seat count, monthly and annual spend;
@@ -506,7 +506,7 @@ Rates are stored as USD-per-unit × 1,000,000, and every conversion is integer
 arithmetic with explicit half-up rounding — floats would drift, and Python's
 `round()` rounds halves to even, which is not what money does.
 
-## Assets: by category, tracked one by one or counted in bulk
+## Assets: by category, by serial or counted
 
 **Assets** has one page per category — Laptop, Monitor, Peripheral, Software and
 whatever else your kit introduces — reached from the row of tabs at the top.
@@ -516,34 +516,50 @@ buttons, which file the new item under the category you are looking at.
 Within a category there are two ways to record something, because there are two
 kinds of thing:
 
-**Tracked individually.** A laptop has a serial and belongs to one person, so it
+**Tracked by serial.** A laptop has a serial and belongs to one person, so it
 gets a row of its own with that serial, its cost and its holder.
 
-**Counted in bulk.** A mouse does not. Fifty identical mice as fifty rows is
-noise, and the useful questions are *how many do we own, how many are out, what
-did they cost*. So one record carries a **unit price** and **how many units are
-owned**. Handing one out counts against the total; cost follows the units, so
-someone holding two of a 25.00 item carries 50.00.
+**Counted.** A mouse does not. Fifty identical mice as fifty rows is noise, and
+the useful question is *who has one, and what did it cost*. So one record
+carries a **price each**, and handing one out raises the count against it. Cost
+follows the units: someone holding two of a 25.00 item carries 50.00.
 
 The same shape fits licences bought in bulk. Four JetBrains seats are one
-purchase at 779.00 each, not four assets:
+record at 779.00 each, not four assets:
 
 ```
-JetBrains All Products Pack   779.00/unit   owned 4   out 2   spare 2   3,116.00
+JetBrains All Products Pack   779.00 each   handed out 4   on the shelf 0   3,116.00
 ```
 
-Hand a seat to someone and the count goes up; the cost lands on them
-automatically. Handing out more than you own is refused, and the quantity owned
-cannot drop below what is already out — take some back first.
+### This is not stock control
+
+You are never asked how many you bought. A unit comes into existence **by being
+handed to somebody** — that is what an assignment is, a record of who has what,
+not an issue from a warehouse. Handing one out is therefore never refused for
+lack of supply.
+
+The one count that is real is **on the shelf**: kit that came *back*, when
+somebody left or swapped machines. Those units are already paid for, so the next
+person to need one gets that one and the spend does not move:
+
+```
+Ada leaves, hands back 2 monitors   handed out 4 → 2   on the shelf 0 → 2   spend unchanged
+Tal joins, rule gives him 2         handed out 2 → 4   on the shelf 2 → 0   spend unchanged
+```
+
+The shelf fills itself when you take something back, so the only reason to edit
+it is to correct a miscount. It never blocks an assignment: if the shelf is
+empty, the unit simply counts as new.
 
 Which to use:
 
-- **Tracked individually** — it has a serial and one owner.
-- **Counted in bulk** — units are interchangeable, bought as a batch, one-off cost.
+- **Tracked by serial** — it has a serial and one owner. Assigned by hand, or
+  linked from Intune.
+- **Counted** — units are interchangeable and have no serial. This is what
+  entitlement rules hand out.
 - **Subscriptions** — a recurring monthly charge per person.
 
-Both kinds are assets to everything downstream: entitlement rules grant either,
-and both feed the People list, each person's page, their first-year total, the
+Both kinds feed the People list, each person's page, their first-year total, the
 dashboard and the finance CSV (`pooled_units`, `pooled_value`, `onetime_total`).
 
 ## Pricing by specification
@@ -675,9 +691,9 @@ Rules can target a synced Entra group, or the built-in **Everyone (all users)**
 target, which needs no group sync at all — useful for "everyone gets a laptop"
 and for getting going before `Group.Read.All` is consented.
 
-A rule reports rather than acts. The Rules page shows, per rule, how many
-members are compliant, how many are short, how many items that adds up to, and
-how many spares you have to cover it. The rule's own page lists every member
+A rule reports rather than acts, until you click Apply. The Rules page shows,
+per rule, how many members it has already served, how many are still awaiting
+it, and how many items that adds up to. The rule's own page lists every member
 with what they have against what they should.
 
 ### What a rule grants
@@ -685,15 +701,16 @@ with what they have against what they should.
 The form reveals itself a step at a time. Choose whether the rule grants an
 **asset** or a **licence**, and only the fields for that appear:
 
-- **Asset** → choose a **category**, then the **item** within it. The item list
-  is the distinct names you already own in that category, so a rule can grant
-  *two Dell U2723QE* rather than *two of any monitor*. Leave it on
-  *any in this category* for the broader version.
+- **Asset** → choose a **category**, then the **item** within it. Both lists
+  are drawn from your **counted** assets, so the rule grants *two Dell
+  U2723QE* — a specific thing you actually buy, not "any monitor".
 - **Licence** → choose the subscription. Quantity disappears, since a licence
   is one per person.
 
-A rule naming an item only ever hands out that item: with three Dells and two
-LGs spare, a Dell rule leaves the LGs alone.
+**Machines tracked by serial are not offered.** Each one is a specific piece of
+hardware with a specific serial; it is assigned by hand or comes from Intune,
+and no rule can conjure a serial number. A category with nothing counted in it
+does not appear in the category list at all.
 
 ### Who a rule covers
 
@@ -711,35 +728,32 @@ Applying a rule records who it served. Someone already served is **finished
 with** — if they hand a monitor back later, the rule does not quietly issue
 another. It is a one-time entitlement, not a level the app keeps restoring.
 
-Three cases, deliberately different:
+Two cases, deliberately different:
 
-- **Served in full** → recorded, never revisited.
-- **Served in part** (ran out mid-way) → *not* recorded, so a later apply
-  completes them once more arrives. Finishing an entitlement is not the same
-  as topping someone up.
-- **Already had enough** by other means → recorded without consuming anything,
-  so the rule does not come back to them later.
+- **Served** → recorded, never revisited.
+- **Already had enough** by other means → recorded without handing anything
+  over, so the rule does not come back to them later.
 
 A new joiner in the group is short and gets served; everyone already served is
 left alone. If a rule was applied by mistake, **Allow again** on a person — or
 on the whole rule — lets it serve them once more.
 
-**Apply** closes the gaps it can:
+**Apply closes every gap in one pass.** Everything a rule grants is a record —
+counted units and licence seats alike — so there is nothing to run out of and a
+rule never sits waiting for supply. Anything on the shelf is re-used first, and
+the rest counts as new units.
 
-- **Assets** are only ever taken from existing spares — a spare serial-tracked
-  item first, then a spare unit from the bulk count. ITAM will not invent
-  hardware: an asset record for kit nobody owns is worse than no record. If
-  there are fewer spares than the rule needs, it assigns what exists and names
-  who was left short. What a person already holds counts either way, so two
-  mice out of the pool satisfy a rule asking for two mice.
+- **Counted assets** — what a person already holds counts towards the rule,
+  including a serial-tracked one you assigned by hand. Somebody who was given a
+  monitor manually is not handed a second.
 - **Licences** are granted outright, since a seat is just a record. This adds
   to the monthly run-rate, so the number of seats it will grant is shown before
   you click.
 
-Members are served in name order, so with too little spare for everyone the
-earlier names are filled first and the rest are reported. Nothing is ever
-un-assigned: someone holding more than a rule asks for is flagged as
-over-provisioned and left alone, for you to reclaim by hand.
+The only thing Apply reports back is a rule pointing at an item that has since
+been renamed or deleted — it says who missed out rather than marking them served
+with nothing. Nothing is ever un-assigned: someone holding more than a rule asks
+for is flagged as over-provisioned and left alone, for you to reclaim by hand.
 
 Rules can be paused, which keeps them without evaluating them. Deleting a group
 deletes its rules.
@@ -893,10 +907,10 @@ your backups as secrets either way.
 
 Sixteen suites covering money parsing, currencies and frozen rates, the Entra
 user/group/licence syncs, Intune devices and macOS custom attributes, OData
-filters, pricing groups, pooled assets, the entitlement rules (including the
-ones that grant from the pool), the schema migration, and two-factor
-authentication - plus a static check that no template reads a name its route
-does not pass. Each uses a throwaway database and a mocked Graph, so none of
+filters, pricing groups, counted assets and their returns, the entitlement
+rules, the schema migrations, and two-factor authentication. Two of them guard
+against rename damage: one signs in and GETs every page there is, the other
+statically checks that no template reads a name its route does not pass. Each uses a throwaway database and a mocked Graph, so none of
 them touch a real tenant or your data.
 
 The SAML suite is separate because it needs `xmlsec` to sign assertions, which
@@ -913,10 +927,15 @@ SAML endpoint. Worth running after any change near sign-in.
 ## Notes
 
 - Upgrading from a version that had a separate **Stock** section: nothing to
-  do. The first start renames the tables to match the vocabulary, carrying
-  every unit, allocation and frozen rate across; `/stock` is gone, and its
-  contents are on the category pages under **Assets**. The finance CSV columns
-  `stock_units` / `stock_value` are now `pooled_units` / `pooled_value`.
+  do. The first start migrates it, carrying every unit, allocation and frozen
+  rate across; `/stock` is gone, and its contents are on the category pages
+  under **Assets**. Whatever you owned but had not handed out becomes the
+  **on the shelf** count, since that is exactly what it was. The finance CSV
+  columns `stock_units` / `stock_value` are now `pooled_units` /
+  `pooled_value`.
+- **Phone** is no longer a built-in category. If you have assets filed under it
+  the tab stays, since categories are the built-in list plus whatever your data
+  already uses.
 - Money is stored as **integer cents**, never floats. Input accepts both
   `1,299.99` and `1.299,99` as well as space-grouped digits.
 - Every amount is recorded in the currency it was paid in, at a rate frozen at

@@ -1,3 +1,9 @@
+"""Counted assets: no stock control, but returns are remembered.
+
+Handing something out is recording who has it, not drawing from a shelf, so it
+must never be refused. The one real count is what came BACK - already paid for,
+so re-issuing it must not add to the spend.
+"""
 import os, sys, tempfile
 os.environ["ITAM_DB"] = os.path.join(tempfile.mkdtemp(), "test.db")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -10,106 +16,108 @@ def check(label, got, want):
     print(f"{'PASS' if ok else 'FAIL'}  {label}: got={got!r} want={want!r}")
     if not ok: fails.append(label)
 
-for upn, name in [("ada@x.com","Ada"), ("grace@x.com","Grace"), ("hedy@x.com","Hedy")]:
+for upn, name in [("ada@x.com", "Ada"), ("grace@x.com", "Grace"), ("hedy@x.com", "Hedy")]:
     db.execute("INSERT INTO users (upn, display_name, source) VALUES (?,?,'entra')", (upn, name))
 
-print("--- mice: 10 units at 25.00, no serials ---")
-mice = pooled.create("Logitech M185 mouse", "Peripheral", 2500, 10, vendor="Logitech")
-item = pooled.get(mice)
-s = pooled.summary(item)
-check("owned", item["quantity"], 10)
-check("nothing out yet", s["allocated"], 0)
-check("total value is unit price x owned", s["total_value"], 25000)
-check("all available", s["available"], 10)
-
-check("handing out one succeeds", pooled.assign(mice, "ada@x.com", 1), None)
-check("handing out three more to someone else", pooled.assign(mice, "grace@x.com", 3), None)
+print("--- a new item owns nothing until somebody is given one ---")
+mice = pooled.create("Logitech M185 mouse", "Peripheral", 2500, vendor="Logitech")
 s = pooled.summary(pooled.get(mice))
-check("four out", s["allocated"], 4)
-check("six left", s["available"], 6)
-check("cost in people's hands", s["allocated_value"], 10000)
-check("two holders", len(s["holders"]), 2)
+check("nothing handed out", s["assigned"], 0)
+check("nothing on the shelf", s["spare"], 0)
+check("so nothing owned", s["owned"], 0)
+check("and nothing spent", s["total_value"], 0)
 
-print("\n--- handing out more to the same person raises the count, not the rows ---")
-check("second unit to Ada", pooled.assign(mice, "ada@x.com", 1), None)
-check("still two holders", len(pooled.summary(pooled.get(mice))["holders"]), 2)
-check("Ada now holds 2",
+print("\n--- handing out is never refused ---")
+check("one to Ada", pooled.assign(mice, "ada@x.com", 1), None)
+check("three to Grace", pooled.assign(mice, "grace@x.com", 3), None)
+check("ninety-nine to Hedy, with no stock anywhere",
+      pooled.assign(mice, "hedy@x.com", 99), None)
+s = pooled.summary(pooled.get(mice))
+check("all of it recorded", s["assigned"], 103)
+check("owned follows what was handed out", s["owned"], 103)
+check("spend follows the units", s["total_value"], 103 * 2500)
+check("three holders", len(s["holders"]), 3)
+
+print("\n--- a second unit adds to the same row, not a new one ---")
+check("one more to Ada", pooled.assign(mice, "ada@x.com", 1), None)
+check("still three holders", len(pooled.summary(pooled.get(mice))["holders"]), 3)
+check("Ada's row went to two",
       db.q1("SELECT quantity FROM pooled_allocations WHERE item_id=? AND upn='ada@x.com'",
             (mice,))["quantity"], 2)
 
-print("\n--- cost follows the units ---")
-ada = [k for k in pooled.for_user("ada@x.com")][0]
-check("Ada carries 2 x 25.00", ada["cost"], 5000)
-grace = [k for k in pooled.for_user("grace@x.com")][0]
-check("Grace carries 3 x 25.00", grace["cost"], 7500)
+print("\n--- what someone holds, and what it costs them ---")
+ada = pooled.for_user("ada@x.com")[0]
+check("Ada holds two", ada["quantity"], 2)
+check("costing 50.00", ada["cost"], 5000)
+check("Grace holds three", pooled.for_user("grace@x.com")[0]["quantity"], 3)
 
-print("\n--- you cannot hand out what you do not have ---")
-problem = pooled.assign(mice, "hedy@x.com", 99)
-check("refused", problem is not None, True)
-check("says how many are available", "5 unit(s) available" in problem, True)
-check("nothing changed", pooled.summary(pooled.get(mice))["allocated"], 5)
-
-print("\n--- taking back ---")
+print("\n--- taking back puts units on the shelf, not into thin air ---")
+before = pooled.summary(pooled.get(mice))["owned"]
 check("take one back from Grace", pooled.take_back(mice, "grace@x.com", 1), None)
-check("Grace holds 2",
+s = pooled.summary(pooled.get(mice))
+check("Grace is down to two",
       db.q1("SELECT quantity FROM pooled_allocations WHERE item_id=? AND upn='grace@x.com'",
             (mice,))["quantity"], 2)
+check("one is on the shelf", s["spare"], 1)
+check("total owned is unchanged", s["owned"], before)
+check("and so is the spend", s["total_value"], before * 2500)
+
 check("take back all of Grace's", pooled.take_back(mice, "grace@x.com"), None)
-check("Grace holds none",
+check("her row is gone",
       db.q1("SELECT COUNT(*) c FROM pooled_allocations WHERE item_id=? AND upn='grace@x.com'",
             (mice,))["c"], 0)
-check("taking back from someone with none is refused",
+check("three on the shelf now", pooled.get(mice)["spare"], 3)
+check("taking back from someone holding none is refused",
       pooled.take_back(mice, "grace@x.com") is not None, True)
 
-print("\n--- quantity owned cannot drop below what is handed out ---")
+print("\n--- re-issuing from the shelf costs nothing new ---")
+before = pooled.summary(pooled.get(mice))["owned"]
+pooled.assign(mice, "grace@x.com", 2)
 s = pooled.summary(pooled.get(mice))
-problem = pooled.update(mice, "Logitech M185 mouse", "Peripheral", 2500, 1, None, None)
-check("refused", problem is not None, True)
-check("mentions how many are out", "2 unit(s) are already handed out" in problem, True)
-check("quantity unchanged", pooled.get(mice)["quantity"], 10)
-check("raising it is fine",
-      pooled.update(mice, "Logitech M185 mouse", "Peripheral", 2500, 20, None, None), None)
-check("now 20 owned", pooled.get(mice)["quantity"], 20)
+check("one left on the shelf", s["spare"], 1)
+check("owned did not grow", s["owned"], before)
+check("so the spend did not either", s["total_value"], before * 2500)
 
-print("\n--- the JetBrains case: licences bought once, handed to several people ---")
-jb = pooled.create("JetBrains All Products Pack", "Software", 77900, 4, vendor="JetBrains")
-for upn in ("ada@x.com", "grace@x.com", "hedy@x.com"):
-    check(f"seat to {upn}", pooled.assign(jb, upn, 1), None)
-sj = pooled.summary(pooled.get(jb))
-check("three of four seats used", sj["allocated"], 3)
-check("one spare", sj["available"], 1)
-check("purchase value", sj["total_value"], 311600)
-check("value in use", sj["allocated_value"], 233700)
-check("a fourth is fine", pooled.assign(jb, "ada@x.com", 1), None)
-check("a fifth is refused", pooled.assign(jb, "grace@x.com", 1) is not None, True)
+print("\n--- handing out more than the shelf holds tops up from new ---")
+before = pooled.summary(pooled.get(mice))["owned"]
+pooled.assign(mice, "hedy@x.com", 5)          # 1 from the shelf, 4 new
+s = pooled.summary(pooled.get(mice))
+check("shelf emptied", s["spare"], 0)
+check("owned grew by the shortfall only", s["owned"], before + 4)
 
-print("\n--- org totals ---")
+print("\n--- refusals that still apply ---")
+check("an unknown person", pooled.assign(mice, "nobody@x.com", 1) is not None, True)
+check("a quantity below one", pooled.assign(mice, "ada@x.com", 0) is not None, True)
+check("an unknown item", pooled.assign(99999, "ada@x.com", 1) is not None, True)
+
+print("\n--- editing ---")
+check("a negative shelf count is refused",
+      pooled.update(mice, "Logitech M185", "Peripheral", 2500, None, None, spare=-1) is not None,
+      True)
+check("correcting the shelf count",
+      pooled.update(mice, "Logitech M185 mouse", "Peripheral", 2500, "Logitech", None,
+                    spare=4), None)
+check("it took", pooled.get(mice)["spare"], 4)
+check("price change is accepted",
+      pooled.update(mice, "Logitech M185 mouse", "Peripheral", 2900, "Logitech", None), None)
+check("and applies to every unit",
+      pooled.summary(pooled.get(mice))["total_value"],
+      pooled.summary(pooled.get(mice))["owned"] * 2900)
+
+print("\n--- listing and totals ---")
+pooled.create("JetBrains All Products Pack", "Software", 77900)
+check("both items listed", len(pooled.listing()), 2)
+check("filtered to one category", len(pooled.listing("Peripheral")), 1)
 t = pooled.totals()
-# "items" would be shadowed by dict.items in a template, so the key is
-# deliberately named item_count.
-check("item count key is template-safe", "items" in t, False)
-check("two items", t["item_count"], 2)
-check("units owned", t["units"], 24)          # 20 mice + 4 licences
-check("total value", t["value"], 20*2500 + 4*77900)
-check("units out", t["allocated_units"], 2 + 4)   # Ada 2 mice; 4 JetBrains seats
-check("spare units", t["spare_units"], 24 - 6)
+check("item count", t["item_count"], 2)
+check("units total matches the item", t["units"], pooled.summary(pooled.get(mice))["owned"])
+check("shelf total", t["spare_units"], 4)
 
-print("\n--- per-person rollup matches the item view ---")
-ada_total = sum(k["cost"] for k in pooled.for_user("ada@x.com"))
-check("Ada: 2 mice + 2 JetBrains", ada_total, 2*2500 + 2*77900)
-
-print("\n--- deleting an item takes its allocations with it ---")
-pooled.delete(jb)
+print("\n--- deleting takes the allocations with it ---")
+pooled.delete(mice)
 check("allocations gone",
-      db.q1("SELECT COUNT(*) c FROM pooled_allocations WHERE item_id=?", (jb,))["c"], 0)
-check("the other item is untouched", pooled.get(mice)["quantity"], 20)
-
-print("\n--- a departing person's allocations go with the user row ---")
-db.execute("DELETE FROM users WHERE upn='ada@x.com'")
-check("their allocations are removed",
-      db.q1("SELECT COUNT(*) c FROM pooled_allocations WHERE upn='ada@x.com'")["c"], 0)
-check("units return to the pool", pooled.summary(pooled.get(mice))["available"], 20)
+      db.q1("SELECT COUNT(*) c FROM pooled_allocations WHERE item_id=?", (mice,))["c"], 0)
 
 print()
-print("FAILURES:", fails if fails else "none")
+print("FAILURES:", ", ".join(fails) if fails else "none")
 sys.exit(1 if fails else 0)

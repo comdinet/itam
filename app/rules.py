@@ -1,9 +1,12 @@
 """Entitlement rules: what members of an Entra group should have.
 
-A rule states the intended state ("everyone in Design gets 2 monitors"), and
-compliance is computed against it. Applying a rule assigns what is actually
-available - it never invents hardware that does not exist, because inventing
-assets would mean ITAM reporting kit nobody owns.
+A rule states the intended state ("everyone in Design gets 2 monitors") and
+compliance is computed against it. Applying one closes the gap outright: there
+is no stock to run out of, so a rule never stalls waiting for supply.
+
+Rules grant counted assets and licence seats only. A serial-tracked machine is
+a specific physical object with a specific serial - it is assigned by hand or
+comes from Intune, and no rule can conjure one.
 """
 import datetime
 
@@ -105,9 +108,10 @@ def covered_upns(rule) -> set:
 def _held(upn: str, category: str, name: str | None) -> int:
     """What a person already holds towards an asset rule.
 
-    Individually tracked assets and pooled units both count: two mice out of
-    the pool satisfy "everyone gets two mice" exactly as two asset rows would,
-    and counting only one kind would report a compliant person as short.
+    Counted units and serial-tracked assets both count. A rule only ever hands
+    out the counted kind, but somebody who was already given a serial-tracked
+    monitor by hand has a monitor, and reporting them as short would mean
+    issuing a second one.
     """
     sql = "SELECT COUNT(*) c FROM assets WHERE assigned_upn = ? AND category = ?"
     params = [upn, category]
@@ -115,33 +119,6 @@ def _held(upn: str, category: str, name: str | None) -> int:
         sql += " AND name = ?"
         params.append(name)
     return db.q1(sql, params)["c"] + pooled.held_by(upn, category, name)
-
-
-def _available(category: str, name: str | None) -> int:
-    """Spare individual assets plus spare pooled units."""
-    sql = "SELECT COUNT(*) c FROM assets WHERE assigned_upn IS NULL AND category = ?"
-    params = [category]
-    if name:
-        sql += " AND name = ?"
-        params.append(name)
-    return db.q1(sql, params)["c"] + pooled.spare_units(category, name)
-
-
-def _hand_over_one(upn: str, category: str, name: str | None, today: str) -> bool:
-    """Give one unit from whatever is spare. False when nothing is.
-
-    Individually tracked assets go first: they are the scarcer, identifiable
-    ones, and leaving them on the shelf while the pool drains would strand kit
-    that has a serial to account for.
-    """
-    sql = ("SELECT id FROM assets WHERE assigned_upn IS NULL AND category = ?"
-           + (" AND name = ?" if name else "") + " ORDER BY id LIMIT 1")
-    spare = db.q1(sql, (category, name) if name else (category,))
-    if spare:
-        db.execute("UPDATE assets SET assigned_upn = ?, assigned_on = ? WHERE id = ?",
-                   (upn, today, spare["id"]))
-        return True
-    return pooled.take_one(upn, category, name)
 
 
 def evaluate(rule) -> list[dict]:
@@ -182,29 +159,26 @@ def summarise(rule) -> dict:
     short = [r for r in outstanding if r["gap"] > 0]
     over = [r for r in rows if r["gap"] < 0]
     needed = sum(r["gap"] for r in short)
-    available = _available(rule["category"], rule["asset_name"]) \
-        if rule["kind"] == "asset" else 0
     return {"members": len(rows), "compliant": len(rows) - len(short) - len(over),
             "short": len(short), "over": len(over), "needed": needed,
-            "available": available, "rows": rows,
+            "rows": rows,
             "fulfilled": sum(1 for r in rows if r["fulfilled"]),
             "outstanding": len(outstanding),
             "conditions": group_conditions(rule["id"])}
 
 
 def apply(rule) -> dict:
-    """Close the gaps this rule can close, and report what it could not.
+    """Close the gaps. Everything a rule grants is a record, so it can.
 
-    Subscription seats are just records, so they are granted outright. Assets
-    are only ever taken from existing spares.
+    Counted units and subscription seats are both records of who has what, not
+    draws against a shelf, so applying a rule finishes the job in one go. The
+    only thing that can be reported back is a rule pointing at an item that no
+    longer exists.
     """
     today = datetime.date.today().isoformat()
     granted_total = 0
     shortfall = []
 
-    # Members are served in the order evaluate() returns them (by name). With
-    # too little spare to satisfy everyone, earlier names are filled first and
-    # the rest are reported rather than silently skipped.
     for row in evaluate(rule):
         # Already served by this rule: leave them alone. This is what makes a
         # rule a one-time entitlement rather than a level it keeps restoring.
@@ -226,22 +200,17 @@ def apply(rule) -> dict:
             granted_total += 1
             continue
 
-        received = 0
-        for _ in range(gap):
-            if not _hand_over_one(row["upn"], rule["category"], rule["asset_name"], today):
-                break
-            received += 1
-
-        granted_total += received
-        if received >= gap:
-            # Recorded as served only when the entitlement was met in full.
-            # Someone who got one of two monitors is not finished with: a later
-            # apply completes them once more arrives, which is different from
-            # topping somebody up after they hand an item back.
-            _mark(rule["id"], row["upn"], received)
-        else:
+        item = pooled.find(rule["category"], rule["asset_name"])
+        if not item:
+            # The item was renamed or deleted out from under the rule. Say so
+            # rather than marking anybody served with nothing.
             shortfall.append({"upn": row["upn"], "display_name": row["display_name"],
-                              "still_short": gap - received})
+                              "still_short": gap})
+            continue
+
+        pooled.assign(item["id"], row["upn"], gap)
+        granted_total += gap
+        _mark(rule["id"], row["upn"], gap)
 
     return {"granted": granted_total, "shortfall": shortfall}
 
@@ -280,27 +249,16 @@ def compliance_overview() -> list[dict]:
 
 
 def assets_by_category() -> dict:
-    """Distinct item names you own, grouped by category.
+    """What a rule may grant, grouped by category.
 
     Feeds the second step of the rule form: pick a category, then the actual
-    item, so a rule can grant "a Dell U2723QE" rather than "any monitor".
-    Pooled items are listed alongside the individually tracked ones - a rule
-    granting a mouse has to be able to name the mice you actually bought.
+    item. Only counted assets appear - a rule hands out "a Dell U2723QE", and
+    there is no sensible way for it to hand out a particular serial number.
     """
-    out: dict[str, list[str]] = {}
-    for row in db.q(
-            """SELECT DISTINCT category, name FROM assets
-               WHERE TRIM(COALESCE(name,'')) != '' ORDER BY category, name"""):
-        out.setdefault(row["category"], []).append(row["name"])
-    for category, names in pooled.names_by_category().items():
-        merged = set(out.get(category, [])) | set(names)
-        out[category] = sorted(merged)
-    return out
+    return pooled.names_by_category()
 
 
 def grants_label(rule) -> str:
     if rule["kind"] != "asset":
         return rule["subscription_name"] or "a licence"
-    if rule["asset_name"]:
-        return rule["asset_name"]
-    return f"{rule['category']} (any)"
+    return rule["asset_name"] or f"{rule['category']} (any)"

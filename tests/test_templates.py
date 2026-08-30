@@ -104,6 +104,17 @@ for node in ast.walk(tree):
     # them, so the guarantee is the intersection, not the union.
     passed[tpl] = given if tpl not in passed or not passed[tpl] else passed[tpl] & given
 
+# Whatever main.py registers as a Jinja global is available everywhere, so
+# read that off the source rather than keeping a second list in step by hand.
+for node in ast.walk(tree):
+    if not isinstance(node, ast.Assign):
+        continue
+    for target in node.targets:
+        if (isinstance(target, ast.Subscript)
+                and isinstance(target.slice, ast.Constant)
+                and ast.unparse(target.value).endswith("env.globals")):
+            env.globals.setdefault(target.slice.value, None)
+
 known = set(env.globals) | RENDER_DEFAULTS
 missing = []
 for tpl, given in sorted(passed.items()):

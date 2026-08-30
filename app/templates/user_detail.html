@@ -94,11 +94,12 @@
     <input type="hidden" name="upn" value="{{ u.upn }}">
     <input type="hidden" name="quantity" value="1">
     <input type="hidden" name="redirect" value="/users/{{ u.upn }}">
-    <button class="link">+ {{ k.name }} ({{ k.available }} left)</button>
+    <button class="link">+ {{ k.name }}{% if k.spare %} ({{ k.spare }} on the shelf){% endif %}</button>
   </form>
   {% endfor %}
 </div>
-<p class="hint">Hands out one unit from the pool.</p>
+<p class="hint">Hands out one unit. Anything on the shelf is used first &mdash;
+   otherwise it counts as a new one and adds its price to this person's total.</p>
 {% endif %}
 
 <h2>Entra ID licences</h2>

@@ -71,12 +71,18 @@ check("an unused one can go", fx.delete("GBP"), None)
 fx.add("GBP", "£", "Pound sterling", 1358006, "boi", "test", "2026-08-27")
 
 print("\n--- Yael: a laptop and mice in shekels, a licence in euros ---")
-mice = pooled.create("Logitech M185 mouse", "Peripheral", 9500, 10,
-                    currency="ILS", rate_micro=fx.rate_for("ILS"))
-jb = pooled.create("JetBrains All Products Pack", "Software", 77900, 4,
-                  currency="EUR", rate_micro=fx.rate_for("EUR"))
+mice = pooled.create("Logitech M185 mouse", "Peripheral", 9500,
+                     currency="ILS", rate_micro=fx.rate_for("ILS"), spare=8)
+jb = pooled.create("JetBrains All Products Pack", "Software", 77900,
+                   currency="EUR", rate_micro=fx.rate_for("EUR"), spare=3)
+# Two mice and one seat go to Yael; the rest stay on the shelf, so the org
+# owns ten mice and four seats either way.
 pooled.assign(mice, "yael@x.com", 2)
 pooled.assign(jb, "yael@x.com", 1)
+pooled.update(mice, "Logitech M185 mouse", "Peripheral", 9500, None, None,
+              currency="ILS", rate_micro=fx.rate_for("ILS"), spare=8)
+pooled.update(jb, "JetBrains All Products Pack", "Software", 77900, None, None,
+              currency="EUR", rate_micro=fx.rate_for("EUR"), spare=3)
 
 from app.main import USER_COSTS
 row = db.q1(USER_COSTS + " WHERE u.upn = ?", ("yael@x.com",))
@@ -96,7 +102,7 @@ t = pooled.totals()
 expect_value = (fx.to_reporting(10 * 9500, 335683) + fx.to_reporting(4 * 77900, 1164183))
 expect_alloc = (fx.to_reporting(2 * 9500, 335683) + fx.to_reporting(1 * 77900, 1164183))
 check("pooled value converted", t["value"], expect_value)
-check("allocated value converted", t["allocated_value"], expect_alloc)
+check("assigned value converted", t["assigned_value"], expect_alloc)
 check("and that is 394,649 not 394,650", expect_value, 394649)
 
 print("\n--- a pricing group carries its currency onto the assets it prices ---")

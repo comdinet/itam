@@ -3,8 +3,9 @@
 {% block admin %}
 <h2>Entitlement rules <span class="count">{{ overview|length }}</span></h2>
 <p class="meta">A rule says what a group of people should have &mdash;
-  &ldquo;everyone in Israel gets 2 monitors, except CSE&rdquo;. Applying it hands
-  out what you have in spares; it never invents hardware you do not own.</p>
+  &ldquo;everyone in Israel gets 2 monitors, except CSE&rdquo;. Applying it closes
+  every gap in one go: anything returned to the shelf is re-used first, and the
+  rest is counted as new.</p>
 <p class="meta">A rule serves each person <strong>once</strong>. Somebody it has
   already served is finished with, even if they later hand something back &mdash;
   it is a one-time entitlement, not a level the app keeps restoring.</p>
@@ -28,13 +29,21 @@
 
     <label id="field-category">Category<select name="category" id="rule-category">
       <option value="">&mdash; choose a category &mdash;</option>
-      {% for c in categories() %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
-    </select></label>
+      {# Only categories with a counted item in them: those are what a rule
+         can hand out, so offering the rest would be a dead end. #}
+      {% for c in items_by_category|sort %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+    </select>
+      {% if not items_by_category %}
+        <span class="hint">Nothing to grant yet &mdash; add a counted item under
+          <a href="/assets">Assets</a> first.</span>
+      {% endif %}
+    </label>
 
     <label id="field-item">Which item<select name="asset_name" id="rule-item">
-      <option value="">&mdash; any in this category &mdash;</option>
+      <option value="">&mdash; choose &mdash;</option>
     </select>
-      <span class="hint">Names come from assets you already own in that category.</span>
+      <span class="hint">Counted items in that category. Machines tracked by
+        serial are assigned by hand, not by a rule.</span>
     </label>
 
     <label id="field-subscription">Which subscription<select name="subscription_id">
@@ -87,14 +96,16 @@
       function show(el, on) { el.style.display = on ? 'flex' : 'none'; }
 
       function fillItems() {
+        // Only counted items are listed. A rule hands out a named item, so
+        // there is no "any": with nothing named there is nothing to hand out.
         var names = ITEMS[category.value] || [];
         item.innerHTML = '';
-        var any = document.createElement('option');
-        any.value = '';
-        any.textContent = names.length
-          ? '\u2014 any ' + category.value + ' \u2014'
-          : '\u2014 any (none owned yet) \u2014';
-        item.appendChild(any);
+        var first = document.createElement('option');
+        first.value = '';
+        first.textContent = names.length
+          ? '\u2014 choose \u2014'
+          : '\u2014 no counted ' + category.value + ' yet \u2014';
+        item.appendChild(first);
         names.forEach(function (n) {
           var o = document.createElement('option');
           o.value = n; o.textContent = n; item.appendChild(o);
@@ -110,6 +121,7 @@
         // The item list only makes sense once a category is chosen.
         show(fields.item, isAsset && !!category.value);
         fields.category.querySelector('select').required = isAsset;
+        item.required = isAsset;
         fields.subscription.querySelector('select').required = isSub;
       }
 
@@ -120,8 +132,11 @@
     })();
   </script>
 
-  <p class="hint">Licences are one per person, so a quantity only applies to
-     assets. Exceptions can be changed later on the rule's own page.</p>
+  <p class="hint">Rules hand out counted items and licence seats. Machines
+     tracked by serial are not here: each is a specific piece of hardware,
+     assigned by hand or from Intune. Licences are one per person, so a quantity
+     only applies to assets. Exceptions can be changed later on the rule's own
+     page.</p>
   {% if groups|length <= 1 %}
     <p class="hint">Only <strong>{{ groups[0].display_name if groups else 'Everyone' }}</strong>
        is available so far. <a href="/settings/groups">Sync your Entra groups</a> to
@@ -135,8 +150,8 @@
 
 <table>
   <thead><tr><th>Rule</th><th>Applies to</th><th>Grants</th><th class="num">Each</th>
-    <th class="num">Served</th><th class="num">Awaiting</th><th class="num">Needed</th>
-    <th class="num">Spare</th><th></th></tr></thead>
+    <th class="num">Served</th><th class="num">Awaiting</th>
+    <th class="num">To hand out</th><th></th></tr></thead>
   <tbody>
   {% for o in overview %}
     <tr {% if not o.rule.active %}class="disabled"{% endif %}>
@@ -160,15 +175,14 @@
         <td class="num">{{ o.summary.fulfilled }} / {{ o.summary.members }}</td>
         <td class="num">{% if o.summary.short %}<strong>{{ o.summary.short }}</strong>{% else %}0{% endif %}</td>
         <td class="num">{{ o.summary.needed }}</td>
-        <td class="num">{% if o.rule.kind == 'asset' %}{{ o.summary.available }}{% else %}&mdash;{% endif %}</td>
       {% else %}
         <td class="num meta">&mdash;</td><td class="num meta">&mdash;</td>
-        <td class="num meta">&mdash;</td><td class="num meta">&mdash;</td>
+        <td class="num meta">&mdash;</td>
       {% endif %}
       <td class="row-actions">
         {% if o.summary and o.summary.needed %}
         <form method="post" action="/settings/rules/{{ o.rule.id }}/apply"
-              onsubmit="return confirm('Assign up to {{ o.summary.needed }} item(s) to close the gaps?')">
+              onsubmit="return confirm('Hand out {{ o.summary.needed }} item(s) and close every gap?')">
           <button class="link">Apply</button></form>
         {% endif %}
         <form method="post" action="/settings/rules/{{ o.rule.id }}/toggle">
@@ -178,7 +192,7 @@
               onsubmit="return confirm('Delete rule {{ o.rule.name }}?')">
           <button class="link danger">Delete</button></form></td></tr>
   {% else %}
-    <tr><td colspan="9" class="empty">No rules yet &mdash; add one above.</td></tr>
+    <tr><td colspan="8" class="empty">No rules yet &mdash; add one above.</td></tr>
   {% endfor %}
   </tbody>
 </table>

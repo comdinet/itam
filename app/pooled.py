@@ -1,15 +1,20 @@
-"""Pooled assets: one record for many identical units.
+"""Counted assets: one record for many identical units.
 
 A laptop has a serial and belongs to one person, so an asset row per machine is
 right. A mouse does not: fifty identical mice as fifty rows is noise, and the
-question worth answering is "how many do we own, how many are out, what did
-they cost". The same shape fits licences bought in bulk - four JetBrains seats
-are one purchase with a unit price, not four assets.
+question worth answering is "who has one, and what did it cost". The same shape
+fits licences bought in bulk - four JetBrains seats are one record with a unit
+price, not four assets.
 
-So a pooled item carries a unit price and how many units are owned, and
-allocations count against that. Cost follows the units: a person holding two
-units of a 25.00 item carries 50.00. It lives under the same categories as the
-individually tracked assets, on the same category page.
+This is deliberately not stock control. There is no "how many did we buy": a
+unit comes into existence by being handed to somebody, and cost follows the
+units, so a person holding two of a 25.00 item carries 50.00. The one place a
+count is real is `spare` - kit that came BACK, when somebody left or swapped
+machines. Those units are already paid for, so handing one out again costs
+nothing new.
+
+It lives under the same categories as the serial-tracked assets, on the same
+category page.
 """
 import datetime
 
@@ -20,33 +25,36 @@ def _now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 
 
-def create(name: str, category: str, unit_cost_cents: int, quantity: int,
+def create(name: str, category: str, unit_cost_cents: int,
            vendor: str | None = None, notes: str | None = None,
-           currency: str | None = None, rate_micro: int | None = None) -> int:
+           currency: str | None = None, rate_micro: int | None = None,
+           spare: int = 0) -> int:
     return db.execute(
-        """INSERT INTO pooled_items (name, category, unit_cost_cents, quantity,
-                                    vendor, notes, created_at, currency, rate_micro)
+        """INSERT INTO pooled_items (name, category, unit_cost_cents, spare,
+                                     vendor, notes, created_at, currency, rate_micro)
            VALUES (?,?,?,?,?,?,?,?,?)""",
-        (name.strip(), category, max(0, unit_cost_cents), max(0, quantity),
+        (name.strip(), category, max(0, unit_cost_cents), max(0, spare),
          (vendor or "").strip() or None, (notes or "").strip() or None, _now(),
          currency, rate_micro))
 
 
 def update(item_id: int, name: str, category: str, unit_cost_cents: int,
-           quantity: int, vendor: str | None, notes: str | None,
-           currency: str | None = None, rate_micro: int | None = None) -> str | None:
+           vendor: str | None, notes: str | None,
+           currency: str | None = None, rate_micro: int | None = None,
+           spare: int | None = None) -> str | None:
     """Returns a complaint if the change is impossible, else None."""
-    allocated = allocated_units(item_id)
-    if quantity < allocated:
-        return (f"{allocated} unit(s) are already handed out, so the quantity "
-                f"owned cannot drop below that. Take some back first.")
-    db.execute(
-        """UPDATE pooled_items SET name=?, category=?, unit_cost_cents=?, quantity=?,
-                                  vendor=?, notes=?, currency=?, rate_micro=?
-           WHERE id=?""",
-        (name.strip(), category, max(0, unit_cost_cents), max(0, quantity),
-         (vendor or "").strip() or None, (notes or "").strip() or None,
-         currency, rate_micro, item_id))
+    if spare is not None and spare < 0:
+        return "The number on the shelf cannot be negative"
+    sets = ["name=?", "category=?", "unit_cost_cents=?", "vendor=?", "notes=?",
+            "currency=?", "rate_micro=?"]
+    params = [name.strip(), category, max(0, unit_cost_cents),
+              (vendor or "").strip() or None, (notes or "").strip() or None,
+              currency, rate_micro]
+    if spare is not None:
+        sets.append("spare=?")
+        params.append(spare)
+    params.append(item_id)
+    db.execute(f"UPDATE pooled_items SET {', '.join(sets)} WHERE id=?", params)
     return None
 
 
@@ -58,16 +66,21 @@ def get(item_id: int):
     return db.q1("SELECT * FROM pooled_items WHERE id = ?", (item_id,))
 
 
-def allocated_units(item_id: int) -> int:
+def assigned_units(item_id: int) -> int:
     return db.q1("SELECT COALESCE(SUM(quantity),0) q FROM pooled_allocations "
                  "WHERE item_id = ?", (item_id,))["q"]
 
 
+# Owned is derived, never typed: what people hold, plus what came back.
+ASSIGNED = """COALESCE((SELECT SUM(quantity) FROM pooled_allocations a
+                        WHERE a.item_id = s.id), 0)"""
+OWNED = f"({ASSIGNED} + s.spare)"
+
+
 def listing(category: str | None = None):
-    sql = ("""SELECT s.*,
-                  """ + db.conv("s.quantity * s.unit_cost_cents", "s.rate_micro") + """ AS value_rep,
-                  COALESCE((SELECT SUM(quantity) FROM pooled_allocations a
-                            WHERE a.item_id = s.id), 0) AS allocated,
+    sql = ("""SELECT s.*, """ + ASSIGNED + """ AS assigned,
+                  """ + OWNED + """ AS owned,
+                  """ + db.conv(OWNED + " * s.unit_cost_cents", "s.rate_micro") + """ AS value_rep,
                   COALESCE((SELECT COUNT(*) FROM pooled_allocations a
                             WHERE a.item_id = s.id), 0) AS holders
            FROM pooled_items s""")
@@ -79,16 +92,20 @@ def listing(category: str | None = None):
 
 
 def summary(item) -> dict:
-    allocated = allocated_units(item["id"])
+    assigned = assigned_units(item["id"])
     from . import fx
     rate = item["rate_micro"]
+    unit = item["unit_cost_cents"]
+    owned = assigned + item["spare"]
     return {
-        "allocated": allocated,
-        "available": item["quantity"] - allocated,
-        "total_value": item["quantity"] * item["unit_cost_cents"],
-        "allocated_value": allocated * item["unit_cost_cents"],
-        "total_value_rep": fx.to_reporting(item["quantity"] * item["unit_cost_cents"], rate),
-        "allocated_value_rep": fx.to_reporting(allocated * item["unit_cost_cents"], rate),
+        "assigned": assigned,
+        "spare": item["spare"],
+        "owned": owned,
+        "total_value": owned * unit,
+        "assigned_value": assigned * unit,
+        "spare_value": item["spare"] * unit,
+        "total_value_rep": fx.to_reporting(owned * unit, rate),
+        "assigned_value_rep": fx.to_reporting(assigned * unit, rate),
         "holders": db.q(
             """SELECT a.*, u.display_name, u.account_enabled
                FROM pooled_allocations a JOIN users u ON u.upn = a.upn
@@ -97,7 +114,12 @@ def summary(item) -> dict:
 
 
 def assign(item_id: int, upn: str, quantity: int = 1) -> str | None:
-    """Hand out units. Returns a complaint, or None on success."""
+    """Hand out units. Returns a complaint, or None on success.
+
+    This never refuses for lack of units. Assigning is recording who has what,
+    not issuing from a shelf: if something came back it is re-used first, and
+    otherwise the unit simply starts existing here.
+    """
     item = get(item_id)
     if not item:
         return "No such item"
@@ -105,10 +127,10 @@ def assign(item_id: int, upn: str, quantity: int = 1) -> str | None:
         return "Quantity must be at least 1"
     if not db.q1("SELECT 1 FROM users WHERE upn = ?", (upn,)):
         return "No such person"
-    available = item["quantity"] - allocated_units(item_id)
-    if quantity > available:
-        return (f"Only {available} unit(s) available. Raise the quantity owned "
-                f"first, or take some back.")
+    reused = min(quantity, item["spare"])
+    if reused:
+        db.execute("UPDATE pooled_items SET spare = spare - ? WHERE id = ?",
+                   (reused, item_id))
     db.execute(
         """INSERT INTO pooled_allocations (item_id, upn, quantity, assigned_on)
            VALUES (?,?,?,?)
@@ -120,30 +142,39 @@ def assign(item_id: int, upn: str, quantity: int = 1) -> str | None:
 
 
 def take_back(item_id: int, upn: str, quantity: int | None = None) -> str | None:
-    """Return units to the pool. Without a quantity, takes back all of them."""
+    """Take units back. Without a quantity, takes back all of them.
+
+    Returned units go on the shelf rather than vanishing: they were paid for,
+    and the next person to need one should get that one.
+    """
     row = db.q1("SELECT quantity FROM pooled_allocations WHERE item_id = ? AND upn = ?",
                 (item_id, upn))
     if not row:
         return "That person holds none of this item"
+    returned = row["quantity"] if quantity is None else min(max(1, quantity), row["quantity"])
     if quantity is None or quantity >= row["quantity"]:
         db.execute("DELETE FROM pooled_allocations WHERE item_id = ? AND upn = ?",
                    (item_id, upn))
     else:
         db.execute(
             "UPDATE pooled_allocations SET quantity = quantity - ? "
-            "WHERE item_id = ? AND upn = ?", (max(1, quantity), item_id, upn))
+            "WHERE item_id = ? AND upn = ?", (returned, item_id, upn))
+    db.execute("UPDATE pooled_items SET spare = spare + ? WHERE id = ?",
+               (returned, item_id))
     return None
 
 
 def totals(category: str | None = None) -> dict:
-    # Values are in the reporting currency: pooled items may be priced in
+    # Values are in the reporting currency: counted items may be priced in
     # several, and raw sums across them would be meaningless.
-    where = " WHERE category = ?" if category else ""
+    where = " WHERE s.category = ?" if category else ""
     params = (category,) if category else ()
     row = db.q1(
-        """SELECT COALESCE(SUM(quantity),0) AS units,
-                  COALESCE(SUM(""" + db.conv("quantity * unit_cost_cents", "rate_micro") + """),0) AS value,
-                  COUNT(*) AS items FROM pooled_items""" + where, params)
+        """SELECT COALESCE(SUM(""" + OWNED + """),0) AS units,
+                  COALESCE(SUM(""" + db.conv(OWNED + " * s.unit_cost_cents", "s.rate_micro") + """),0) AS value,
+                  COALESCE(SUM(s.spare),0) AS spare_units,
+                  COALESCE(SUM(""" + db.conv("s.spare * s.unit_cost_cents", "s.rate_micro") + """),0) AS spare_value,
+                  COUNT(*) AS items FROM pooled_items s""" + where, params)
     alloc = db.q1(
         """SELECT COALESCE(SUM(a.quantity),0) AS units,
                   COALESCE(SUM(""" + db.conv("a.quantity * s.unit_cost_cents", "s.rate_micro") + """),0) AS value
@@ -151,9 +182,8 @@ def totals(category: str | None = None) -> dict:
         + (" WHERE s.category = ?" if category else ""), params)
     # Not named "items": in a template, dict.items is the method, not the key.
     return {"item_count": row["items"], "units": row["units"], "value": row["value"],
-            "allocated_units": alloc["units"], "allocated_value": alloc["value"],
-            "spare_units": row["units"] - alloc["units"],
-            "spare_value": row["value"] - alloc["value"]}
+            "assigned_units": alloc["units"], "assigned_value": alloc["value"],
+            "spare_units": row["spare_units"], "spare_value": row["spare_value"]}
 
 
 def for_user(upn: str):
@@ -167,16 +197,31 @@ def for_user(upn: str):
 
 
 def names_by_category() -> dict:
-    """Distinct pooled item names, grouped by category.
+    """Distinct counted-item names, grouped by category.
 
-    Rules pick an item by name, and a pooled item is as grantable as an
-    individually tracked one, so both feed the same list.
+    This is what entitlement rules may grant. Serial-tracked assets are not
+    here on purpose: each is a specific physical machine, assigned by hand or
+    from Intune, and no rule can conjure a serial number.
     """
     out: dict[str, list[str]] = {}
     for row in db.q("""SELECT DISTINCT category, name FROM pooled_items
                        WHERE TRIM(COALESCE(name,'')) != '' ORDER BY category, name"""):
         out.setdefault(row["category"], []).append(row["name"])
     return out
+
+
+def find(category: str, name: str | None = None):
+    """One counted item. Without a name, whichever came first in the category.
+
+    Rules made since the item picker existed always name one. Older ones say
+    only "a monitor", and picking the first is better than reporting them
+    permanently unfulfillable.
+    """
+    if name:
+        return db.q1("SELECT * FROM pooled_items WHERE category = ? AND name = ? "
+                     "ORDER BY id LIMIT 1", (category, name))
+    return db.q1("SELECT * FROM pooled_items WHERE category = ? ORDER BY id LIMIT 1",
+                 (category,))
 
 
 def held_by(upn: str, category: str, name: str | None = None) -> int:
@@ -189,32 +234,3 @@ def held_by(upn: str, category: str, name: str | None = None) -> int:
         sql += " AND s.name = ?"
         params.append(name)
     return db.q1(sql, params)["c"]
-
-
-def spare_units(category: str, name: str | None = None) -> int:
-    """Units not handed out, for this category or one named item."""
-    sql = """SELECT COALESCE(SUM(s.quantity - COALESCE(
-                 (SELECT SUM(quantity) FROM pooled_allocations a WHERE a.item_id = s.id), 0)), 0) c
-             FROM pooled_items s WHERE s.category = ?"""
-    params = [category]
-    if name:
-        sql += " AND s.name = ?"
-        params.append(name)
-    return max(0, db.q1(sql, params)["c"])
-
-
-def take_one(upn: str, category: str, name: str | None = None) -> bool:
-    """Hand out a single spare unit. False when the pool has none left."""
-    sql = """SELECT s.id FROM pooled_items s
-             WHERE s.category = ?
-               AND s.quantity > COALESCE(
-                     (SELECT SUM(quantity) FROM pooled_allocations a
-                      WHERE a.item_id = s.id), 0)"""
-    params = [category]
-    if name:
-        sql += " AND s.name = ?"
-        params.append(name)
-    row = db.q1(sql + " ORDER BY s.id LIMIT 1", params)
-    if not row:
-        return False
-    return assign(row["id"], upn, 1) is None

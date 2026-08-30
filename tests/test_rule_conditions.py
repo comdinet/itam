@@ -1,7 +1,7 @@
 import os, sys, tempfile
 os.environ["ITAM_DB"] = os.path.join(tempfile.mkdtemp(), "test.db")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from app import db, rules
+from app import db, pooled, rules
 db.init_db()
 
 fails = []
@@ -67,42 +67,37 @@ check("covers the non-CSE members only", sorted(rules.covered_upns(rules.get(rid
 rules.delete(rid2)
 
 print("\n--- a rule can name one item, not just a category ---")
-db.execute("INSERT INTO assets (name,category,cost_cents) VALUES ('Dell U2723QE','Monitor',59900)")
-db.execute("INSERT INTO assets (name,category,cost_cents) VALUES ('Dell U2723QE','Monitor',59900)")
-db.execute("INSERT INTO assets (name,category,cost_cents) VALUES ('LG UltraFine 32','Monitor',89900)")
+dell = pooled.create("Dell U2723QE", "Monitor", 59900)
+lg = pooled.create("LG UltraFine 32", "Monitor", 89900)
 named = rules.create("Dells only", "g-il", "asset", 1,
                      category="Monitor", asset_name="Dell U2723QE")
 rules.add_group(named, "g-cse", "exclude")
 nr = rules.get(named)
 check("the item is stored", nr["asset_name"], "Dell U2723QE")
 check("label names the item", rules.grants_label(nr), "Dell U2723QE")
-check("spares counted for that model only", rules.summarise(nr)["available"], 2)
 r = rules.apply(nr)
-check("both Dells handed out", r["granted"], 2)
-check("the LG was left alone",
-      db.q1("SELECT assigned_upn FROM assets WHERE name='LG UltraFine 32'")["assigned_upn"], None)
+check("both covered people got a Dell", r["granted"], 2)
+check("the LG was left alone", pooled.summary(pooled.get(lg))["assigned"], 0)
+check("holding a Dell counts only for the Dell rule",
+      pooled.held_by("yael@x.com", "Monitor", "Dell U2723QE"), 1)
 
-anymon = rules.create("Any monitor", "g-il", "asset", 1, category="Monitor")
-check("without an item it is category-wide", rules.get(anymon)["asset_name"], None)
-check("label says any", rules.grants_label(rules.get(anymon)), "Monitor (any)")
-check("and the LG now counts as available", rules.summarise(rules.get(anymon))["available"], 1)
-
-check("the item list is grouped by category",
+check("the picker lists counted items, grouped by category",
       sorted(rules.assets_by_category().get("Monitor", [])),
       ["Dell U2723QE", "LG UltraFine 32"])
-for rid_ in (named, anymon):
-    rules.delete(rid_)
-db.execute("DELETE FROM assets")
+db.execute("INSERT INTO assets (name,category,cost_cents,serial) "
+           "VALUES ('MacBook Air 13 M4','Laptop',129900,'SN-9')")
+check("and never serial-tracked machines",
+      "Laptop" in rules.assets_by_category(), False)
+rules.delete(named)
+pooled.delete(dell); pooled.delete(lg)
 
 print("\n--- a rule serves each person once ---")
-for i in range(4):
-    db.execute("INSERT INTO assets (name,category,cost_cents) VALUES (?,'Monitor',59900)",
-               (f"Monitor {i+1}",))
-rule = rules.get(rid)
+mon = pooled.create("Dell U2723QE", "Monitor", 59900)
+rule = rules.get(rid)                     # Israel except CSE: Noa and Yael
 s = rules.summarise(rule)
 check("two people covered", s["members"], 2)
 check("nobody served yet", s["fulfilled"], 0)
-check("four needed", s["needed"], 4)
+check("four to hand out", s["needed"], 4)
 r = rules.apply(rule)
 check("granted four", r["granted"], 4)
 s = rules.summarise(rules.get(rid))
@@ -110,72 +105,53 @@ check("both now recorded as served", s["fulfilled"], 2)
 check("nothing outstanding", s["needed"], 0)
 
 print("\n--- and does not serve them again when they hand one back ---")
-one = db.q1("SELECT id FROM assets WHERE assigned_upn='yael@x.com' LIMIT 1")["id"]
-db.execute("UPDATE assets SET assigned_upn=NULL WHERE id=?", (one,))
-check("Yael is down to one monitor",
-      db.q1("SELECT COUNT(*) c FROM assets WHERE assigned_upn='yael@x.com'")["c"], 1)
+pooled.take_back(mon, "yael@x.com", 1)
+check("Yael is down to one monitor", pooled.held_by("yael@x.com", "Monitor"), 1)
+check("and it went on the shelf", pooled.get(mon)["spare"], 1)
 s = rules.summarise(rules.get(rid))
 check("she is not counted short", s["short"], 0)
 check("nothing needed", s["needed"], 0)
 check("applying grants nothing", rules.apply(rules.get(rid))["granted"], 0)
-check("she still holds one, not two",
-      db.q1("SELECT COUNT(*) c FROM assets WHERE assigned_upn='yael@x.com'")["c"], 1)
+check("she still holds one, not two", pooled.held_by("yael@x.com", "Monitor"), 1)
 
-print("\n--- a new joiner is served, the served are not ---")
+print("\n--- a new joiner is served in full, the served are not ---")
 user("tal@x.com", "Tal"); member("g-il", "tal@x.com")
 s = rules.summarise(rules.get(rid))
 check("three covered now", s["members"], 3)
 check("only the newcomer is short", s["short"], 1)
 check("needing two", s["needed"], 2)
-spare_now = db.q1("SELECT COUNT(*) c FROM assets "
-                  "WHERE assigned_upn IS NULL AND category='Monitor'")["c"]
-check("only the returned monitor is spare", spare_now, 1)
 r = rules.apply(rules.get(rid))
-check("granted what existed, not what was wanted", r["granted"], 1)
-check("Tal has one",
-      db.q1("SELECT COUNT(*) c FROM assets WHERE assigned_upn='tal@x.com'")["c"], 1)
-check("Yael untouched",
-      db.q1("SELECT COUNT(*) c FROM assets WHERE assigned_upn='yael@x.com'")["c"], 1)
-
-print("\n--- partial service does not finish someone off ---")
-check("Tal is not recorded as served",
-      bool(db.q1("SELECT 1 FROM rule_fulfilments WHERE rule_id=? AND upn='tal@x.com'", (rid,))),
-      False)
-check("he is still short one", rules.summarise(rules.get(rid))["needed"], 1)
-db.execute("INSERT INTO assets (name,category,cost_cents) VALUES ('Late arrival','Monitor',59900)")
-check("restocking completes him", rules.apply(rules.get(rid))["granted"], 1)
-check("Tal now has two",
-      db.q1("SELECT COUNT(*) c FROM assets WHERE assigned_upn='tal@x.com'")["c"], 2)
-check("and is now recorded as served",
+check("served in one go, not limited by the shelf", r["granted"], 2)
+check("no shortfall", r["shortfall"], [])
+check("Tal has two", pooled.held_by("tal@x.com", "Monitor"), 2)
+check("the shelved one was re-used first", pooled.get(mon)["spare"], 0)
+check("Yael untouched", pooled.held_by("yael@x.com", "Monitor"), 1)
+check("he is recorded as served",
       bool(db.q1("SELECT 1 FROM rule_fulfilments WHERE rule_id=? AND upn='tal@x.com'", (rid,))),
       True)
 
 print("\n--- someone already equipped is marked served without being given anything ---")
 user("gil@x.com", "Gil"); member("g-il", "gil@x.com")
-db.execute("INSERT INTO assets (name,category,cost_cents,assigned_upn) VALUES ('Own','Monitor',0,'gil@x.com')")
-db.execute("INSERT INTO assets (name,category,cost_cents,assigned_upn) VALUES ('Own2','Monitor',0,'gil@x.com')")
-before = db.q1("SELECT COUNT(*) c FROM assets WHERE assigned_upn IS NULL AND category='Monitor'")["c"]
+pooled.assign(mon, "gil@x.com", 2)
+owned_before = pooled.summary(pooled.get(mon))["owned"]
 rules.apply(rules.get(rid))
-check("no spares consumed for him",
-      db.q1("SELECT COUNT(*) c FROM assets WHERE assigned_upn IS NULL AND category='Monitor'")["c"],
-      before)
+check("nothing extra was handed out",
+      pooled.summary(pooled.get(mon))["owned"], owned_before)
 check("but he is recorded as served",
       bool(db.q1("SELECT 1 FROM rule_fulfilments WHERE rule_id=? AND upn='gil@x.com'", (rid,))),
       True)
 
-print("\n--- a shortfall is not recorded, so restocking serves them ---")
+print("\n--- a serial-tracked monitor also counts as having one ---")
 user("shir@x.com", "Shir"); member("g-il", "shir@x.com")
-check("no spares left",
-      db.q1("SELECT COUNT(*) c FROM assets WHERE assigned_upn IS NULL AND category='Monitor'")["c"], 0)
+db.execute("INSERT INTO assets (name,category,cost_cents,serial,assigned_upn) "
+           "VALUES ('Dell U2723QE','Monitor',59900,'SN-M1','shir@x.com')")
+s = rules.summarise(rules.get(rid))
+check("she counts as holding one", [r_["have"] for r_ in s["rows"]
+                                    if r_["upn"] == "shir@x.com"], [1])
 r = rules.apply(rules.get(rid))
-check("granted nothing", r["granted"], 0)
-check("named in the shortfall", [u["upn"] for u in r["shortfall"]], ["shir@x.com"])
-check("and NOT marked served",
-      bool(db.q1("SELECT 1 FROM rule_fulfilments WHERE rule_id=? AND upn='shir@x.com'", (rid,))),
-      False)
-for i in range(2):
-    db.execute("INSERT INTO assets (name,category,cost_cents) VALUES (?,'Monitor',59900)", (f"Restock {i}",))
-check("after restocking she is served", rules.apply(rules.get(rid))["granted"], 2)
+check("so only the missing one is handed out", r["granted"], 1)
+check("and it came from the counted item, not another asset row",
+      db.q1("SELECT COUNT(*) c FROM assets WHERE category='Monitor'")["c"], 1)
 
 print("\n--- a mistake can be undone ---")
 rules.clear_fulfilment(rid, "yael@x.com")

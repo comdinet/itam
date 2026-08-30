@@ -1,9 +1,10 @@
 """A database written before Stock moved into Assets must come across intact.
 
-The tables were renamed, and CREATE TABLE IF NOT EXISTS would happily make an
-empty pooled_items alongside the real stock_items - leaving every unit and
-every allocation stranded in a table nothing reads. This checks the rename
-runs first and the rows, the counts and the foreign key all survive it.
+Two migrations run over it. The tables were renamed, and CREATE TABLE IF NOT
+EXISTS would happily make an empty pooled_items alongside the real stock_items,
+leaving every unit stranded in a table nothing reads. Then the typed "how many
+did we buy" went away: what you owned but had not handed out is exactly what is
+on the shelf, so that is what it becomes.
 """
 import os, sqlite3, sys, tempfile
 DB = os.path.join(tempfile.mkdtemp(), "legacy.db")
@@ -49,7 +50,10 @@ from app import db, pooled          # noqa: E402 - the old DB has to exist first
 db.init_db()
 
 check("the item came across", pooled.get(1)["name"], "Logitech M185 mouse")
-check("its quantity is untouched", pooled.get(1)["quantity"], 10)
+check("owned-but-not-handed-out became the shelf count", pooled.get(1)["spare"], 7)
+check("the typed quantity is gone",
+      "quantity" in pooled.get(1).keys(), False)
+check("and owned still totals ten", pooled.summary(pooled.get(1))["owned"], 10)
 check("its currency and frozen rate survived",
       (pooled.get(1)["currency"], pooled.get(1)["rate_micro"]), ("USD", 1000000))
 check("the allocation came across", pooled.held_by("ada@x.com", "Peripheral"), 3)

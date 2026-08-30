@@ -59,25 +59,22 @@
   <div class="card"><span class="label">Compliant</span>
     <span class="big">{{ s.compliant }} / {{ s.members }}</span></div>
   <div class="card"><span class="label">Short</span><span class="big">{{ s.short }}</span>
-    <span class="sub">{{ s.needed }} item(s) needed</span></div>
+    <span class="sub">{{ s.needed }} item(s) to hand out</span></div>
   <div class="card"><span class="label">Already served</span>
     <span class="big">{{ s.fulfilled }}</span>
     <span class="sub">this rule will not serve them again</span></div>
   <div class="card"><span class="label">Over-provisioned</span><span class="big">{{ s.over }}</span>
     <span class="sub">more than the rule asks for</span></div>
-  {% if r.kind == 'asset' %}
-  <div class="card"><span class="label">Spares available</span><span class="big">{{ s.available }}</span>
-    <span class="sub">unassigned {{ r.category }}</span></div>
-  {% endif %}
 </div>
 
 {% if s.needed %}
 <form method="post" action="/settings/rules/{{ r.id }}/apply" class="inline-form"
-      onsubmit="return confirm('Assign up to {{ s.needed }} item(s)?')">
+      onsubmit="return confirm('Hand out {{ s.needed }} item(s) and close every gap?')">
   <button type="submit">Apply this rule</button>
   <span class="hint">
     {% if r.kind == 'asset' %}
-      Assigns spare {{ r.category }} to whoever is short. Stops when the spares run out.
+      Hands {{ grants_label(r) }} to everyone short, closing every gap in one go.
+      Anything on the shelf is re-used first; the rest counts as new units.
     {% else %}
       Grants the licence to everyone missing it, which adds to the monthly cost.
     {% endif %}</span>

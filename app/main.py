@@ -38,6 +38,23 @@ app = FastAPI(title="ITAM", lifespan=lifespan)
 templates = Jinja2Templates(directory="app/templates")
 templates.env.filters["money"] = db.money
 templates.env.globals["categories"] = db.categories
+
+
+def asset_version() -> str:
+    """Fingerprint for /static/style.css, so a rebuild is never served stale.
+
+    Twice now a CSS fix has looked broken because the browser kept the old
+    file. The stylesheet is tiny and changes with the app, so tying the URL to
+    its mtime costs nothing and removes "try a hard refresh" from the loop.
+    """
+    try:
+        return str(int(os.path.getmtime(
+            os.path.join(os.path.dirname(__file__), "static", "style.css"))))
+    except OSError:
+        return "0"
+
+
+templates.env.globals["asset_version"] = asset_version()
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 
@@ -137,6 +154,11 @@ def back(url: str, msg: str | None = None):
 
 
 # --- cost queries --------------------------------------------------------
+
+# How many units of a counted asset exist: what people hold, plus what came
+# back. Never a stored number - see app/pooled.py.
+POOLED_OWNED = """(COALESCE((SELECT SUM(quantity) FROM pooled_allocations a
+                             WHERE a.item_id = p.id), 0) + p.spare)"""
 
 USER_COSTS = """
 SELECT u.upn, u.display_name, u.job_title, u.department, u.country,
@@ -697,9 +719,9 @@ def dashboard(request: Request):
            LEFT JOIN (SELECT currency, SUM(cost_cents) raw,
                              SUM(""" + db.conv("cost_cents", "rate_micro") + """) rep
                         FROM assets GROUP BY currency) a ON a.currency = c.code
-           LEFT JOIN (SELECT currency, SUM(quantity * unit_cost_cents) raw,
-                             SUM(""" + db.conv("quantity * unit_cost_cents", "rate_micro") + """) rep
-                        FROM pooled_items GROUP BY currency) k ON k.currency = c.code
+           LEFT JOIN (SELECT p.currency, SUM(""" + POOLED_OWNED + """ * p.unit_cost_cents) raw,
+                             SUM(""" + db.conv(POOLED_OWNED + " * p.unit_cost_cents", "p.rate_micro") + """) rep
+                        FROM pooled_items p GROUP BY p.currency) k ON k.currency = c.code
            LEFT JOIN (SELECT sub.currency, SUM(sub.monthly_cost_cents) raw,
                              SUM(""" + db.conv("sub.monthly_cost_cents", "sub.rate_micro") + """) rep
                         FROM subscription_seats ss
@@ -760,11 +782,11 @@ def user_detail(request: Request, upn: str):
         """SELECT l.* FROM user_licenses ul JOIN licenses l ON l.sku_id = ul.sku_id
            WHERE ul.upn = ? ORDER BY l.display_name""", (upn,))
     pooled_held = pooled.for_user(upn)
+    # Everything counted can be handed out, shelf or no shelf; `spare` only
+    # says whether doing so costs anything new.
     pooled_available = db.q(
-        """SELECT s.*, (s.quantity - COALESCE((SELECT SUM(quantity)
-             FROM pooled_allocations a WHERE a.item_id = s.id), 0)) AS available
-           FROM pooled_items s
-           WHERE available > 0 ORDER BY s.category, s.name""")
+        """SELECT p.*, p.spare AS available
+           FROM pooled_items p ORDER BY p.category, p.name""")
     return render(request, "user_detail.html", u=user, assets=assets, subs=subs,
                   spare=spare, avail_subs=avail_subs, entra_licences=entra_licences,
                   pooled_held=pooled_held, pooled_available=pooled_available)
@@ -863,18 +885,14 @@ def asset_new(name: str = Form(...), category: str = Form("Other"), cost: str = 
 @app.post("/assets/pooled/new")
 def pooled_new(name: str = Form(...), category: str = Form("Peripheral"),
                unit_cost: str = Form("0"), currency: str = Form(""),
-               quantity: str = Form("0"), vendor: str = Form(""),
-               notes: str = Form(""), redirect: str = Form("/assets")):
+               vendor: str = Form(""), notes: str = Form(""),
+               redirect: str = Form("/assets")):
     if not name.strip():
         return back(redirect, "Give the item a name")
     code, rate, problem = pick_currency(currency)
     if problem:
         return back(redirect, problem)
-    try:
-        qty = max(0, int(quantity or 0))
-    except ValueError:
-        return back(redirect, "Quantity must be a whole number")
-    item_id = pooled.create(name, category, db.to_cents(unit_cost), qty, vendor, notes,
+    item_id = pooled.create(name, category, db.to_cents(unit_cost), vendor, notes,
                             currency=code, rate_micro=rate)
     return back(f"/assets/pooled/{item_id}", f"{category} added")
 
@@ -892,7 +910,7 @@ def pooled_detail(request: Request, item_id: int):
 @app.post("/assets/pooled/{item_id}/edit")
 def pooled_edit(item_id: int, name: str = Form(...), category: str = Form("Peripheral"),
                 unit_cost: str = Form("0"), currency: str = Form(""),
-                quantity: str = Form("0"), vendor: str = Form(""), notes: str = Form("")):
+                spare: str = Form(""), vendor: str = Form(""), notes: str = Form("")):
     existing = pooled.get(item_id)
     if not existing:
         return back("/assets", "No such item")
@@ -901,12 +919,14 @@ def pooled_edit(item_id: int, name: str = Form(...), category: str = Form("Perip
         return back(f"/assets/pooled/{item_id}", problem)
     if code == (existing["currency"] or "") and existing["rate_micro"]:
         rate = int(existing["rate_micro"])
-    try:
-        qty = max(0, int(quantity or 0))
-    except ValueError:
-        return back(f"/assets/pooled/{item_id}", "Quantity must be a whole number")
-    problem = pooled.update(item_id, name, category, db.to_cents(unit_cost), qty,
-                            vendor, notes, currency=code, rate_micro=rate)
+    shelf = None
+    if spare.strip():
+        try:
+            shelf = int(spare)
+        except ValueError:
+            return back(f"/assets/pooled/{item_id}", "On the shelf must be a whole number")
+    problem = pooled.update(item_id, name, category, db.to_cents(unit_cost),
+                            vendor, notes, currency=code, rate_micro=rate, spare=shelf)
     return back(f"/assets/pooled/{item_id}", problem or "Item updated")
 
 
@@ -939,7 +959,7 @@ def pooled_take_back(item_id: int, upn: str = Form(...), quantity: str = Form(""
             qty = None
     problem = pooled.take_back(item_id, upn.strip().lower(), qty)
     target = redirect or f"/assets/pooled/{item_id}"
-    return back(target, problem or "Returned to the pool")
+    return back(target, problem or "Taken back")
 
 
 @app.get("/assets/{asset_id}", response_class=HTMLResponse)
@@ -1617,8 +1637,13 @@ async def rule_new(request: Request):
     if kind == "asset":
         if not category:
             return back("/settings/rules", "Choose what the rule grants")
+        asset_name = str(form.get("asset_name") or "").strip()
+        if not asset_name:
+            # No "any monitor": a rule hands out a named item, and with nothing
+            # named there is nothing to hand out.
+            return back("/settings/rules", "Choose which item the rule grants")
         rule_id = rules.create(name, group_id, "asset", qty, category=category,
-                               asset_name=str(form.get("asset_name") or "").strip())
+                               asset_name=asset_name)
     else:
         if not subscription_id.isdigit():
             return back("/settings/rules", "Choose which subscription the rule grants")

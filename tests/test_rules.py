@@ -1,8 +1,15 @@
-import os, tempfile, sys, tempfile, tempfile
+"""Entitlement rules against the counted-asset model.
+
+A rule hands out counted items and licence seats. Neither draws against a
+shelf, so applying one closes every gap in a single pass - there is no
+"waiting for stock". Serial-tracked machines are deliberately out of reach: a
+rule cannot conjure a serial number.
+"""
+import os, sys, tempfile
 os.environ["ITAM_DB"] = os.path.join(tempfile.mkdtemp(), "test.db")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app import db, rules
+from app import db, pooled, rules
 db.init_db()
 
 fails = []
@@ -11,99 +18,109 @@ def check(label, got, want):
     print(f"{'PASS' if ok else 'FAIL'}  {label}: got={got!r} want={want!r}")
     if not ok: fails.append(label)
 
-# Design group: 3 people
+def held(upn):
+    return pooled.held_by(upn, "Monitor", "Dell U2723QE")
+
+# Design group: 3 people, one of them a disabled account.
 db.execute("INSERT INTO groups (id, display_name, member_count) VALUES ('g-design','Design',3)")
-for upn, name in [("hedy@x.com","Hedy"), ("ada@x.com","Ada"), ("gone@x.com","Departed")]:
+for upn, name in [("hedy@x.com", "Hedy"), ("ada@x.com", "Ada"), ("gone@x.com", "Departed")]:
     db.execute("INSERT INTO users (upn, display_name, account_enabled, source) VALUES (?,?,?,'entra')",
                (upn, name, 0 if upn == "gone@x.com" else 1))
     db.execute("INSERT INTO group_members (group_id, upn) VALUES ('g-design',?)", (upn,))
 
-# Hedy already has one monitor; two spare monitors in stock
-db.execute("INSERT INTO assets (name,category,cost_cents,assigned_upn) VALUES ('Dell U27','Monitor',59900,'hedy@x.com')")
-for i in range(2):
-    db.execute("INSERT INTO assets (name,category,cost_cents) VALUES (?,'Monitor',59900)", (f"Spare Monitor {i+1}",))
-# an unrelated spare that must not be touched
-db.execute("INSERT INTO assets (name,category,cost_cents) VALUES ('Spare Laptop','Laptop',200000)")
+mon = pooled.create("Dell U2723QE", "Monitor", 59900)
+pooled.assign(mon, "hedy@x.com", 1)         # Hedy already has one
 
-rid = rules.create("Designers get two monitors", "g-design", "asset", 2, category="Monitor")
+# A serial-tracked laptop that no rule may touch.
+db.execute("INSERT INTO assets (name,category,cost_cents,serial) "
+           "VALUES ('MacBook Air 13 M4','Laptop',129900,'SN-1')")
+
+rid = rules.create("Designers get two monitors", "g-design", "asset", 2,
+                   category="Monitor", asset_name="Dell U2723QE")
 rule = rules.get(rid)
 s = rules.summarise(rule)
 print("--- 'everyone in Design gets 2 monitors' ---")
 check("members", s["members"], 3)
 check("compliant", s["compliant"], 0)
 check("short", s["short"], 3)
-check("total needed", s["needed"], 5)          # Hedy 1 + Ada 2 + Departed 2
-check("spares available", s["available"], 2)
+check("total to hand out", s["needed"], 5)     # Hedy 1 + Ada 2 + Departed 2
+check("no availability ceiling is reported", "available" in s, False)
 
+print("\n--- apply closes every gap in one pass ---")
 r = rules.apply(rule)
-print("\n--- apply with only 2 spares ---")
-check("granted exactly the spares", r["granted"], 2)
-check("shortfall reported", len(r["shortfall"]) > 0, True)
-check("no assets invented", db.q1("SELECT COUNT(*) c FROM assets WHERE category='Monitor'")["c"], 3)
-check("no monitors left spare",
-      db.q1("SELECT COUNT(*) c FROM assets WHERE category='Monitor' AND assigned_upn IS NULL")["c"], 0)
-check("unrelated laptop untouched",
-      db.q1("SELECT assigned_upn FROM assets WHERE name='Spare Laptop'")["assigned_upn"], None)
-# Served alphabetically: Ada (short 2) consumes both spares before Hedy (short 1).
-check("ada filled first, to her full target",
-      db.q1("SELECT COUNT(*) c FROM assets WHERE assigned_upn='ada@x.com' AND category='Monitor'")["c"], 2)
-check("hedy untouched, no spares left",
-      db.q1("SELECT COUNT(*) c FROM assets WHERE assigned_upn='hedy@x.com' AND category='Monitor'")["c"], 1)
-check("shortfall names the two who missed out", sorted(u["upn"] for u in r["shortfall"]),
-      ["gone@x.com", "hedy@x.com"])
-check("shortfall counts are per person, not run-wide",
-      sorted(u["still_short"] for u in r["shortfall"]), [1, 2])
+check("granted all five", r["granted"], 5)
+check("nobody left short", r["shortfall"], [])
+check("Hedy topped up to two", held("hedy@x.com"), 2)
+check("Ada has two", held("ada@x.com"), 2)
+check("even the disabled account is served", held("gone@x.com"), 2)
+check("the serial-tracked laptop was not touched",
+      db.q1("SELECT assigned_upn FROM assets WHERE serial='SN-1'")["assigned_upn"], None)
+check("no asset rows were invented",
+      db.q1("SELECT COUNT(*) c FROM assets WHERE category='Monitor'")["c"], 0)
 
 s2 = rules.summarise(rules.get(rid))
-check("compliant after apply", s2["compliant"], 1)
-check("still needed", s2["needed"], 3)
+check("everyone compliant", s2["compliant"], 3)
+check("nothing left to hand out", s2["needed"], 0)
 
-# add stock and re-apply: should finish the job
-for i in range(3):
-    db.execute("INSERT INTO assets (name,category,cost_cents) VALUES (?,'Monitor',59900)", (f"New Monitor {i+1}",))
-r2 = rules.apply(rules.get(rid))
-s3 = rules.summarise(rules.get(rid))
-print("\n--- restock and re-apply ---")
-check("granted the remaining 3", r2["granted"], 3)
-check("no shortfall now", r2["shortfall"], [])
-check("everyone compliant", s3["compliant"], 3)
-check("nothing needed", s3["needed"], 0)
+print("\n--- re-applying does nothing ---")
+check("re-apply grants nothing", rules.apply(rules.get(rid))["granted"], 0)
+check("units unchanged", pooled.summary(pooled.get(mon))["assigned"], 6)
 
-# applying again is a no-op
-r3 = rules.apply(rules.get(rid))
-check("re-apply grants nothing", r3["granted"], 0)
-check("no over-assignment",
-      db.q1("SELECT COUNT(*) c FROM assets WHERE assigned_upn IS NOT NULL AND category='Monitor'")["c"], 6)
+print("\n--- returned units are re-used before new ones are counted ---")
+pooled.take_back(mon, "gone@x.com")            # the leaver hands both back
+check("two went on the shelf", pooled.get(mon)["spare"], 2)
+check("total owned is unchanged by a return",
+      pooled.summary(pooled.get(mon))["owned"], 6)
+db.execute("INSERT INTO users (upn, display_name, source) VALUES ('tal@x.com','Tal','entra')")
+db.execute("INSERT INTO group_members (group_id, upn) VALUES ('g-design','tal@x.com')")
+r = rules.apply(rules.get(rid))
+check("the newcomer is served", r["granted"], 2)
+check("from the shelf", pooled.get(mon)["spare"], 0)
+check("so nothing new was bought", pooled.summary(pooled.get(mon))["owned"], 6)
 
-# over-provisioning is reported, not corrected
-db.execute("INSERT INTO assets (name,category,cost_cents,assigned_upn) VALUES ('Extra','Monitor',59900,'ada@x.com')")
+print("\n--- over-provisioning is reported, not corrected ---")
+pooled.assign(mon, "ada@x.com", 1)
 s4 = rules.summarise(rules.get(rid))
-print("\n--- over-provisioned ---")
 check("over counted", s4["over"], 1)
-check("apply does not remove the extra", rules.apply(rules.get(rid))["granted"], 0)
-check("extra still assigned",
-      db.q1("SELECT COUNT(*) c FROM assets WHERE assigned_upn='ada@x.com' AND category='Monitor'")["c"], 3)
+check("apply does not take it away", rules.apply(rules.get(rid))["granted"], 0)
+check("Ada still has three", held("ada@x.com"), 3)
 
-# subscription rule
+print("\n--- a rule pointing at a deleted item says so ---")
+db.execute("INSERT INTO users (upn, display_name, source) VALUES ('rio@x.com','Rio','entra')")
+db.execute("INSERT INTO group_members (group_id, upn) VALUES ('g-design','rio@x.com')")
+pooled.delete(mon)
+r = rules.apply(rules.get(rid))
+check("granted nothing", r["granted"], 0)
+check("and names who missed out", [u["upn"] for u in r["shortfall"]], ["rio@x.com"])
+check("without marking them served",
+      bool(db.q1("SELECT 1 FROM rule_fulfilments WHERE rule_id=? AND upn='rio@x.com'", (rid,))),
+      False)
+
+print("\n--- serial-tracked items are not offered to rules at all ---")
+db.execute("INSERT INTO assets (name,category,cost_cents,serial) "
+           "VALUES ('MacBook Air 13 M4','Laptop',129900,'SN-2')")
+check("the laptop is absent from the picker",
+      "Laptop" in rules.assets_by_category(), False)
+
+print("\n--- subscription rule ---")
 sid = db.execute("INSERT INTO subscriptions (name, vendor, monthly_cost_cents) VALUES ('Figma','Figma',1500)")
 rid2 = rules.create("Designers get Figma", "g-design", "subscription", 5, subscription_id=sid)
 check("licence quantity clamped to 1", rules.get(rid2)["quantity"], 1)
 sub_rule = rules.get(rid2)
-print("\n--- subscription rule ---")
-check("all short initially", rules.summarise(sub_rule)["short"], 3)
+check("all short initially", rules.summarise(sub_rule)["short"], 5)
 rs = rules.apply(sub_rule)
-check("seats granted", rs["granted"], 3)
+check("seats granted", rs["granted"], 5)
 check("no shortfall for licences", rs["shortfall"], [])
-check("compliant now", rules.summarise(rules.get(rid2))["compliant"], 3)
-check("seats in db", db.q1("SELECT COUNT(*) c FROM subscription_seats WHERE subscription_id=?", (sid,))["c"], 3)
+check("compliant now", rules.summarise(rules.get(rid2))["compliant"], 5)
+check("seats in db",
+      db.q1("SELECT COUNT(*) c FROM subscription_seats WHERE subscription_id=?", (sid,))["c"], 5)
 check("re-apply is idempotent", rules.apply(rules.get(rid2))["granted"], 0)
 
-# paused rules are excluded from the overview summary
+print("\n--- housekeeping ---")
 rules.set_active(rid2, False)
 paused = [o for o in rules.compliance_overview() if o["rule"]["id"] == rid2][0]
 check("paused rule has no summary", paused["summary"], None)
 
-# deleting a group removes its rules
 db.execute("DELETE FROM groups WHERE id='g-design'")
 check("rules cascade with the group", db.q1("SELECT COUNT(*) c FROM rules")["c"], 0)
 
