@@ -17,9 +17,9 @@
   <div class="card"><span class="label">Monthly subscriptions</span>
     <span class="big">{{ currency }} {{ u.monthly_total|money }}</span>
     <span class="sub">{{ currency }} {{ (u.monthly_total * 12)|money }} / year</span></div>
-  <div class="card"><span class="label">Stock held</span>
-    <span class="big">{{ u.stock_units }}</span>
-    <span class="sub">{{ currency }} {{ u.stock_total|money }} one-off</span></div>
+  <div class="card"><span class="label">Pooled units held</span>
+    <span class="big">{{ u.pooled_units }}</span>
+    <span class="sub">{{ currency }} {{ u.pooled_total|money }} one-off</span></div>
   {% set paid_codes = (u.onetime_currencies or '').split(',')|reject('equalto','')|unique|list %}
   {% if paid_codes|length > 1 %}
   <div class="card"><span class="label">Paid in</span>
@@ -29,7 +29,7 @@
   {% endif %}
   <div class="card"><span class="label">Total first-year cost</span>
     <span class="big">{{ currency }} {{ (u.onetime_total + u.monthly_total * 12)|money }}</span>
-    <span class="sub">assets + stock + 12 months of licences</span></div>
+    <span class="sub">assets + pooled units + 12 months of licences</span></div>
 </div>
 
 <h2>Assets</h2>
@@ -61,23 +61,23 @@
     {% endfor %}
   </select>
   <button type="submit">Assign</button>
-  {% if not spare %}<span class="hint">No spare assets in stock.</span>{% endif %}
+  {% if not spare %}<span class="hint">Nothing spare to assign.</span>{% endif %}
 </form>
 
-<h2>Stock</h2>
+<h2>Pooled assets</h2>
 <table>
   <thead><tr><th>Item</th><th>Category</th><th class="num">Units</th>
     <th class="num">Unit price</th><th class="num">Cost</th><th></th></tr></thead>
   <tbody>
-  {% for k in stock_items %}
-    <tr><td><a href="/stock/{{ k.id }}">{{ k.name }}</a></td>
+  {% for k in pooled_held %}
+    <tr><td><a href="/assets/pooled/{{ k.id }}">{{ k.name }}</a></td>
         <td>{{ k.category }}</td>
         <td class="num">{{ k.quantity }}</td>
         <td class="num">{{ k.unit_cost_cents|money }}
           <span class="chip">{{ k.currency or currency }}</span></td>
         <td class="num">{{ k.cost_rep|money }}</td>
         <td class="row-actions">
-          <form method="post" action="/stock/{{ k.id }}/take-back">
+          <form method="post" action="/assets/pooled/{{ k.id }}/take-back">
             <input type="hidden" name="upn" value="{{ u.upn }}">
             <input type="hidden" name="redirect" value="/users/{{ u.upn }}">
             <button class="link">Take back</button></form></td></tr>
@@ -87,10 +87,10 @@
   </tbody>
 </table>
 
-{% if stock_available %}
+{% if pooled_available %}
 <div class="inline-form">
-  {% for k in stock_available %}
-  <form method="post" action="/stock/{{ k.id }}/assign">
+  {% for k in pooled_available %}
+  <form method="post" action="/assets/pooled/{{ k.id }}/assign">
     <input type="hidden" name="upn" value="{{ u.upn }}">
     <input type="hidden" name="quantity" value="1">
     <input type="hidden" name="redirect" value="/users/{{ u.upn }}">
@@ -98,7 +98,7 @@
   </form>
   {% endfor %}
 </div>
-<p class="hint">Hands out one unit from stock.</p>
+<p class="hint">Hands out one unit from the pool.</p>
 {% endif %}
 
 <h2>Entra ID licences</h2>

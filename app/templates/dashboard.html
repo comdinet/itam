@@ -21,9 +21,9 @@
   <div class="card"><span class="label">People</span>
     <span class="big">{{ t.users }}</span>
     <span class="sub">{{ t.users_disabled }} disabled account(s)</span></div>
-  <div class="card"><span class="label">Stock (pooled)</span>
-    <span class="big">{{ currency }} {{ stock.value|money }}</span>
-    <span class="sub">{{ stock.units }} unit(s), {{ stock.spare_units }} in stock</span></div>
+  <div class="card"><span class="label">Pooled assets</span>
+    <span class="big">{{ currency }} {{ pool.value|money }}</span>
+    <span class="sub">{{ pool.units }} unit(s), {{ pool.spare_units }} spare</span></div>
   <div class="card"><span class="label">Spare / unassigned</span>
     <span class="big">{{ t.spare }}</span>
     <span class="sub">{{ currency }} {{ t.spare_value|money }} sitting idle</span></div>
@@ -42,22 +42,22 @@
   A consolidated total is only as good as those rates &mdash; the amounts on the
   left are exact.</p>
 <table>
-  <thead><tr><th>Currency</th><th class="num">Assets</th><th class="num">Stock</th>
+  <thead><tr><th>Currency</th><th class="num">Assets</th><th class="num">Pooled</th>
     <th class="num">Monthly</th><th class="num">One-off in {{ reporting }}</th></tr></thead>
   <tbody>
   {% set ns = namespace(total=0) %}
   {% for c in by_currency %}
-    {% if c.asset_raw or c.stock_raw or c.monthly_raw %}
-      {% set ns.total = ns.total + c.asset_rep + c.stock_rep %}
+    {% if c.asset_raw or c.pooled_raw or c.monthly_raw %}
+      {% set ns.total = ns.total + c.asset_rep + c.pooled_rep %}
       <tr>
         <td><span class="chip">{{ c.code }}</span> {{ c.symbol }}
           {% if c.rate_source != 'base' %}
             <div class="meta mono">rate {{ '%.6f'|format((c.rate_micro or 1000000) / 1000000) }}</div>
           {% endif %}</td>
         <td class="num">{{ c.asset_raw|money }}</td>
-        <td class="num">{{ c.stock_raw|money }}</td>
+        <td class="num">{{ c.pooled_raw|money }}</td>
         <td class="num">{{ c.monthly_raw|money }}</td>
-        <td class="num">{{ (c.asset_rep + c.stock_rep)|money }}</td></tr>
+        <td class="num">{{ (c.asset_rep + c.pooled_rep)|money }}</td></tr>
     {% endif %}
   {% else %}
     <tr><td colspan="5" class="empty">Nothing recorded yet.</td></tr>

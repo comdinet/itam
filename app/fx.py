@@ -126,7 +126,7 @@ def usage(code: str) -> dict:
     code = (code or "").upper()
     return {
         "assets": db.q1("SELECT COUNT(*) c FROM assets WHERE currency = ?", (code,))["c"],
-        "stock": db.q1("SELECT COUNT(*) c FROM stock_items WHERE currency = ?", (code,))["c"],
+        "pooled": db.q1("SELECT COUNT(*) c FROM pooled_items WHERE currency = ?", (code,))["c"],
         "subscriptions": db.q1("SELECT COUNT(*) c FROM subscriptions WHERE currency = ?",
                                (code,))["c"],
         "pricing": db.q1("SELECT COUNT(*) c FROM price_groups WHERE currency = ?",

@@ -1,7 +1,7 @@
 import os, sys, tempfile
 os.environ["ITAM_DB"] = os.path.join(tempfile.mkdtemp(), "test.db")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from app import db, fx, stock, pricing
+from app import db, fx, pooled, pricing
 db.init_db(); fx.ensure_base()
 
 fails = []
@@ -71,31 +71,31 @@ check("an unused one can go", fx.delete("GBP"), None)
 fx.add("GBP", "£", "Pound sterling", 1358006, "boi", "test", "2026-08-27")
 
 print("\n--- Yael: a laptop and mice in shekels, a licence in euros ---")
-mice = stock.create("Logitech M185 mouse", "Peripheral", 9500, 10,
+mice = pooled.create("Logitech M185 mouse", "Peripheral", 9500, 10,
                     currency="ILS", rate_micro=fx.rate_for("ILS"))
-jb = stock.create("JetBrains All Products Pack", "Software", 77900, 4,
+jb = pooled.create("JetBrains All Products Pack", "Software", 77900, 4,
                   currency="EUR", rate_micro=fx.rate_for("EUR"))
-stock.assign(mice, "yael@x.com", 2)
-stock.assign(jb, "yael@x.com", 1)
+pooled.assign(mice, "yael@x.com", 2)
+pooled.assign(jb, "yael@x.com", 1)
 
 from app.main import USER_COSTS
 row = db.q1(USER_COSTS + " WHERE u.upn = ?", ("yael@x.com",))
 # hand arithmetic: laptop 11,900 ILS -> 3,994.63; 2 mice = 190 ILS -> 63.78;
 #                  1 JetBrains 779 EUR -> 906.90
 check("assets converted", row["asset_total"], 399463)
-check("stock converted", row["stock_total"], 6378 + 90690)
+check("pooled converted", row["pooled_total"], 6378 + 90690)
 check("one-off total", row["onetime_total"], 399463 + 6378 + 90690)
-check("units held", row["stock_units"], 3)
+check("units held", row["pooled_units"], 3)
 check("currencies listed for the mixed case",
       sorted((row["onetime_currencies"] or "").split(",")), ["EUR", "ILS", "ILS"])
 
 print("\n--- org totals are in the reporting currency ---")
-t = stock.totals()
+t = pooled.totals()
 # Computed the same way the app does, rather than by hand: 3,116.00 EUR comes to
 # 362,759.42 cents, which rounds DOWN, and a hand-rounded 362,760 was wrong.
 expect_value = (fx.to_reporting(10 * 9500, 335683) + fx.to_reporting(4 * 77900, 1164183))
 expect_alloc = (fx.to_reporting(2 * 9500, 335683) + fx.to_reporting(1 * 77900, 1164183))
-check("stock value converted", t["value"], expect_value)
+check("pooled value converted", t["value"], expect_value)
 check("allocated value converted", t["allocated_value"], expect_alloc)
 check("and that is 394,649 not 394,650", expect_value, 394649)
 

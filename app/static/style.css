@@ -32,6 +32,7 @@ a { color: var(--accent); }
 .meta, .hint { color: var(--muted); margin: 4px 0; }
 .hint { font-size: 13px; }
 .crumb { margin: 0 0 12px; }
+.crumb-sep { color: var(--muted); margin: 0 4px; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
 .ok { color: var(--ok); }
 

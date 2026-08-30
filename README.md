@@ -5,8 +5,7 @@ People come from **Entra ID**, keyed on **UPN**. Two kinds of cost:
 
 | | What it is | Cost model |
 |---|---|---|
-| **Assets** | Serial-tracked kit: laptops, monitors, phones | one-off cost in any currency, one row per machine |
-| **Stock** | Interchangeable units: mice, keyboards, headsets, licences bought in bulk | unit price × how many, counted not listed |
+| **Assets** | Kit you own, by category: laptops, monitors, phones, peripherals, software | one-off cost in any currency — serial-tracked items get a row each, interchangeable ones are counted in bulk |
 | **Subscriptions** | SaaS licences (M365, GitHub, Slack, …) | cost per seat, per month |
 
 Repository: <https://github.com/comdinet/itam>
@@ -368,14 +367,16 @@ Sync behaviour:
 ## What each screen does
 
 - **Dashboard** — monthly SaaS run-rate and annualised figure, total hardware
-  value, spare stock sitting idle, spend by subscription and by department, and
+  value, spare kit sitting idle, spend by subscription and by department, and
   a reclaim list of licences on disabled accounts.
 - **People** — everyone with their asset count, asset value, licence count and
   monthly/annual licence cost. Searchable, filterable by department.
 - **Person detail** — assign or return assets, grant or revoke licences, and a
   first-year total cost (assets + 12 months of licences).
-- **Assets** — full inventory, filter by category and assigned/spare, add and
-  edit assets, assign on creation.
+- **Assets** — one tab per category. Each tab lists what you own in it, both
+  the serial-tracked items and the ones counted in bulk, with an **Add** for
+  each kind that files it under the category you are on. Search by name or
+  serial and filter by assigned/spare.
 - **Subscriptions** — per-seat cost, seat count, monthly and annual spend;
   manage seats per subscription.
 - **Settings** — subsections:
@@ -505,21 +506,30 @@ Rates are stored as USD-per-unit × 1,000,000, and every conversion is integer
 arithmetic with explicit half-up rounding — floats would drift, and Python's
 `round()` rounds halves to even, which is not what money does.
 
-## Stock: things you count rather than list
+## Assets: by category, tracked one by one or counted in bulk
 
-A laptop has a serial and belongs to one person, so a row per machine is right.
-A mouse does not. Fifty identical mice as fifty rows is noise, and the useful
-questions are *how many do we own, how many are out, what did they cost*.
+**Assets** has one page per category — Laptop, Monitor, Peripheral, Software and
+whatever else your kit introduces — reached from the row of tabs at the top.
+Each page lists everything in that category and carries its own two **Add**
+buttons, which file the new item under the category you are looking at.
 
-**Stock** answers those with one record carrying a **unit price** and **how many
-units are owned**. Handing one out counts against the total; cost follows the
-units, so someone holding two of a 25.00 item carries 50.00.
+Within a category there are two ways to record something, because there are two
+kinds of thing:
+
+**Tracked individually.** A laptop has a serial and belongs to one person, so it
+gets a row of its own with that serial, its cost and its holder.
+
+**Counted in bulk.** A mouse does not. Fifty identical mice as fifty rows is
+noise, and the useful questions are *how many do we own, how many are out, what
+did they cost*. So one record carries a **unit price** and **how many units are
+owned**. Handing one out counts against the total; cost follows the units, so
+someone holding two of a 25.00 item carries 50.00.
 
 The same shape fits licences bought in bulk. Four JetBrains seats are one
 purchase at 779.00 each, not four assets:
 
 ```
-JetBrains All Products Pack   779.00/unit   owned 4   out 2   in stock 2   3,116.00
+JetBrains All Products Pack   779.00/unit   owned 4   out 2   spare 2   3,116.00
 ```
 
 Hand a seat to someone and the count goes up; the cost lands on them
@@ -528,13 +538,13 @@ cannot drop below what is already out — take some back first.
 
 Which to use:
 
-- **Assets** — it has a serial and one owner.
-- **Stock** — units are interchangeable, bought as a batch, one-off cost.
+- **Tracked individually** — it has a serial and one owner.
+- **Counted in bulk** — units are interchangeable, bought as a batch, one-off cost.
 - **Subscriptions** — a recurring monthly charge per person.
 
-Stock feeds every rollup: the People list and each person's page, their
-first-year total, the dashboard, and the finance CSV (`stock_units`,
-`stock_value`, `onetime_total`).
+Both kinds are assets to everything downstream: entitlement rules grant either,
+and both feed the People list, each person's page, their first-year total, the
+dashboard and the finance CSV (`pooled_units`, `pooled_value`, `onetime_total`).
 
 ## Pricing by specification
 
@@ -704,9 +714,9 @@ another. It is a one-time entitlement, not a level the app keeps restoring.
 Three cases, deliberately different:
 
 - **Served in full** → recorded, never revisited.
-- **Served in part** (stock ran out mid-way) → *not* recorded, so a later apply
-  completes them once you restock. Finishing an entitlement is not the same as
-  topping someone up.
+- **Served in part** (ran out mid-way) → *not* recorded, so a later apply
+  completes them once more arrives. Finishing an entitlement is not the same
+  as topping someone up.
 - **Already had enough** by other means → recorded without consuming anything,
   so the rule does not come back to them later.
 
@@ -716,15 +726,17 @@ on the whole rule — lets it serve them once more.
 
 **Apply** closes the gaps it can:
 
-- **Assets** are only ever taken from existing spares. ITAM will not invent
-  hardware — an asset record for kit nobody owns is worse than no record. If
+- **Assets** are only ever taken from existing spares — a spare serial-tracked
+  item first, then a spare unit from the bulk count. ITAM will not invent
+  hardware: an asset record for kit nobody owns is worse than no record. If
   there are fewer spares than the rule needs, it assigns what exists and names
-  who was left short.
+  who was left short. What a person already holds counts either way, so two
+  mice out of the pool satisfy a rule asking for two mice.
 - **Licences** are granted outright, since a seat is just a record. This adds
   to the monthly run-rate, so the number of seats it will grant is shown before
   you click.
 
-Members are served in name order, so with stock too short for everyone the
+Members are served in name order, so with too little spare for everyone the
 earlier names are filled first and the rest are reported. Nothing is ever
 un-assigned: someone holding more than a rule asks for is flagged as
 over-provisioned and left alone, for you to reclaim by hand.
@@ -879,10 +891,13 @@ your backups as secrets either way.
 ./tests/run_all.sh
 ```
 
-Seven suites covering money parsing, the Entra user/group/licence syncs, Intune
-devices and macOS custom attributes, OData filters, the entitlement rules, and
-two-factor authentication. Each uses a throwaway database and a mocked Graph,
-so none of them touch a real tenant or your data.
+Sixteen suites covering money parsing, currencies and frozen rates, the Entra
+user/group/licence syncs, Intune devices and macOS custom attributes, OData
+filters, pricing groups, pooled assets, the entitlement rules (including the
+ones that grant from the pool), the schema migration, and two-factor
+authentication - plus a static check that no template reads a name its route
+does not pass. Each uses a throwaway database and a mocked Graph, so none of
+them touch a real tenant or your data.
 
 The SAML suite is separate because it needs `xmlsec` to sign assertions, which
 lives in the container:
@@ -897,10 +912,16 @@ SAML endpoint. Worth running after any change near sign-in.
 
 ## Notes
 
+- Upgrading from a version that had a separate **Stock** section: nothing to
+  do. The first start renames the tables to match the vocabulary, carrying
+  every unit, allocation and frozen rate across; `/stock` is gone, and its
+  contents are on the category pages under **Assets**. The finance CSV columns
+  `stock_units` / `stock_value` are now `pooled_units` / `pooled_value`.
 - Money is stored as **integer cents**, never floats. Input accepts both
   `1,299.99` and `1.299,99` as well as space-grouped digits.
-- Currency is a display label only (`ITAM_CURRENCY`, default `USD`); there is no
-  FX conversion.
+- Every amount is recorded in the currency it was paid in, at a rate frozen at
+  that moment. Consolidated figures are converted to the reporting currency
+  (`ITAM_CURRENCY`, default `USD`) — see **Currencies** above.
 - Subscription cost is **per seat per month**, so a subscription's monthly total
   is `seats × per-seat cost`. Annual figures are `monthly × 12` — they do not
   model annual-prepay discounts or mid-month proration.

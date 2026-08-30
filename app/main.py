@@ -14,7 +14,7 @@ from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse,
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import api, auth, db, entra, fx, pricing, rules, saml, settings, stock
+from . import api, auth, db, entra, fx, pooled, pricing, rules, saml, settings
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -143,9 +143,9 @@ SELECT u.upn, u.display_name, u.job_title, u.department, u.country,
        u.usage_location, u.account_enabled, u.source,
        COALESCE(a.asset_total, 0)   AS asset_total,
        COALESCE(a.asset_count, 0)   AS asset_count,
-       COALESCE(k.stock_total, 0)   AS stock_total,
-       COALESCE(k.stock_units, 0)   AS stock_units,
-       COALESCE(a.asset_total, 0) + COALESCE(k.stock_total, 0) AS onetime_total,
+       COALESCE(k.pooled_total, 0)  AS pooled_total,
+       COALESCE(k.pooled_units, 0)  AS pooled_units,
+       COALESCE(a.asset_total, 0) + COALESCE(k.pooled_total, 0) AS onetime_total,
        COALESCE(s.monthly_total, 0) AS monthly_total,
        COALESCE(s.sub_count, 0)     AS sub_count,
        COALESCE(a.currencies, '') || CASE WHEN a.currencies IS NOT NULL
@@ -159,10 +159,10 @@ LEFT JOIN (SELECT assigned_upn,
              FROM assets WHERE assigned_upn IS NOT NULL GROUP BY assigned_upn) a
        ON a.assigned_upn = u.upn
 LEFT JOIN (SELECT al.upn,
-                  SUM(""" + db.conv("al.quantity * si.unit_cost_cents", "si.rate_micro") + """) stock_total,
-                  SUM(al.quantity) stock_units,
+                  SUM(""" + db.conv("al.quantity * si.unit_cost_cents", "si.rate_micro") + """) pooled_total,
+                  SUM(al.quantity) pooled_units,
                   GROUP_CONCAT(DISTINCT si.currency) currencies
-             FROM stock_allocations al JOIN stock_items si ON si.id = al.item_id
+             FROM pooled_allocations al JOIN pooled_items si ON si.id = al.item_id
             GROUP BY al.upn) k
        ON k.upn = u.upn
 LEFT JOIN (SELECT ss.upn,
@@ -691,7 +691,7 @@ def dashboard(request: Request):
     by_currency = db.q(
         """SELECT c.code, c.symbol, c.rate_micro, c.rate_source, c.rate_set_on,
                   COALESCE(a.raw, 0) AS asset_raw, COALESCE(a.rep, 0) AS asset_rep,
-                  COALESCE(k.raw, 0) AS stock_raw, COALESCE(k.rep, 0) AS stock_rep,
+                  COALESCE(k.raw, 0) AS pooled_raw, COALESCE(k.rep, 0) AS pooled_rep,
                   COALESCE(s.raw, 0) AS monthly_raw, COALESCE(s.rep, 0) AS monthly_rep
            FROM currencies c
            LEFT JOIN (SELECT currency, SUM(cost_cents) raw,
@@ -699,7 +699,7 @@ def dashboard(request: Request):
                         FROM assets GROUP BY currency) a ON a.currency = c.code
            LEFT JOIN (SELECT currency, SUM(quantity * unit_cost_cents) raw,
                              SUM(""" + db.conv("quantity * unit_cost_cents", "rate_micro") + """) rep
-                        FROM stock_items GROUP BY currency) k ON k.currency = c.code
+                        FROM pooled_items GROUP BY currency) k ON k.currency = c.code
            LEFT JOIN (SELECT sub.currency, SUM(sub.monthly_cost_cents) raw,
                              SUM(""" + db.conv("sub.monthly_cost_cents", "sub.rate_micro") + """) rep
                         FROM subscription_seats ss
@@ -710,7 +710,7 @@ def dashboard(request: Request):
     rate_asof = db.q1(
         "SELECT MAX(rate_set_on) AS d FROM currencies WHERE rate_source != 'base'")
     return render(request, "dashboard.html", t=totals, by_dept=by_dept,
-                  top_subs=top_subs, orphans=orphans, stock=stock.totals(),
+                  top_subs=top_subs, orphans=orphans, pool=pooled.totals(),
                   by_currency=by_currency, reporting=fx.reporting_code(),
                   rate_asof=rate_asof["d"] if rate_asof else None)
 
@@ -759,15 +759,15 @@ def user_detail(request: Request, upn: str):
     entra_licences = db.q(
         """SELECT l.* FROM user_licenses ul JOIN licenses l ON l.sku_id = ul.sku_id
            WHERE ul.upn = ? ORDER BY l.display_name""", (upn,))
-    stock_items = stock.for_user(upn)
-    stock_available = db.q(
+    pooled_held = pooled.for_user(upn)
+    pooled_available = db.q(
         """SELECT s.*, (s.quantity - COALESCE((SELECT SUM(quantity)
-             FROM stock_allocations a WHERE a.item_id = s.id), 0)) AS available
-           FROM stock_items s
+             FROM pooled_allocations a WHERE a.item_id = s.id), 0)) AS available
+           FROM pooled_items s
            WHERE available > 0 ORDER BY s.category, s.name""")
     return render(request, "user_detail.html", u=user, assets=assets, subs=subs,
                   spare=spare, avail_subs=avail_subs, entra_licences=entra_licences,
-                  stock_items=stock_items, stock_available=stock_available)
+                  pooled_held=pooled_held, pooled_available=pooled_available)
 
 
 @app.post("/users/{upn}/assign-asset")
@@ -785,9 +785,14 @@ def assign_sub(upn: str, subscription_id: int = Form(...)):
 
 
 # --- assets --------------------------------------------------------------
+#
+# Assets come in two shapes under one roof. Something with a serial that
+# belongs to one person is a row of its own; something interchangeable and
+# bought by the box - mice, headsets, licences in bulk - is one row with a
+# count. Both are assets, both live under the same categories, and each
+# category has its own page listing both kinds.
 
-@app.get("/assets", response_class=HTMLResponse)
-def assets_list(request: Request, q: str = "", category: str = "", state: str = ""):
+def asset_rows(q: str = "", category: str = "", state: str = ""):
     sql = """SELECT a.*, u.display_name FROM assets a
              LEFT JOIN users u ON u.upn = a.assigned_upn"""
     where, params = [], []
@@ -803,24 +808,46 @@ def assets_list(request: Request, q: str = "", category: str = "", state: str = 
         where.append("a.assigned_upn IS NOT NULL")
     if where:
         sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY a.category, a.name"
-    rows = db.q(sql, params)
+    return db.q(sql + " ORDER BY a.category, a.name", params)
+
+
+def assets_view(request: Request, category: str | None, q: str, state: str):
+    rows = asset_rows(q, category or "", state)
+    items = pooled.listing(category)
+    if q:
+        needle = q.lower()
+        items = [i for i in items if needle in (i["name"] or "").lower()]
     # Mixed currencies cannot be added raw, so the total is in reporting currency.
-    total = sum(fx.to_reporting(r["cost_cents"], r["rate_micro"]) for r in rows)
+    total = (sum(fx.to_reporting(r["cost_cents"], r["rate_micro"]) for r in rows)
+             + sum(i["value_rep"] for i in items))
     users = db.q("SELECT upn, display_name FROM users ORDER BY display_name")
-    return render(request, "assets.html", assets=rows, users=users, q=q,
-                  category=category, state=state, total=total,
+    return render(request, "assets.html", assets=rows, items=items, users=users,
+                  q=q, category=category, state=state, total=total,
+                  pooled_totals=pooled.totals(category),
                   currencies=fx.listing(active_only=True))
+
+
+@app.get("/assets", response_class=HTMLResponse)
+def assets_list(request: Request, q: str = "", state: str = ""):
+    return assets_view(request, None, q, state)
+
+
+# Declared before /assets/{asset_id}: that path takes an int, so "c" and
+# "pooled" would never reach it, but keeping the order explicit means a later
+# change of type cannot silently swallow these.
+@app.get("/assets/c/{category}", response_class=HTMLResponse)
+def assets_category(request: Request, category: str, q: str = "", state: str = ""):
+    return assets_view(request, category, q, state)
 
 
 @app.post("/assets/new")
 def asset_new(name: str = Form(...), category: str = Form("Other"), cost: str = Form("0"),
               currency: str = Form(""), serial: str = Form(""),
               purchased_on: str = Form(""), notes: str = Form(""),
-              assigned_upn: str = Form("")):
+              assigned_upn: str = Form(""), redirect: str = Form("/assets")):
     code, rate, problem = pick_currency(currency)
     if problem:
-        return back("/assets", problem)
+        return back(redirect, problem)
     db.execute(
         """INSERT INTO assets (name, category, cost_cents, currency, rate_micro, serial,
                                purchased_on, notes, assigned_upn, assigned_on)
@@ -828,7 +855,91 @@ def asset_new(name: str = Form(...), category: str = Form("Other"), cost: str = 
         (name.strip(), category, db.to_cents(cost), code, rate, serial.strip() or None,
          purchased_on or None, notes.strip() or None, assigned_upn or None,
          today() if assigned_upn else None))
-    return back("/assets", "Asset added")
+    return back(redirect, f"{category} added")
+
+
+# --- pooled assets (counted, no serials) ---------------------------------
+
+@app.post("/assets/pooled/new")
+def pooled_new(name: str = Form(...), category: str = Form("Peripheral"),
+               unit_cost: str = Form("0"), currency: str = Form(""),
+               quantity: str = Form("0"), vendor: str = Form(""),
+               notes: str = Form(""), redirect: str = Form("/assets")):
+    if not name.strip():
+        return back(redirect, "Give the item a name")
+    code, rate, problem = pick_currency(currency)
+    if problem:
+        return back(redirect, problem)
+    try:
+        qty = max(0, int(quantity or 0))
+    except ValueError:
+        return back(redirect, "Quantity must be a whole number")
+    item_id = pooled.create(name, category, db.to_cents(unit_cost), qty, vendor, notes,
+                            currency=code, rate_micro=rate)
+    return back(f"/assets/pooled/{item_id}", f"{category} added")
+
+
+@app.get("/assets/pooled/{item_id}", response_class=HTMLResponse)
+def pooled_detail(request: Request, item_id: int):
+    item = pooled.get(item_id)
+    if not item:
+        return HTMLResponse("<h1>404</h1><p>No such item.</p>", status_code=404)
+    people = db.q("SELECT upn, display_name FROM users ORDER BY display_name")
+    return render(request, "pooled_detail.html", i=item, s=pooled.summary(item),
+                  people=people, currencies=fx.listing(active_only=True))
+
+
+@app.post("/assets/pooled/{item_id}/edit")
+def pooled_edit(item_id: int, name: str = Form(...), category: str = Form("Peripheral"),
+                unit_cost: str = Form("0"), currency: str = Form(""),
+                quantity: str = Form("0"), vendor: str = Form(""), notes: str = Form("")):
+    existing = pooled.get(item_id)
+    if not existing:
+        return back("/assets", "No such item")
+    code, rate, problem = pick_currency(currency)
+    if problem:
+        return back(f"/assets/pooled/{item_id}", problem)
+    if code == (existing["currency"] or "") and existing["rate_micro"]:
+        rate = int(existing["rate_micro"])
+    try:
+        qty = max(0, int(quantity or 0))
+    except ValueError:
+        return back(f"/assets/pooled/{item_id}", "Quantity must be a whole number")
+    problem = pooled.update(item_id, name, category, db.to_cents(unit_cost), qty,
+                            vendor, notes, currency=code, rate_micro=rate)
+    return back(f"/assets/pooled/{item_id}", problem or "Item updated")
+
+
+@app.post("/assets/pooled/{item_id}/delete")
+def pooled_delete(item_id: int, redirect: str = Form("/assets")):
+    pooled.delete(item_id)
+    return back(redirect, "Item deleted")
+
+
+@app.post("/assets/pooled/{item_id}/assign")
+def pooled_assign(item_id: int, upn: str = Form(...), quantity: str = Form("1"),
+                  redirect: str = Form("")):
+    try:
+        qty = int(quantity or 1)
+    except ValueError:
+        qty = 1
+    problem = pooled.assign(item_id, upn.strip().lower(), qty)
+    target = redirect or f"/assets/pooled/{item_id}"
+    return back(target, problem or f"Handed out {qty} unit(s)")
+
+
+@app.post("/assets/pooled/{item_id}/take-back")
+def pooled_take_back(item_id: int, upn: str = Form(...), quantity: str = Form(""),
+                     redirect: str = Form("")):
+    qty = None
+    if quantity.strip():
+        try:
+            qty = int(quantity)
+        except ValueError:
+            qty = None
+    problem = pooled.take_back(item_id, upn.strip().lower(), qty)
+    target = redirect or f"/assets/pooled/{item_id}"
+    return back(target, problem or "Returned to the pool")
 
 
 @app.get("/assets/{asset_id}", response_class=HTMLResponse)
@@ -879,95 +990,6 @@ def asset_unassign(asset_id: int, redirect: str = Form("/assets")):
 def asset_delete(asset_id: int, redirect: str = Form("/assets")):
     db.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
     return back(redirect, "Asset deleted")
-
-
-# --- stock (pooled items) ------------------------------------------------
-
-@app.get("/stock", response_class=HTMLResponse)
-def stock_list(request: Request):
-    return render(request, "stock.html", items=stock.listing(),
-                  totals=stock.totals(), currencies=fx.listing(active_only=True))
-
-
-@app.post("/stock/new")
-def stock_new(name: str = Form(...), category: str = Form("Peripheral"),
-              unit_cost: str = Form("0"), currency: str = Form(""),
-              quantity: str = Form("0"), vendor: str = Form(""), notes: str = Form("")):
-    if not name.strip():
-        return back("/stock", "Give the item a name")
-    code, rate, problem = pick_currency(currency)
-    if problem:
-        return back("/stock", problem)
-    try:
-        qty = max(0, int(quantity or 0))
-    except ValueError:
-        return back("/stock", "Quantity must be a whole number")
-    item_id = stock.create(name, category, db.to_cents(unit_cost), qty, vendor, notes,
-                           currency=code, rate_micro=rate)
-    return back(f"/stock/{item_id}", "Item added")
-
-
-@app.get("/stock/{item_id}", response_class=HTMLResponse)
-def stock_detail(request: Request, item_id: int):
-    item = stock.get(item_id)
-    if not item:
-        return HTMLResponse("<h1>404</h1><p>No such item.</p>", status_code=404)
-    people = db.q("SELECT upn, display_name FROM users ORDER BY display_name")
-    return render(request, "stock_detail.html", i=item, s=stock.summary(item),
-                  people=people, currencies=fx.listing(active_only=True))
-
-
-@app.post("/stock/{item_id}/edit")
-def stock_edit(item_id: int, name: str = Form(...), category: str = Form("Peripheral"),
-               unit_cost: str = Form("0"), currency: str = Form(""),
-               quantity: str = Form("0"), vendor: str = Form(""), notes: str = Form("")):
-    existing = stock.get(item_id)
-    if not existing:
-        return back("/stock", "No such item")
-    code, rate, problem = pick_currency(currency)
-    if problem:
-        return back(f"/stock/{item_id}", problem)
-    if code == (existing["currency"] or "") and existing["rate_micro"]:
-        rate = int(existing["rate_micro"])
-    try:
-        qty = max(0, int(quantity or 0))
-    except ValueError:
-        return back(f"/stock/{item_id}", "Quantity must be a whole number")
-    problem = stock.update(item_id, name, category, db.to_cents(unit_cost), qty,
-                           vendor, notes, currency=code, rate_micro=rate)
-    return back(f"/stock/{item_id}", problem or "Item updated")
-
-
-@app.post("/stock/{item_id}/delete")
-def stock_delete(item_id: int):
-    stock.delete(item_id)
-    return back("/stock", "Item deleted")
-
-
-@app.post("/stock/{item_id}/assign")
-def stock_assign(item_id: int, upn: str = Form(...), quantity: str = Form("1"),
-                 redirect: str = Form("")):
-    try:
-        qty = int(quantity or 1)
-    except ValueError:
-        qty = 1
-    problem = stock.assign(item_id, upn.strip().lower(), qty)
-    target = redirect or f"/stock/{item_id}"
-    return back(target, problem or f"Handed out {qty} unit(s)")
-
-
-@app.post("/stock/{item_id}/take-back")
-def stock_take_back(item_id: int, upn: str = Form(...), quantity: str = Form(""),
-                    redirect: str = Form("")):
-    qty = None
-    if quantity.strip():
-        try:
-            qty = int(quantity)
-        except ValueError:
-            qty = None
-    problem = stock.take_back(item_id, upn.strip().lower(), qty)
-    target = redirect or f"/stock/{item_id}"
-    return back(target, problem or "Returned to stock")
 
 
 # --- subscriptions -------------------------------------------------------
@@ -1919,7 +1941,7 @@ def export_costs():
     w = csv.writer(buf)
     w.writerow(["upn", "display_name", "department", "country", "account_enabled",
                 "assets", f"asset_value_{settings.currency()}",
-                "stock_units", f"stock_value_{settings.currency()}",
+                "pooled_units", f"pooled_value_{settings.currency()}",
                 f"onetime_total_{settings.currency()}",
                 "subscriptions", f"monthly_{settings.currency()}",
                 f"annual_{settings.currency()}"])
@@ -1927,7 +1949,7 @@ def export_costs():
         w.writerow([r["upn"], r["display_name"], r["department"] or "",
                     r["country"] or "", r["account_enabled"],
                     r["asset_count"], db.money(r["asset_total"]).replace(",", ""),
-                    r["stock_units"], db.money(r["stock_total"]).replace(",", ""),
+                    r["pooled_units"], db.money(r["pooled_total"]).replace(",", ""),
                     db.money(r["onetime_total"]).replace(",", ""),
                     r["sub_count"], db.money(r["monthly_total"]).replace(",", ""),
                     db.money(r["monthly_total"] * 12).replace(",", "")])

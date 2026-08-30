@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>Assets{% if category %} <span class="crumb-sep">&rsaquo;</span> {{ category }}{% endif %}</h1>
+<nav class="subnav">
+  <a href="/assets" {% if not category %}class="on"{% endif %}>All</a>
+  {% for c in categories() %}
+    <a href="/assets/c/{{ c|urlencode }}" {% if c == category %}class="on"{% endif %}>{{ c }}</a>
+  {% endfor %}
+</nav>
+{% block section %}{% endblock %}
+{% endblock %}

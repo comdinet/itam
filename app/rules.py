@@ -7,7 +7,7 @@ assets would mean ITAM reporting kit nobody owns.
 """
 import datetime
 
-from . import db
+from . import db, pooled
 
 
 def create(name: str, group_id: str, kind: str, quantity: int,
@@ -102,6 +102,48 @@ def covered_upns(rule) -> set:
     return covered
 
 
+def _held(upn: str, category: str, name: str | None) -> int:
+    """What a person already holds towards an asset rule.
+
+    Individually tracked assets and pooled units both count: two mice out of
+    the pool satisfy "everyone gets two mice" exactly as two asset rows would,
+    and counting only one kind would report a compliant person as short.
+    """
+    sql = "SELECT COUNT(*) c FROM assets WHERE assigned_upn = ? AND category = ?"
+    params = [upn, category]
+    if name:
+        sql += " AND name = ?"
+        params.append(name)
+    return db.q1(sql, params)["c"] + pooled.held_by(upn, category, name)
+
+
+def _available(category: str, name: str | None) -> int:
+    """Spare individual assets plus spare pooled units."""
+    sql = "SELECT COUNT(*) c FROM assets WHERE assigned_upn IS NULL AND category = ?"
+    params = [category]
+    if name:
+        sql += " AND name = ?"
+        params.append(name)
+    return db.q1(sql, params)["c"] + pooled.spare_units(category, name)
+
+
+def _hand_over_one(upn: str, category: str, name: str | None, today: str) -> bool:
+    """Give one unit from whatever is spare. False when nothing is.
+
+    Individually tracked assets go first: they are the scarcer, identifiable
+    ones, and leaving them on the shelf while the pool drains would strand kit
+    that has a serial to account for.
+    """
+    sql = ("SELECT id FROM assets WHERE assigned_upn IS NULL AND category = ?"
+           + (" AND name = ?" if name else "") + " ORDER BY id LIMIT 1")
+    spare = db.q1(sql, (category, name) if name else (category,))
+    if spare:
+        db.execute("UPDATE assets SET assigned_upn = ?, assigned_on = ? WHERE id = ?",
+                   (upn, today, spare["id"]))
+        return True
+    return pooled.take_one(upn, category, name)
+
+
 def evaluate(rule) -> list[dict]:
     """Per-member holdings versus the rule. Positive gap means short."""
     upns = covered_upns(rule)
@@ -116,15 +158,7 @@ def evaluate(rule) -> list[dict]:
     out = []
     for m in members:
         if rule["kind"] == "asset":
-            if rule["asset_name"]:
-                have = db.q1(
-                    """SELECT COUNT(*) c FROM assets
-                       WHERE assigned_upn = ? AND category = ? AND name = ?""",
-                    (m["upn"], rule["category"], rule["asset_name"]))["c"]
-            else:
-                have = db.q1(
-                    "SELECT COUNT(*) c FROM assets WHERE assigned_upn = ? AND category = ?",
-                    (m["upn"], rule["category"]))["c"]
+            have = _held(m["upn"], rule["category"], rule["asset_name"])
         else:
             have = db.q1(
                 "SELECT COUNT(*) c FROM subscription_seats WHERE upn = ? AND subscription_id = ?",
@@ -148,13 +182,8 @@ def summarise(rule) -> dict:
     short = [r for r in outstanding if r["gap"] > 0]
     over = [r for r in rows if r["gap"] < 0]
     needed = sum(r["gap"] for r in short)
-    available = 0
-    if rule["kind"] == "asset":
-        available = db.q1(
-            "SELECT COUNT(*) c FROM assets WHERE assigned_upn IS NULL AND category = ?"
-            + (" AND name = ?" if rule["asset_name"] else ""),
-            (rule["category"], rule["asset_name"]) if rule["asset_name"]
-            else (rule["category"],))["c"]
+    available = _available(rule["category"], rule["asset_name"]) \
+        if rule["kind"] == "asset" else 0
     return {"members": len(rows), "compliant": len(rows) - len(short) - len(over),
             "short": len(short), "over": len(over), "needed": needed,
             "available": available, "rows": rows,
@@ -174,7 +203,7 @@ def apply(rule) -> dict:
     shortfall = []
 
     # Members are served in the order evaluate() returns them (by name). With
-    # stock too short to satisfy everyone, earlier names are filled first and
+    # too little spare to satisfy everyone, earlier names are filled first and
     # the rest are reported rather than silently skipped.
     for row in evaluate(rule):
         # Already served by this rule: leave them alone. This is what makes a
@@ -199,27 +228,15 @@ def apply(rule) -> dict:
 
         received = 0
         for _ in range(gap):
-            if rule["asset_name"]:
-                spare = db.q1(
-                    """SELECT id FROM assets
-                       WHERE assigned_upn IS NULL AND category = ? AND name = ?
-                       ORDER BY id LIMIT 1""", (rule["category"], rule["asset_name"]))
-            else:
-                spare = db.q1(
-                    """SELECT id FROM assets
-                       WHERE assigned_upn IS NULL AND category = ?
-                       ORDER BY id LIMIT 1""", (rule["category"],))
-            if not spare:
+            if not _hand_over_one(row["upn"], rule["category"], rule["asset_name"], today):
                 break
-            db.execute("UPDATE assets SET assigned_upn = ?, assigned_on = ? WHERE id = ?",
-                       (row["upn"], today, spare["id"]))
             received += 1
 
         granted_total += received
         if received >= gap:
             # Recorded as served only when the entitlement was met in full.
             # Someone who got one of two monitors is not finished with: a later
-            # apply completes them once there is stock, which is different from
+            # apply completes them once more arrives, which is different from
             # topping somebody up after they hand an item back.
             _mark(rule["id"], row["upn"], received)
         else:
@@ -267,12 +284,17 @@ def assets_by_category() -> dict:
 
     Feeds the second step of the rule form: pick a category, then the actual
     item, so a rule can grant "a Dell U2723QE" rather than "any monitor".
+    Pooled items are listed alongside the individually tracked ones - a rule
+    granting a mouse has to be able to name the mice you actually bought.
     """
     out: dict[str, list[str]] = {}
     for row in db.q(
             """SELECT DISTINCT category, name FROM assets
                WHERE TRIM(COALESCE(name,'')) != '' ORDER BY category, name"""):
         out.setdefault(row["category"], []).append(row["name"])
+    for category, names in pooled.names_by_category().items():
+        merged = set(out.get(category, [])) | set(names)
+        out[category] = sorted(merged)
     return out
 
 

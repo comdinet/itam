@@ -70,8 +70,8 @@
       <td class="meta">{{ r.c.rate_source }}</td>
       <td class="meta">
         {% set u = r.usage %}
-        {% if u.assets or u.stock or u.subscriptions or u.pricing %}
-          {{ u.assets }} asset(s), {{ u.stock }} stock, {{ u.subscriptions }} sub(s),
+        {% if u.assets or u.pooled or u.subscriptions or u.pricing %}
+          {{ u.assets }} asset(s), {{ u.pooled }} pooled, {{ u.subscriptions }} sub(s),
           {{ u.pricing }} pricing group(s)
         {% else %}not used yet{% endif %}</td>
       <td class="row-actions">

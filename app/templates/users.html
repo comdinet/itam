@@ -21,7 +21,7 @@
 </form>
 <table>
   <thead><tr><th>Name</th><th>UPN</th><th>Department</th><th>Country</th>
-    <th class="num">Assets</th><th class="num">Asset value</th><th class="num">Stock</th>
+    <th class="num">Assets</th><th class="num">Asset value</th><th class="num">Pooled</th>
     <th class="num">Licences</th><th class="num">Monthly</th><th class="num">Annual</th></tr></thead>
   <tbody>
   {% for u in users %}
@@ -33,7 +33,7 @@
       <td>{{ u.country or '' }}</td>
       <td class="num">{{ u.asset_count }}</td>
       <td class="num">{{ u.asset_total|money }}</td>
-      <td class="num">{{ u.stock_total|money }}
+      <td class="num">{{ u.pooled_total|money }}
         {% if u.onetime_currencies and ',' in u.onetime_currencies %}
           {% set codes = u.onetime_currencies.split(',')|reject('equalto','')|unique|sort|list %}
           {% if codes|length > 1 %}

@@ -294,11 +294,12 @@ CREATE TABLE IF NOT EXISTS rate_history (
 );
 CREATE INDEX IF NOT EXISTS idx_rate_history_code ON rate_history(code, id DESC);
 
--- Pooled items: one row for many identical units. Mice, keyboards, headsets
+-- Pooled assets: one row for many identical units. Mice, keyboards, headsets
 -- and bulk-bought licences have no serial and are interchangeable, so a row
 -- per unit would be noise. Instead the row carries a unit price and how many
--- are owned, and allocations count against it.
-CREATE TABLE IF NOT EXISTS stock_items (
+-- are owned, and allocations count against it. Same categories as assets:
+-- these are assets, counted rather than listed.
+CREATE TABLE IF NOT EXISTS pooled_items (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     name            TEXT NOT NULL,
     category        TEXT NOT NULL DEFAULT 'Peripheral',
@@ -313,14 +314,14 @@ CREATE TABLE IF NOT EXISTS stock_items (
 
 -- One row per person per item; handing out a second unit raises the quantity
 -- rather than adding a row.
-CREATE TABLE IF NOT EXISTS stock_allocations (
-    item_id     INTEGER NOT NULL REFERENCES stock_items(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS pooled_allocations (
+    item_id     INTEGER NOT NULL REFERENCES pooled_items(id) ON DELETE CASCADE,
     upn         TEXT NOT NULL REFERENCES users(upn) ON DELETE CASCADE,
     quantity    INTEGER NOT NULL DEFAULT 1,
     assigned_on TEXT,
     PRIMARY KEY (item_id, upn)
 );
-CREATE INDEX IF NOT EXISTS idx_stock_alloc_upn ON stock_allocations(upn);
+CREATE INDEX IF NOT EXISTS idx_pooled_alloc_upn ON pooled_allocations(upn);
 
 CREATE TABLE IF NOT EXISTS subscriptions (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -370,8 +371,26 @@ ALL_USERS_GROUP = "__all_users__"
 ALL_USERS_LABEL = "Everyone (all users)"
 
 
+def _rename_legacy_tables(conn) -> None:
+    """Stock became part of Assets, and the tables follow the vocabulary.
+
+    This has to run before the schema script: CREATE TABLE IF NOT EXISTS would
+    otherwise make an empty pooled_items and leave every real row stranded in
+    stock_items. Renaming carries the foreign key in the allocations table with
+    it, so long as legacy_alter_table is off - which it is by default.
+    """
+    names = {r["name"] for r in
+             conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    for old, new in (("stock_items", "pooled_items"),
+                     ("stock_allocations", "pooled_allocations")):
+        if old in names and new not in names:
+            conn.execute(f"ALTER TABLE {old} RENAME TO {new}")
+    conn.execute("DROP INDEX IF EXISTS idx_stock_alloc_upn")
+
+
 def init_db():
     with cursor() as conn:
+        _rename_legacy_tables(conn)
         conn.executescript(SCHEMA)
 
         # Migration: databases created before the API existed have no
@@ -389,7 +408,7 @@ def init_db():
         # Migration: money-bearing rows gain the currency they were paid in and
         # the rate that applied then. Existing rows inherit the reporting
         # currency at a rate of 1, so no stored figure changes meaning.
-        for table in ("assets", "stock_items", "subscriptions", "price_groups"):
+        for table in ("assets", "pooled_items", "subscriptions", "price_groups"):
             cols = [r["name"] for r in conn.execute(f"PRAGMA table_info({table})")]
             if "currency" not in cols:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN currency TEXT")
@@ -435,8 +454,14 @@ def init_db():
 
 
 def categories() -> list[str]:
-    """Built-in categories plus anything the API or a user has introduced."""
+    """Built-in categories plus anything the API or a user has introduced.
+
+    Pooled items are assets too, so a category that only exists in the pool
+    still belongs in the list - otherwise it would have no page to live on.
+    """
     seen = {r["category"] for r in q("SELECT DISTINCT category FROM assets") if r["category"]}
+    seen |= {r["category"] for r in
+             q("SELECT DISTINCT category FROM pooled_items") if r["category"]}
     return sorted(seen | set(DEFAULT_CATEGORIES))
 
 

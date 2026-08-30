@@ -1,57 +1,143 @@
-{% extends "base.html" %}
+{% extends "assets_base.html" %}
 {% from "_currency.html" import currency_select %}
-{% block title %}Assets &middot; ITAM{% endblock %}
-{% block body %}
-<h1>Assets <span class="count">{{ assets|length }}</span></h1>
-<p class="meta">Total value shown: {{ currency }} {{ total|money }}
-  <span class="hint">converted to {{ currency }} at the rate held on each asset</span></p>
+{% block title %}{% if category %}{{ category }}{% else %}Assets{% endif %} &middot; ITAM{% endblock %}
+{% block section %}
+{% set here = '/assets/c/' ~ category|urlencode if category else '/assets' %}
+{% set what = category if category else 'asset' %}
 
-<form class="filters" method="get" action="/assets">
+<p class="meta">
+  {% if category %}Everything in {{ category }}: items tracked one by one, and
+    identical units counted as a pool.{% else %}Every category. Items with a
+    serial are tracked one by one; interchangeable ones are counted as a pool.{% endif %}
+  <br>Total value shown: {{ currency }} {{ total|money }}
+  <span class="hint">converted to {{ currency }} at the rate held on each record</span></p>
+
+<div class="cards">
+  <div class="card"><span class="label">Tracked individually</span>
+    <span class="big">{{ assets|length }}</span>
+    <span class="sub">{{ assets|selectattr('assigned_upn')|list|length }} assigned</span></div>
+  <div class="card"><span class="label">Pooled units</span>
+    <span class="big">{{ pooled_totals.units }}</span>
+    <span class="sub">{{ pooled_totals.item_count }} item(s)</span></div>
+  <div class="card"><span class="label">Handed out</span>
+    <span class="big">{{ pooled_totals.allocated_units }}</span>
+    <span class="sub">{{ currency }} {{ pooled_totals.allocated_value|money }}</span></div>
+  <div class="card"><span class="label">Spare units</span>
+    <span class="big">{{ pooled_totals.spare_units }}</span>
+    <span class="sub">{{ currency }} {{ pooled_totals.spare_value|money }} idle</span></div>
+</div>
+
+<form class="filters" method="get" action="{{ here }}">
   <input type="search" name="q" value="{{ q }}" placeholder="Name or serial">
-  <select name="category"><option value="">All categories</option>
-    {% for c in categories() %}<option value="{{ c }}" {% if c == category %}selected{% endif %}>{{ c }}</option>{% endfor %}
-  </select>
   <select name="state"><option value="">Any state</option>
     <option value="assigned" {% if state=='assigned' %}selected{% endif %}>Assigned</option>
     <option value="spare" {% if state=='spare' %}selected{% endif %}>Spare</option>
   </select>
   <button type="submit">Filter</button>
-  <a class="btn light" href="/assets">Reset</a>
+  <a class="btn light" href="{{ here }}">Reset</a>
 </form>
 
-<details class="panel" {% if not assets %}open{% endif %}>
-  <summary>Add an asset</summary>
+<details class="panel" {% if not assets and not items %}open{% endif %}>
+  <summary>Add {{ 'a ' ~ what if category else 'an asset' }} &mdash; one item, its own serial</summary>
   <form class="grid-form" method="post" action="/assets/new">
+    <input type="hidden" name="redirect" value="{{ here }}">
     <label>Name<input name="name" required placeholder="MacBook Pro 14 M4"></label>
-    <label>Category<select name="category">
-      {% for c in categories() %}<option value="{{ c }}">{{ c }}</option>{% endfor %}</select></label>
+    {% if category %}
+      <input type="hidden" name="category" value="{{ category }}">
+      <label>Category<input value="{{ category }}" disabled></label>
+    {% else %}
+      <label>Category<select name="category">
+        {% for c in categories() %}<option value="{{ c }}">{{ c }}</option>{% endfor %}</select></label>
+    {% endif %}
     <label>Cost<input name="cost" inputmode="decimal" placeholder="2499.00"></label>
     <label>Paid in{{ currency_select(currencies) }}</label>
     <label>Serial<input name="serial" placeholder="optional"></label>
     <label>Purchased<input type="date" name="purchased_on"></label>
-    <label>Assign to<select name="assigned_upn"><option value="">— spare —</option>
+    <label>Assign to<select name="assigned_upn"><option value="">&mdash; spare &mdash;</option>
       {% for u in users %}<option value="{{ u.upn }}">{{ u.display_name }}</option>{% endfor %}</select></label>
     <label class="wide">Notes<input name="notes" placeholder="optional"></label>
-    <button type="submit">Add asset</button>
+    <button type="submit">Add {{ what if category else 'asset' }}</button>
   </form>
 </details>
 
+<details class="panel">
+  <summary>Add {{ what if category else 'an item' }} in bulk &mdash; identical units, counted</summary>
+  <form class="grid-form" method="post" action="/assets/pooled/new">
+    <input type="hidden" name="redirect" value="{{ here }}">
+    <label>Name<input name="name" required placeholder="Logitech MX Master 3S"></label>
+    {% if category %}
+      <input type="hidden" name="category" value="{{ category }}">
+      <label>Category<input value="{{ category }}" disabled></label>
+    {% else %}
+      <label>Category<select name="category">
+        {% for c in categories() %}<option value="{{ c }}">{{ c }}</option>{% endfor %}</select></label>
+    {% endif %}
+    <label>Unit price<input name="unit_cost" inputmode="decimal" placeholder="109.00"></label>
+    <label>Paid in{{ currency_select(currencies) }}</label>
+    <label>Quantity owned<input name="quantity" type="number" min="0" value="0"></label>
+    <label>Vendor<input name="vendor" placeholder="optional"></label>
+    <label class="wide">Notes<input name="notes" placeholder="purchase order, warranty&hellip;"></label>
+    <button type="submit">Add {{ what if category else 'item' }}</button>
+  </form>
+  <p class="hint">Use this when the units are interchangeable and have no serial
+     &mdash; mice, keyboards, headsets, licences bought as a batch. Cost follows
+     the units: hand out two of a {{ currency }} 25.00 item and that person
+     carries {{ currency }} 50.00. For a recurring monthly charge per person,
+     use <a href="/subscriptions">Subscriptions</a> instead.</p>
+</details>
+
+<h2>Tracked individually <span class="count">{{ assets|length }}</span></h2>
 <table>
-  <thead><tr><th>Name</th><th>Category</th><th>Serial</th><th>Assigned to</th>
-    <th class="num">Cost</th><th></th></tr></thead>
+  <thead><tr><th>Name</th>{% if not category %}<th>Category</th>{% endif %}<th>Serial</th>
+    <th>Assigned to</th><th class="num">Cost</th><th></th></tr></thead>
   <tbody>
   {% for a in assets %}
     <tr>
-      <td>{{ a.name }}</td><td>{{ a.category }}</td><td class="mono">{{ a.serial or '' }}</td>
+      <td>{{ a.name }}</td>
+      {% if not category %}<td>{{ a.category }}</td>{% endif %}
+      <td class="mono">{{ a.serial or '' }}</td>
       <td>{% if a.assigned_upn %}<a href="/users/{{ a.assigned_upn }}">{{ a.display_name }}</a>
           {% else %}<span class="tag spare">spare</span>{% endif %}</td>
       <td class="num">{{ a.cost_cents|money }}
         <span class="chip">{{ a.currency or currency }}</span></td>
       <td class="row-actions"><a href="/assets/{{ a.id }}">Edit</a></td></tr>
   {% else %}
-    <tr><td colspan="6" class="empty">
-      {% if q or category or state %}No assets match those filters.
+    <tr><td colspan="{{ 6 if not category else 5 }}" class="empty">
+      {% if q or state %}Nothing here matches those filters.
+      {% elif category %}No {{ category }} tracked individually yet &mdash; add one above.
       {% else %}No assets yet &mdash; add your first one above.{% endif %}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2>Counted in bulk <span class="count">{{ items|length }}</span></h2>
+<table>
+  <thead><tr><th>Item</th>{% if not category %}<th>Category</th>{% endif %}<th>Vendor</th>
+    <th class="num">Unit price</th><th class="num">Owned</th><th class="num">Out</th>
+    <th class="num">Spare</th><th class="num">Total value</th></tr></thead>
+  <tbody>
+  {% for i in items %}
+    <tr>
+      <td><a href="/assets/pooled/{{ i.id }}">{{ i.name }}</a>
+        {% if i.notes %}<div class="meta">{{ i.notes }}</div>{% endif %}</td>
+      {% if not category %}<td>{{ i.category }}</td>{% endif %}
+      <td>{{ i.vendor or '' }}</td>
+      <td class="num">{{ i.unit_cost_cents|money }}
+        <span class="chip">{{ i.currency or currency }}</span></td>
+      <td class="num">{{ i.quantity }}</td>
+      <td class="num">{{ i.allocated }}{% if i.holders %}
+        <span class="meta">({{ i.holders }} people)</span>{% endif %}</td>
+      <td class="num">{% if i.quantity - i.allocated == 0 %}
+          <span class="tag">none left</span>{% else %}{{ i.quantity - i.allocated }}{% endif %}</td>
+      <td class="num">{{ i.value_rep|money }}
+        {% if (i.currency or currency) != currency %}
+          <div class="meta">{{ i.currency }} {{ (i.quantity * i.unit_cost_cents)|money }}</div>
+        {% endif %}</td></tr>
+  {% else %}
+    <tr><td colspan="{{ 8 if not category else 7 }}" class="empty">
+      {% if q %}Nothing here matches that search.
+      {% elif category %}No {{ category }} bought in bulk yet &mdash; add some above.
+      {% else %}Nothing counted in bulk yet &mdash; add an item above.{% endif %}</td></tr>
   {% endfor %}
   </tbody>
 </table>
