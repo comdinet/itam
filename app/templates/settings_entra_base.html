@@ -1,0 +1,17 @@
+{% extends "settings_base.html" %}
+{% block admin %}
+<h2>Entra ID &amp; Intune</h2>
+<nav class="subnav">
+  <a href="/settings/entra" {% if sub == 'general' %}class="on"{% endif %}>General</a>
+  <a href="/settings/entra/users" {% if sub == 'users' %}class="on"{% endif %}>Users</a>
+  <a href="/settings/entra/groups" {% if sub == 'groups' %}class="on"{% endif %}>Groups</a>
+  <a href="/settings/entra/device-groups" {% if sub == 'device-groups' %}class="on"{% endif %}>Device groups</a>
+  <a href="/settings/entra/licences" {% if sub == 'licences' %}class="on"{% endif %}>Licences</a>
+</nav>
+{% if not cfg.configured %}
+<div class="warn"><strong>Entra ID is not configured</strong> &mdash; fill in the
+  tenant, client and secret under <a href="/settings/entra">General</a> first.
+  Intune uses the same app registration.</div>
+{% endif %}
+{% block entra %}{% endblock %}
+{% endblock %}

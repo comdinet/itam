@@ -1161,109 +1161,138 @@ def seat_remove(sub_id: int, upn: str = Form(...), redirect: str = Form("")):
 
 # --- settings: groups ----------------------------------------------------
 
-@app.get("/settings/groups", response_class=HTMLResponse)
-def settings_groups(request: Request):
-    groups = db.q(
-        """SELECT g.*,
-                  (SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.id) AS known,
-                  (SELECT COUNT(*) FROM group_members_unlinked u WHERE u.group_id = g.id)
-                      AS unlinked
-           FROM groups g WHERE g.id != ? ORDER BY g.display_name""",
-        (db.ALL_USERS_GROUP,))
-    last = db.q1("SELECT MAX(synced_at) AS last FROM groups")
-    return render(request, "settings_groups.html", groups=groups, last=last,
-                  cfg=entra.config_status(), section="groups")
+@app.get("/settings/groups")
+def settings_groups_moved():
+    return RedirectResponse("/settings/entra/groups", status_code=307)
 
 
-# --- settings: device groups --------------------------------------------
-
-@app.get("/settings/device-groups", response_class=HTMLResponse)
-def settings_device_groups(request: Request):
-    last = db.q1("SELECT MAX(synced_at) AS last FROM device_groups")
-    return render(request, "settings_device_groups.html",
-                  groups=devices.groups_listing(), last=last,
-                  cfg=entra.config_status(),
-                  group_filter=settings.get("ENTRA_DEVICE_GROUP_FILTER"),
-                  section="device-groups")
+@app.get("/settings/device-groups")
+def settings_device_groups_moved():
+    return RedirectResponse("/settings/entra/device-groups", status_code=307)
 
 
-@app.post("/settings/device-groups/sync")
-def settings_device_groups_sync(mode: str = Form("dynamic")):
+@app.get("/settings/licences")
+def settings_licences_moved():
+    return RedirectResponse("/settings/entra/licences", status_code=307)
+
+
+def _group_catalogue(kind: str):
+    """Every discovered group, with how many members ITAM holds for it."""
+    synced = ("(SELECT COUNT(*) FROM device_group_members m WHERE m.group_id = e.id)"
+              if kind == "device"
+              else "(SELECT COUNT(*) FROM group_members m WHERE m.group_id = e.id)")
+    present = ("(SELECT 1 FROM device_groups x WHERE x.id = e.id)"
+               if kind == "device" else "(SELECT 1 FROM groups x WHERE x.id = e.id)")
+    return db.q(f"""SELECT e.*,
+                           CASE WHEN {present} IS NULL THEN NULL ELSE {synced} END AS synced
+                    FROM entra_groups e ORDER BY e.display_name""")
+
+
+def _entra_ctx(sub: str) -> dict:
+    return {"cfg": entra.config_status(), "sub": sub, "section": "entra"}
+
+
+# Held between the sync and the redirect that follows it: the diagnosis of a
+# group that came back with nothing is the whole point of running the sync, and
+# it does not fit in a flash message.
+EMPTY_DEVICE_GROUPS: dict = {}
+
+
+@app.get("/settings/entra/groups", response_class=HTMLResponse)
+def settings_entra_groups(request: Request):
+    return render(request, "settings_entra_groups.html",
+                  groups=_group_catalogue("user"),
+                  discovered=db.q1("SELECT MAX(discovered_at) d FROM entra_groups")["d"],
+                  last=db.q1("SELECT MAX(synced_at) AS last FROM groups"),
+                  group_filter=settings.get("ENTRA_GROUP_FILTER"),
+                  **_entra_ctx("groups"))
+
+
+@app.get("/settings/entra/device-groups", response_class=HTMLResponse)
+def settings_entra_device_groups(request: Request):
+    return render(request, "settings_entra_device_groups.html",
+                  groups=_group_catalogue("device"),
+                  discovered=db.q1("SELECT MAX(discovered_at) d FROM entra_groups")["d"],
+                  last=db.q1("SELECT MAX(synced_at) AS last FROM device_groups"),
+                  group_filter=settings.get("ENTRA_GROUP_FILTER"),
+                  empty=EMPTY_DEVICE_GROUPS.get("last"),
+                  **_entra_ctx("device-groups"))
+
+
+@app.post("/settings/entra/groups/discover")
+def settings_entra_discover():
     if not entra.is_configured():
-        return back("/settings/device-groups", "Entra ID is not configured yet")
+        return back("/settings/entra/groups", "Entra ID is not configured yet")
     try:
-        r = entra.sync_device_groups("all" if mode == "all" else "dynamic")
+        r = entra.discover_groups()
     except Exception as exc:
-        return back("/settings/device-groups",
+        return back("/settings/entra/groups", f"Listing groups failed: {why(exc)}"[:300])
+    if not r["groups"]:
+        return back("/settings/entra/groups",
+                    (f"Entra returned no groups for {r['filter']} - check it against "
+                     f"the group's name, or clear it") if r["filter"] else
+                    "Entra returned no groups - check the Group.Read.All permission")
+    return back("/settings/entra/groups", f"Listed {r['groups']} group(s)")
+
+
+async def _pick_groups(request: Request, column: str, where: str):
+    """Record the ticks. Nothing is fetched here - that is the sync's job."""
+    form = await request.form()
+    picked = {g for g in form.getlist("pick") if g}
+    db.execute(f"UPDATE entra_groups SET {column} = 0")
+    for gid in picked:
+        db.execute(f"UPDATE entra_groups SET {column} = 1 WHERE id = ?", (gid,))
+    return back(where, f"{len(picked)} group(s) ticked - now run the sync")
+
+
+@app.post("/settings/entra/groups/pick")
+async def settings_entra_groups_pick(request: Request):
+    return await _pick_groups(request, "sync_users", "/settings/entra/groups")
+
+
+@app.post("/settings/entra/device-groups/pick")
+async def settings_entra_device_groups_pick(request: Request):
+    return await _pick_groups(request, "sync_devices", "/settings/entra/device-groups")
+
+
+@app.post("/settings/entra/device-groups/sync")
+def settings_entra_device_groups_sync():
+    if not entra.is_configured():
+        return back("/settings/entra/device-groups", "Entra ID is not configured yet")
+    try:
+        r = entra.sync_device_groups()
+    except Exception as exc:
+        return back("/settings/entra/device-groups",
                     f"Device group sync failed: {why(exc)}"[:300])
     devices.recompute()
-
-    # "Scanned 0" is true and useless. Say which step came back empty, because
-    # each one has a different fix.
-    if r["filter"] and not r["groups_listed"]:
-        return back("/settings/device-groups",
-                    f"Your group filter matched no groups at all: "
-                    f"{r['filter']} - check the spelling against the group's name "
-                    f"in Entra, or clear the filter to look at every group")
-    if not r["groups_listed"]:
-        return back("/settings/device-groups",
-                    "Entra returned no groups at all - check the Group.Read.All "
-                    "permission under Entra ID")
-    if r["mode"] == "dynamic" and not r["scanned"]:
-        return back("/settings/device-groups",
-                    f"Looked at {r['groups_listed']} group(s); none has a dynamic "
-                    f"membership rule written against 'device.'. If your device "
-                    f"group has Assigned membership, run 'Look in every group'.")
-    msg = (f"Looked in {r['scanned']} of {r['groups_listed']} group(s); "
-           f"{r['device_groups']} hold devices, {r['devices']} membership(s) recorded")
-    if r["mode"] == "dynamic":
-        msg += f" ({r['dynamic_device_groups']} dynamic device group(s) found)"
+    EMPTY_DEVICE_GROUPS["last"] = r["empty"] or None
+    if not r["picked"]:
+        return back("/settings/entra/device-groups",
+                    "No groups are ticked - tick the ones holding devices first")
+    msg = (f"Synced {r['device_groups']} of {r['picked']} ticked group(s); "
+           f"{r['devices']} membership(s) recorded")
+    if r["empty"]:
+        msg += f"; {len(r['empty'])} came back with nothing - see below"
     if r["dropped"]:
-        msg += f"; {r['dropped']} no longer hold devices"
-    return back("/settings/device-groups", msg)
+        msg += f"; {r['dropped']} unticked group(s) dropped"
+    return back("/settings/entra/device-groups", msg)
 
 
-@app.get("/settings/device-groups/{group_id}", response_class=HTMLResponse)
-def settings_device_group_detail(request: Request, group_id: str):
-    grp = devices.group(group_id)
-    if not grp:
-        return HTMLResponse("<h1>404</h1><p>No such device group.</p>", status_code=404)
-    return render(request, "settings_device_group_detail.html", g=grp,
-                  members=devices.group_members(group_id),
-                  ignoring=bool(db.q1(
-                      "SELECT 1 FROM device_ignore_rules WHERE field='group' AND value=?",
-                      (group_id,))),
-                  section="device-groups")
-
-
-@app.post("/settings/device-groups/{group_id}/ignore")
-def settings_device_group_ignore(group_id: str):
-    grp = devices.group(group_id)
-    if not grp:
-        return back("/settings/device-groups", "No such device group")
-    problem = devices.add_rule("group", "eq", group_id, grp["display_name"])
-    if problem:
-        return back("/settings/device-groups", problem)
-    return back("/settings/device-groups",
-                f"Ignoring {devices.recompute()} device(s) - "
-                f"“{grp['display_name']}” and any other rule")
-
-
-@app.post("/settings/groups/sync")
+@app.post("/settings/entra/groups/sync")
 def settings_groups_sync():
     if not entra.is_configured():
-        return back("/settings/groups", "Entra ID is not configured yet")
+        return back("/settings/entra/groups", "Entra ID is not configured yet")
     try:
         r = entra.sync_groups()
     except Exception as exc:
-        return back("/settings/groups", f"Sync failed: {why(exc)}"[:300])
+        return back("/settings/entra/groups", f"Sync failed: {why(exc)}"[:300])
     msg = (f"Synced {r['groups']} group(s); {r['members_linked']} membership(s) linked")
     if r["members_unknown"]:
         msg += f", {r['members_unknown']} member(s) not known here - sync users first"
-    return back("/settings/groups", msg)
+    return back("/settings/entra/groups", msg)
 
 
-@app.get("/settings/groups/{group_id}", response_class=HTMLResponse)
+@app.get("/settings/entra/groups/{group_id}", response_class=HTMLResponse)
 def group_detail(request: Request, group_id: str):
     group = db.q1("SELECT * FROM groups WHERE id = ?", (group_id,))
     if not group:
@@ -1277,7 +1306,8 @@ def group_detail(request: Request, group_id: str):
         (group_id,))
     return render(request, "settings_group_detail.html", g=group, members=members,
                   group_rules=group_rules, unlinked=unlinked,
-                  unlinked_reason=entra.unlinked_reason(), section="groups")
+                  unlinked_reason=entra.unlinked_reason(),
+                  cfg=entra.config_status(), sub="groups", section="entra")
 
 
 # --- settings: devices (Intune) -----------------------------------------
@@ -1523,7 +1553,7 @@ def devices_create_assets(request: Request, q: str = Form(""), os_filter: str = 
 
 # --- settings: licences (from Entra) ------------------------------------
 
-@app.get("/settings/licences", response_class=HTMLResponse)
+@app.get("/settings/entra/licences", response_class=HTMLResponse)
 def settings_licences(request: Request):
     rows = db.q(
         """SELECT l.*,
@@ -1547,26 +1577,26 @@ def settings_licences(request: Request):
            ORDER BY l.display_name, u.display_name""")
     return render(request, "settings_licences.html", licences=rows, last=last,
                   totals=totals, reclaimable=reclaimable,
-                  cfg=entra.config_status(), section="licences")
+                  **_entra_ctx("licences"))
 
 
-@app.post("/settings/licences/sync")
+@app.post("/settings/entra/licences/sync")
 def settings_licences_sync():
     if not entra.is_configured():
-        return back("/settings/licences", "Entra ID is not configured yet")
+        return back("/settings/entra/licences", "Entra ID is not configured yet")
     try:
         r = entra.sync_licenses()
     except Exception as exc:
-        return back("/settings/licences", f"Licence sync failed: {why(exc)}"[:300])
+        return back("/settings/entra/licences", f"Licence sync failed: {why(exc)}"[:300])
     msg = f"Synced {r['skus']} SKU(s) and {r['assignments']} assignment(s)"
     if r["licensed_not_synced"]:
         msg += f"; {r['licensed_not_synced']} licensed account(s) are not synced here"
     if r["unknown_skus"]:
         msg += f"; {r['unknown_skus']} assignment(s) referenced an unknown SKU"
-    return back("/settings/licences", msg)
+    return back("/settings/entra/licences", msg)
 
 
-@app.post("/settings/licences/{sku_id}/create-subscription")
+@app.post("/settings/entra/licences/{sku_id}/create-subscription")
 def licence_create_subscription(sku_id: str):
     """Turn an Entra licence into a tracked subscription, and grant its seats.
 
@@ -1575,7 +1605,7 @@ def licence_create_subscription(sku_id: str):
     """
     lic = db.q1("SELECT * FROM licenses WHERE sku_id = ?", (sku_id,))
     if not lic:
-        return back("/settings/licences", "No such licence")
+        return back("/settings/entra/licences", "No such licence")
     existing = db.q1("SELECT id FROM subscriptions WHERE sku_id = ?", (sku_id,))
     if existing:
         return back(f"/subscriptions/{existing['id']}",
@@ -1598,7 +1628,7 @@ def licence_create_subscription(sku_id: str):
                 f"Subscription created with {seats} seat(s) - set the per-seat cost")
 
 
-@app.get("/settings/licences/{sku_id}", response_class=HTMLResponse)
+@app.get("/settings/entra/licences/{sku_id}", response_class=HTMLResponse)
 def licence_detail(request: Request, sku_id: str):
     lic = db.q1("SELECT * FROM licenses WHERE sku_id = ?", (sku_id,))
     if not lic:
@@ -1609,7 +1639,8 @@ def licence_detail(request: Request, sku_id: str):
            WHERE ul.sku_id = ? ORDER BY u.display_name""", (sku_id,))
     sub = db.q1("SELECT * FROM subscriptions WHERE sku_id = ?", (sku_id,))
     return render(request, "settings_licence_detail.html", l=lic, holders=holders,
-                  sub=sub, section="licences")
+                  sub_row=sub, sub="licences", cfg=entra.config_status(),
+                  section="entra")
 
 
 # --- settings: currencies ------------------------------------------------
@@ -2183,9 +2214,19 @@ def _apply(data: dict, group: str, by: str, redirect: str):
 def admin_entra(request: Request):
     last = db.q1("SELECT MAX(synced_at) AS last, COUNT(*) AS n FROM users WHERE source='entra'")
     people = db.q1("SELECT COUNT(*) c FROM users")["c"]
-    return render(request, "settings_entra.html", cfg=entra.config_status(), last=last,
+    return render(request, "settings_entra.html", last=last,
                   people=people, fields=settings.group("entra"), probe=None,
-                  filter_checks=_filter_checks(), filter_test=None, section="entra")
+                  filter_checks=_filter_checks(), filter_test=None,
+                  **_entra_ctx("general"))
+
+
+@app.get("/settings/entra/users", response_class=HTMLResponse)
+def settings_entra_users(request: Request):
+    last = db.q1("SELECT MAX(synced_at) AS last, COUNT(*) AS n FROM users WHERE source='entra'")
+    return render(request, "settings_entra_users.html", last=last,
+                  people=db.q1("SELECT COUNT(*) c FROM users")["c"],
+                  filter_checks=_filter_checks(), filter_test=None,
+                  **_entra_ctx("users"))
 
 
 @app.post("/settings/entra/test", response_class=HTMLResponse)
@@ -2197,10 +2238,10 @@ def admin_entra_test(request: Request):
         return back("/settings/entra", "Fill in the tenant, client and secret first")
     last = db.q1("SELECT MAX(synced_at) AS last, COUNT(*) AS n FROM users WHERE source='entra'")
     people = db.q1("SELECT COUNT(*) c FROM users")["c"]
-    return render(request, "settings_entra.html", cfg=entra.config_status(), last=last,
+    return render(request, "settings_entra.html", last=last,
                   people=people, fields=settings.group("entra"),
                   filter_checks=_filter_checks(), filter_test=None,
-                  probe=entra.test_connection(), section="entra")
+                  probe=entra.test_connection(), **_entra_ctx("general"))
 
 
 def _filter_checks() -> dict:
@@ -2223,10 +2264,9 @@ def admin_entra_test_filter(request: Request, kind: str = Form(...)):
         return back("/settings/entra", "Fill in the tenant, client and secret first")
     last = db.q1("SELECT MAX(synced_at) AS last, COUNT(*) AS n FROM users WHERE source='entra'")
     people = db.q1("SELECT COUNT(*) c FROM users")["c"]
-    return render(request, "settings_entra.html", cfg=entra.config_status(), last=last,
-                  people=people, fields=settings.group("entra"), probe=None,
-                  filter_checks=_filter_checks(),
-                  filter_test={"kind": kind, **result}, section="entra")
+    return render(request, "settings_entra_users.html", last=last,
+                  people=people, filter_checks=_filter_checks(),
+                  filter_test={"kind": kind, **result}, **_entra_ctx("users"))
 
 
 @app.post("/settings/entra/sync")

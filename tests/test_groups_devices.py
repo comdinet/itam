@@ -56,8 +56,15 @@ PAGES[f"{G}/groups/g-design/transitiveMembers/microsoft.graph.user?$skip=3"] = {
 PAGES[f"{G}/groups/g-eng/transitiveMembers/microsoft.graph.user"] = {
     "value": [{"id":"5","userPrincipalName":"grace@x.com"}]}
 
-r = entra.sync_groups()
+# Two steps now: list the tenant's groups, tick the ones ITAM should track,
+# then sync only those. Membership is a call per group, so which groups are
+# worth that is a decision rather than a guess.
 print("\n--- groups ---")
+d = entra.discover_groups()
+check("both groups listed", d["groups"], 2)
+check("but nothing is synced until they are ticked", entra.sync_groups()["groups"], 0)
+db.execute("UPDATE entra_groups SET sync_users = 1")
+r = entra.sync_groups()
 check("groups fetched", r["groups"], 2)
 check("created", r["created"], 2)
 check("members linked", r["members_linked"], 3)      # hedy, ada, grace

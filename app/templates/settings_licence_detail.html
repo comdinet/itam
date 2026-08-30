@@ -1,7 +1,7 @@
-{% extends "settings_base.html" %}
+{% extends "settings_entra_base.html" %}
 {% block title %}{{ l.display_name }} &middot; ITAM{% endblock %}
-{% block admin %}
-<p class="crumb"><a href="/settings/licences">&larr; Licences</a></p>
+{% block entra %}
+<p class="crumb"><a href="/settings/entra/licences">&larr; Licences</a></p>
 <h2>{{ l.display_name }}</h2>
 <p class="meta"><span class="mono">{{ l.sku_part_number }}</span> &middot;
   <span class="mono">{{ l.sku_id }}</span></p>
@@ -13,12 +13,12 @@
   <div class="card"><span class="label">Held by synced people</span><span class="big">{{ holders|length }}</span></div>
 </div>
 
-{% if sub %}
+{% if sub_row %}
 <p class="meta">Tracked as the subscription
-  <a href="/subscriptions/{{ sub.id }}">{{ sub.name }}</a>
-  {% if not sub.monthly_cost_cents %}&mdash; <span class="tag">no per-seat cost set yet</span>{% endif %}</p>
+  <a href="/subscriptions/{{ sub_row.id }}">{{ sub_row.name }}</a>
+  {% if not sub_row.monthly_cost_cents %}&mdash; <span class="tag">no per-seat cost set yet</span>{% endif %}</p>
 {% else %}
-<form method="post" action="/settings/licences/{{ l.sku_id }}/create-subscription"
+<form method="post" action="/settings/entra/licences/{{ l.sku_id }}/create-subscription"
       class="inline-form">
   <button type="submit">Create subscription from this licence</button>
   <span class="hint">Creates it with the current holders as seats. Cost starts at zero.</span>

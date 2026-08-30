@@ -363,16 +363,17 @@ def sync() -> dict:
 # --- groups --------------------------------------------------------------
 
 def sync_groups() -> dict:
-    """Pull groups and their user membership.
+    """Pull user membership for the groups ticked under Groups.
+
+    Only the ticked ones: membership is a call per group, and on a real tenant
+    most groups are nothing to do with ITAM.
 
     Needs the Graph application permission Group.Read.All (plus the existing
     User.Read.All) with admin consent.
     """
-    group_filter = settings.get("ENTRA_GROUP_FILTER")
-    params = {"$select": "id,displayName,description", "$top": "999"}
-    if group_filter:
-        params["$filter"] = group_filter
-    groups = _get_all("/groups", params, advanced=bool(group_filter))
+    groups = [dict(g) for g in db.q(
+        "SELECT id, display_name AS displayName, description FROM entra_groups "
+        "WHERE sync_users = 1 ORDER BY display_name")]
 
     now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     created = updated = members_linked = skipped_members = 0
@@ -524,19 +525,45 @@ def sync_devices() -> dict:
             "groups_refreshed": groups_refreshed}
 
 
-def fetch_group_devices(group_id: str) -> list[dict]:
-    """Devices in a group, following nested groups.
+def fetch_group_devices(group_id: str) -> dict:
+    """Devices in a group, following nested groups, and what happened.
 
     Cast to device for the same reason the user sync casts to user: /members
     would give direct members only, and a group of groups would silently
-    resolve to nothing. The user-group sync casts to user, which is exactly why
-    a group full of virtual machines shows up there as empty.
+    resolve to nothing.
+
+    Returns the members AND the counts behind them, because "0 devices" has
+    three different causes and they need telling apart:
+      - the group really has no device members
+      - the cast came back empty even though the group has devices
+      - members came back but carried no deviceId to key on
+    An earlier version returned a bare list and dropped members with no
+    deviceId on the floor, which made the second and third look like the first.
     """
     members = _get_all(f"/groups/{group_id}/transitiveMembers/microsoft.graph.device",
                        {"$select": "id,deviceId,displayName", "$top": "999"})
-    return [{"azure_device_id": (m.get("deviceId") or "").strip().lower(),
-             "device_name": m.get("displayName")}
-            for m in members if m.get("deviceId")]
+    usable = [{"azure_device_id": (m.get("deviceId") or "").strip().lower(),
+               "device_name": m.get("displayName")}
+              for m in members if (m.get("deviceId") or "").strip()]
+    out = {"devices": usable, "returned": len(members),
+           "no_device_id": len(members) - len(usable), "probe": None}
+    if members:
+        return out
+
+    # Nothing came back from the cast. Ask again without it and count what is
+    # actually in there, so the page can say whether the group is empty or the
+    # cast is being refused.
+    try:
+        raw = _get_all(f"/groups/{group_id}/transitiveMembers",
+                       {"$select": "id", "$top": "999"})
+    except GraphError:
+        return out
+    kinds: dict[str, int] = {}
+    for m in raw:
+        kind = str(m.get("@odata.type") or "unknown").split(".")[-1]
+        kinds[kind] = kinds.get(kind, 0) + 1
+    out["probe"] = {"total": len(raw), "kinds": kinds}
+    return out
 
 
 def _store_group_devices(group_id: str, members: list[dict]) -> None:
@@ -566,40 +593,81 @@ def is_device_rule(group: dict) -> bool:
 GROUP_SELECT = "id,displayName,description,groupTypes,membershipRule"
 
 
-def sync_device_groups(mode: str = "dynamic") -> dict:
-    """Find the Entra groups that contain devices, and what is in them.
+def looks_like(group: dict) -> str:
+    """A guess at what a group collects, to sort the list sensibly.
 
-    Two ways round it, because they cost very different amounts:
-
-    "dynamic" reads the group list once and looks inside only the groups whose
-    own membership rule is written against `device.` - the Dynamic Device
-    groups. One extra call per candidate, and on most tenants that is a handful.
-
-    "all" looks inside every group, because a group with Assigned membership can
-    hold devices too and nothing about it says so from the outside. One call per
-    group; ENTRA_DEVICE_GROUP_FILTER narrows which.
-
-    Needs Group.Read.All, the same as the user-group sync.
+    Only a hint for the eye. Nothing syncs on the strength of it - you tick the
+    boxes, because only you know that "Kiosks" is really a device group.
     """
-    group_filter = settings.get("ENTRA_DEVICE_GROUP_FILTER")
+    if is_device_rule(group):
+        return "device"
+    types = [str(t).lower() for t in (group.get("groupTypes") or [])]
+    if "dynamicmembership" in types:
+        return "user"
+    return "assigned"
+
+
+def discover_groups() -> dict:
+    """List every group once and remember it. No membership is fetched.
+
+    One paged call for the whole tenant, so this is cheap to re-run. Ticks
+    already made are preserved: rediscovering must never silently switch a sync
+    off.
+    """
+    group_filter = settings.get("ENTRA_GROUP_FILTER")
     params = {"$select": GROUP_SELECT, "$top": "999"}
     if group_filter:
         params["$filter"] = group_filter
     groups = _get_all("/groups", params, advanced=bool(group_filter))
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    seen = 0
+    for g in groups:
+        gid = g.get("id")
+        if not gid:
+            continue
+        seen += 1
+        db.execute(
+            """INSERT INTO entra_groups (id, display_name, description, group_types,
+                                         membership_rule, looks_like, discovered_at)
+               VALUES (?,?,?,?,?,?,?)
+               ON CONFLICT(id) DO UPDATE SET
+                   display_name=excluded.display_name,
+                   description=excluded.description,
+                   group_types=excluded.group_types,
+                   membership_rule=excluded.membership_rule,
+                   looks_like=excluded.looks_like,
+                   discovered_at=excluded.discovered_at""",
+            (gid, g.get("displayName") or "(no name)", g.get("description"),
+             ",".join(str(t) for t in (g.get("groupTypes") or [])),
+             g.get("membershipRule"), looks_like(g), now))
+    return {"groups": seen, "filter": group_filter}
 
-    candidates = [g for g in groups if g.get("id")]
-    dynamic_hits = [g for g in candidates if is_device_rule(g)]
-    if mode == "dynamic":
-        candidates = dynamic_hits
 
+def sync_device_groups() -> dict:
+    """Fetch device members for the groups ticked under Device groups.
+
+    One call per ticked group and not one more. Which groups those are is your
+    decision, taken on a page that lists every group - guessing it from a name
+    filter or a membership rule was never going to be right for everybody.
+
+    Needs Group.Read.All. Reading the device objects behind the membership may
+    also need Device.Read.All in some tenants; when the cast comes back empty
+    the result says what was actually in the group instead of reporting nothing.
+    """
+    picked = db.q("SELECT * FROM entra_groups WHERE sync_devices = 1 "
+                  "ORDER BY display_name")
     now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     total_devices = 0
-    scanned_ids, kept_ids = [], []
-    for g in candidates:
+    kept_ids, empty = [], []
+    for g in picked:
         gid = g["id"]
-        scanned_ids.append(gid)
-        members = fetch_group_devices(gid)
+        found = fetch_group_devices(gid)
+        members = found["devices"]
         if not members:
+            empty.append({"id": gid, "name": g["display_name"],
+                          "returned": found["returned"],
+                          "no_device_id": found["no_device_id"],
+                          "probe": found["probe"]})
             continue
         kept_ids.append(gid)
         total_devices += len(members)
@@ -614,26 +682,23 @@ def sync_device_groups(mode: str = "dynamic") -> dict:
                    dynamic=excluded.dynamic,
                    membership_rule=excluded.membership_rule,
                    synced_at=excluded.synced_at""",
-            (gid, g.get("displayName") or "(no name)", g.get("description"),
-             len(members), 1 if is_device_rule(g) else 0,
-             g.get("membershipRule"), now))
+            (gid, g["display_name"], g["description"], len(members),
+             1 if g["looks_like"] == "device" else 0, g["membership_rule"], now))
         _store_group_devices(gid, members)
 
-    # A group we looked at this run and found no devices in is no longer a
-    # device group. Groups we did not look at were never asked, so nothing was
-    # learned about them and they are left exactly as they were.
+    # Untick a group and its devices should stop being tracked; a group that
+    # came back empty this time keeps what it had, because an empty answer is
+    # as likely to be a permission as a real change.
+    picked_ids = {g["id"] for g in picked}
     dropped = 0
-    for gid in set(scanned_ids) - set(kept_ids):
-        if db.q1("SELECT 1 FROM device_groups WHERE id = ?", (gid,)):
-            db.execute("DELETE FROM device_groups WHERE id = ?", (gid,))
-            db.execute("DELETE FROM device_group_members WHERE group_id = ?", (gid,))
+    for row in db.q("SELECT id FROM device_groups"):
+        if row["id"] not in picked_ids:
+            db.execute("DELETE FROM device_groups WHERE id = ?", (row["id"],))
+            db.execute("DELETE FROM device_group_members WHERE group_id = ?", (row["id"],))
             dropped += 1
 
-    return {"mode": mode, "groups_listed": len(groups),
-            "dynamic_device_groups": len(dynamic_hits),
-            "scanned": len(scanned_ids), "device_groups": len(kept_ids),
-            "devices": total_devices, "dropped": dropped,
-            "filter": group_filter}
+    return {"picked": len(picked), "device_groups": len(kept_ids),
+            "devices": total_devices, "dropped": dropped, "empty": empty}
 
 
 def refresh_ignore_groups() -> int:
@@ -645,7 +710,7 @@ def refresh_ignore_groups() -> int:
     """
     wanted = devices_mod.group_rules()
     for group_id in wanted:
-        _store_group_devices(group_id, fetch_group_devices(group_id))
+        _store_group_devices(group_id, fetch_group_devices(group_id)["devices"])
     return len(wanted)
 
 

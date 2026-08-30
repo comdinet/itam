@@ -41,7 +41,7 @@
 {% block admin %}
 <p class="crumb"><a href="/settings/rules">&larr; Rules</a></p>
 <h2>{{ r.name }}</h2>
-<p class="meta">Everyone in {% if r.group_id == all_users_group %}{{ r.group_name }}{% else %}<a href="/settings/groups/{{ r.group_id }}">{{ r.group_name }}</a>{% endif %}
+<p class="meta">Everyone in {% if r.group_id == all_users_group %}{{ r.group_name }}{% else %}<a href="/settings/entra/groups/{{ r.group_id }}">{{ r.group_name }}</a>{% endif %}
   should have <strong>{{ r.quantity }}</strong> &times; {{ grants_label(r) }}
   {%- if r.kind == 'asset' and r.asset_name %} <span class="meta">({{ r.category }})</span>{% endif %}.
   {% if not r.active %}<span class="tag">paused</span>{% endif %}</p>

@@ -139,7 +139,7 @@
      page.</p>
   {% if groups|length <= 1 %}
     <p class="hint">Only <strong>{{ groups[0].display_name if groups else 'Everyone' }}</strong>
-       is available so far. <a href="/settings/groups">Sync your Entra groups</a> to
+       is available so far. <a href="/settings/entra/groups">Sync your Entra groups</a> to
        target specific teams.</p>
   {% endif %}
   {% if not people %}
@@ -158,7 +158,7 @@
       <td><a href="/settings/rules/{{ o.rule.id }}"><strong>{{ o.rule.name }}</strong></a>
         {% if not o.rule.active %}<span class="tag">paused</span>{% endif %}</td>
       <td>{% if o.rule.group_id == all_users_group %}{{ o.rule.group_name }}
-          {% else %}<a href="/settings/groups/{{ o.rule.group_id }}">{{ o.rule.group_name }}</a>{% endif %}
+          {% else %}<a href="/settings/entra/groups/{{ o.rule.group_id }}">{{ o.rule.group_name }}</a>{% endif %}
         {% if o.summary and o.summary.conditions %}
           <div class="meta">
             {%- for c in o.summary.conditions -%}

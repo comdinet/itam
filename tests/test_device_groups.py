@@ -49,74 +49,88 @@ def fake_get_all(path, params=None, base=None, advanced=False):
     for gid, members in TENANT["members"].items():
         if path == f"/groups/{gid}/transitiveMembers/microsoft.graph.device":
             return list(members)
+        if path == f"/groups/{gid}/transitiveMembers":
+            return list(TENANT.get("raw", {}).get(gid, []))
     raise AssertionError(f"unexpected path {path}")
+
+
+def tick(*ids):
+    db.execute("UPDATE entra_groups SET sync_devices = 0")
+    for gid in ids:
+        db.execute("UPDATE entra_groups SET sync_devices = 1 WHERE id = ?", (gid,))
 
 entra._get_all = fake_get_all
 
-print("--- a Dynamic Device group is told apart by its own rule ---")
-check("device rule", entra.is_device_rule(TENANT["groups"][0]), True)
-check("user rule, same groupTypes", entra.is_device_rule(TENANT["groups"][1]), False)
-check("assigned membership", entra.is_device_rule(TENANT["groups"][2]), False)
+print("--- discovery lists every group once, and classifies it for the eye ---")
+d = entra.discover_groups()
+check("all three listed", d["groups"], 3)
+check("one call, not one per group", calls, ["/groups"])
+check("classified", {g["id"]: g["looks_like"] for g in db.q("SELECT id, looks_like FROM entra_groups")},
+      {"g-vm": "device", "g-people": "user", "g-kiosk": "assigned"})
+check("nothing is ticked to start with",
+      db.q1("SELECT COUNT(*) c FROM entra_groups WHERE sync_devices = 1")["c"], 0)
 
-print("\n--- the default mode looks only in those ---")
-r = entra.sync_device_groups("dynamic")
-check("one candidate found", r["dynamic_device_groups"], 1)
-check("and only it was looked in", r["scanned"], 1)
-check("one listing plus one members call", len(calls), 2)
-check("it holds devices", r["device_groups"], 1)
-check("the kiosk group is not found this way",
-      [g["id"] for g in devices.groups_listing()], ["g-vm"])
-check("it casts to device, never to user",
-      any("microsoft.graph.user" in c for c in calls), False)
-check("and follows nested groups",
-      all("transitiveMembers" in c for c in calls if c != "/groups"), True)
-
-print("\n--- 'every group' is the thorough pass, for Assigned membership ---")
+print("\n--- nothing is fetched until a group is ticked ---")
 calls.clear()
-r = entra.sync_device_groups("all")
-check("every group looked in", r["scanned"], 3)
-check("two hold devices", r["device_groups"], 2)
-check("three memberships", r["devices"], 3)
-check("one call per group, plus the listing", len(calls), 4)
-check("now the kiosk group is there",
-      sorted(g["id"] for g in devices.groups_listing()), ["g-kiosk", "g-vm"])
-check("the dynamic user group is still not kept",
-      "g-people" in [g["id"] for g in devices.groups_listing()], False)
+r = entra.sync_device_groups()
+check("no group picked", r["picked"], 0)
+check("so no calls at all", calls, [])
 
-print("\n--- Edgar's mistake: a filter that matches nothing says so ---")
+print("\n--- Edgar's group, ticked ---")
+tick("g-vm")
 calls.clear()
-settings.set_value("ENTRA_DEVICE_GROUP_FILTER", "startsWith(displayName, 'Virtual-')", "test")
-TENANT["groups"] = []                    # what Graph returns for that filter
-r = entra.sync_device_groups("dynamic")
-check("nothing listed", r["groups_listed"], 0)
-check("nothing scanned", r["scanned"], 0)
-check("and the filter is reported back so the message can name it",
-      r["filter"], "startsWith(displayName, 'Virtual-')")
-check("no group was deleted for being unreachable",
-      sorted(g["id"] for g in devices.groups_listing()), ["g-kiosk", "g-vm"])
-
-settings.set_value("ENTRA_DEVICE_GROUP_FILTER", "startsWith(displayName, 'Virtual')", "test")
-TENANT["groups"] = [{"id": "g-vm", "displayName": "Virtual Machines",
-                     "description": "Build agents", "groupTypes": ["DynamicMembership"],
-                     "membershipRule": '(device.deviceOSType -eq "Windows")'}]
-r = entra.sync_device_groups("dynamic")
-check("the corrected filter finds it", r["device_groups"], 1)
-check("and its rule is kept for the page",
+r = entra.sync_device_groups()
+check("one group synced", r["device_groups"], 1)
+check("its two devices", r["devices"], 2)
+check("exactly one call", calls, ["/groups/g-vm/transitiveMembers/microsoft.graph.device"])
+check("never cast to user", any("microsoft.graph.user" in c for c in calls), False)
+check("the rule is kept for the page",
       devices.group("g-vm")["membership_rule"], '(device.deviceOSType -eq "Windows")')
-check("flagged as dynamic", devices.group("g-vm")["dynamic"], 1)
+check("and flagged dynamic", devices.group("g-vm")["dynamic"], 1)
 
-print("\n--- a group that stops holding devices is dropped ---")
-TENANT["groups"] = [{"id": "g-kiosk", "displayName": "Kiosks", "description": None,
-                     "groupTypes": [], "membershipRule": None}]
-TENANT["members"]["g-kiosk"] = []
-settings.set_value("ENTRA_DEVICE_GROUP_FILTER", "", "test")
-r = entra.sync_device_groups("all")
-check("reported as dropped", r["dropped"], 1)
-check("gone from the list", [g["id"] for g in devices.groups_listing()], ["g-vm"])
-check("and its membership rows went with it",
-      db.q1("SELECT COUNT(*) c FROM device_group_members WHERE group_id='g-kiosk'")["c"], 0)
+print("\n--- an Assigned-membership group works the same way ---")
+tick("g-vm", "g-kiosk")
+r = entra.sync_device_groups()
+check("both synced", r["device_groups"], 2)
+check("three devices between them", r["devices"], 3)
+check("no guessing from names or rules was involved",
+      sorted(g["id"] for g in devices.groups_listing()), ["g-kiosk", "g-vm"])
+
+print("\n--- unticking a group drops what it brought in ---")
+tick("g-vm")
+r = entra.sync_device_groups()
+check("one dropped", r["dropped"], 1)
+check("gone", [g["id"] for g in devices.groups_listing()], ["g-vm"])
+check("with its membership", db.q1(
+    "SELECT COUNT(*) c FROM device_group_members WHERE group_id='g-kiosk'")["c"], 0)
+
+print("\n--- a ticked group that comes back empty is diagnosed, not shrugged off ---")
+TENANT["members"]["g-vm"] = []
+TENANT["raw"] = {"g-vm": [{"id": "o1", "@odata.type": "#microsoft.graph.device"},
+                          {"id": "o2", "@odata.type": "#microsoft.graph.device"},
+                          {"id": "o3", "@odata.type": "#microsoft.graph.device"}]}
+r = entra.sync_device_groups()
+check("reported as empty", len(r["empty"]), 1)
+check("it asked again without the cast", r["empty"][0]["probe"]["total"], 3)
+check("and says what is actually in there",
+      r["empty"][0]["probe"]["kinds"], {"device": 3})
+check("what it already had is kept, since an empty answer may be a permission",
+      [g["id"] for g in devices.groups_listing()], ["g-vm"])
+
+print("\n--- members returned without a deviceId are counted, not dropped ---")
+TENANT["members"]["g-vm"] = [{"id": "o1", "deviceId": None, "displayName": "arieintune"},
+                             {"id": "o2", "deviceId": "", "displayName": "daniel-win11"}]
+TENANT.pop("raw", None)
+r = entra.sync_device_groups()
+check("still reported empty", len(r["empty"]), 1)
+check("but it says two came back", r["empty"][0]["returned"], 2)
+check("and that neither carried a deviceId", r["empty"][0]["no_device_id"], 2)
 
 print("\n--- membership drives the ignore rule ---")
+TENANT["members"]["g-vm"] = [
+    {"id": "o1", "deviceId": "AAAA-1", "displayName": "arieintune"},
+    {"id": "o2", "deviceId": "AAAA-2", "displayName": "daniel-win11"}]
+entra.sync_device_groups()
 for did, azure in [("d1", "aaaa-1"), ("d2", "aaaa-2"), ("d3", "cccc-9")]:
     db.execute("""INSERT INTO devices (id, device_name, model, os, azure_device_id,
                                        synced_at)
@@ -126,7 +140,7 @@ check("device ids are stored lower-cased, so matching is case-safe",
       sorted(r["azure_device_id"] for r in
              db.q("SELECT azure_device_id FROM device_group_members WHERE group_id='g-vm'")),
       ["aaaa-1", "aaaa-2"])
-check("ignoring the group", devices.add_rule("group", "eq", "g-vm", "Virtual machines"), None)
+check("ignoring the group", devices.add_rule("group", "eq", "g-vm", "Virtual Machines"), None)
 check("hides exactly its members", devices.recompute(), 2)
 check("the device outside the group is untouched",
       db.q1("SELECT ignored_reason FROM devices WHERE id='d3'")["ignored_reason"], None)
@@ -137,18 +151,15 @@ check("members from Entra", row["members"], 2)
 check("matched to Intune records", row["matched"], 2)
 check("and that a rule is using it", row["ignoring"], 1)
 
-TENANT["groups"] = [{"id": "g-vm", "displayName": "Virtual Machines", "description": None,
-                     "groupTypes": ["DynamicMembership"],
-                     "membershipRule": '(device.deviceOSType -eq "Windows")'}]
 TENANT["members"]["g-vm"] = TENANT["members"]["g-vm"] + [
     {"id": "o9", "deviceId": "DDDD-9", "displayName": "BUILD-VM-09"}]
-entra.sync_device_groups("dynamic")
+entra.sync_device_groups()
 row = [g for g in devices.groups_listing() if g["id"] == "g-vm"][0]
 check("a member Intune has not synced still shows", row["members"], 3)
 check("but is not counted as known", row["matched"], 2)
-members = devices.group_members("g-vm")
 check("and is listed by its Entra name",
-      [m["entra_name"] for m in members if not m["device_id"]], ["BUILD-VM-09"])
+      [m["entra_name"] for m in devices.group_members("g-vm") if not m["device_id"]],
+      ["BUILD-VM-09"])
 
 print("\n--- refreshing just the rules' groups is cheap ---")
 calls.clear()

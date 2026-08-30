@@ -388,12 +388,12 @@ Sync behaviour:
   - **General** — counts, plus the application settings, **editable here**.
     Below them, the handful that must stay in `.env`, with the reason.
   - **Entra ID** — configuration status and the user sync.
-  - **Groups** — Entra groups and their membership; the basis for rules.
+  - **Entra ID** — credentials and filters, then one tab each for **Users**,
+    **Groups**, **Device groups** and **Licences**. Groups and Device groups
+    are the same list of groups, ticked for people or for devices.
   - **Devices** — Intune devices, their macOS custom attributes, and the link
     to assets. Rules here **ignore** what is not kit — virtual machines by
     group, or anything by model, name or OS.
-  - **Device groups** — Entra groups whose members are devices, which the
-    Groups tab cannot show because it syncs people.
   - **Currencies** — the currencies you buy in and their rates.
   - **Pricing** — price a fleet by specification, optionally narrowed to or
     held back from the people in an Entra group.
@@ -610,59 +610,46 @@ A filter is optional. Leaving it blank and narrowing inside ITAM is the more
 reliable path, since nothing there depends on which properties Graph will filter
 on — which is exactly what the next section is for.
 
-### Device groups
+### Groups and device groups: you tick, ITAM syncs
 
-**Settings → Groups** syncs the *people* in a group: it asks Graph for
-`transitiveMembers/microsoft.graph.user`. A group full of virtual machines has
-no user members, so it comes back **empty** and looks like nothing is in it.
-That is why a group filter there is no help for leaving VMs out.
+**Settings → Entra ID** has five tabs: **General** for the credentials and
+filters, then **Users**, **Groups**, **Device groups** and **Licences**.
 
-**Settings → Device groups** is the other cast — `microsoft.graph.device` — kept
-in its own list so each page means one thing:
+Groups and Device groups show the *same* list — every group in the tenant — with
+a checkbox each:
 
 ```
-GROUP                DEVICES   KNOWN TO ITAM
-Kiosks & signage           2               2       [Ignore its devices]
-Virtual machines           7               6       ignored
-  Build agents             1 not synced from Intune
+GROUP                                    MEMBERSHIP          PEOPLE
+☑ CSE                                    assigned                —
+☑ Israel        (user.country -eq "Israel")   dynamic · users     2   Open
+☐ Kiosks & signage                       assigned                —
+☐ Virtual Machines  (device.deviceOSType -eq "Windows")  dynamic · devices  —
 ```
 
-Opening a group lists its devices, matched to their Intune records, and each row
-says whether ITAM has it. A member reading **not synced from Intune** is in the
-Entra group but has no Intune record here — usually the device sync has not run
-since it was enrolled, or `INTUNE_DEVICE_FILTER` is keeping it out.
+Tick on **Groups** to track a group's **people**; tick on **Device groups** to
+track its **devices**. The two are independent, and both are yours to choose:
+guessing from a name filter or a membership rule was never going to be right for
+everybody's tenant.
 
-**Ignore its devices** is one click from this page, and creates the ignore rule
-described below.
+**Refresh the group list** is one call for the whole tenant and keeps your ticks.
+**Sync the ticked groups** fetches membership, one call per ticked group and not
+one more. The `membership` column is a hint for the eye — a dynamic group whose
+rule mentions `device.` is almost certainly a device group — but nothing syncs on
+the strength of it.
 
-There is no way to ask Entra *"which groups hold devices"*, so there are two
-ways round it:
+The two lists exist separately because the two syncs ask Entra different
+questions: `transitiveMembers/microsoft.graph.user` for people,
+`…/microsoft.graph.device` for devices. **A group of virtual machines has no user
+members**, which is why it looks empty on the Groups tab, and why a group filter
+there never helped.
 
-**Sync dynamic device groups** (the default) reads the group list once and looks
-inside only the groups whose own membership rule is written against `device.` —
-what the portal calls **Dynamic Device**. A handful of extra calls, not one per
-group.
-
-That test is made locally, on `groupTypes` and `membershipRule`, rather than as
-an OData `$filter` like `contains(membershipRule, 'device.')`. Filtering
-directory objects with `contains()` is not reliably supported, and a filter
-Graph silently declines to run is worse than no filter at all.
-
-**Look in every group** is the thorough pass. A group with **Assigned**
-membership can hold devices too, and nothing about it says so from the outside,
-so the only way to find out is to look — one call per group. Narrow it with
-`ENTRA_DEVICE_GROUP_FILTER` if your tenant is large.
-
-Only groups that turn out to hold devices are kept either way, a group looked at
-and found empty is dropped, and groups that were never looked at are left exactly
-as they were. It needs `Group.Read.All`, the same as the user-group sync.
-
-A filter is matched against the group's **exact display name**: a group called
-`Virtual Machines` is found by `startsWith(displayName, 'Virtual')` and *not* by
-`startsWith(displayName, 'Virtual-')`. When a sync comes back with nothing, the
-message says which step was empty — the filter matched no groups, or no group
-had a device rule, or the groups had no device members — because each has a
-different fix.
+Unticking a device group drops what it brought in. A ticked group that comes back
+with **no devices** is diagnosed rather than shrugged off: the page says whether
+Entra returned members with no `deviceId`, or the device cast came back empty
+while the group demonstrably holds members — in which case the app registration
+most likely wants `Device.Read.All` alongside `Group.Read.All`. What it already
+had is kept, because an empty answer is as likely to be a permission as a real
+change.
 
 ### Ignoring devices that are not kit
 
@@ -676,7 +663,7 @@ them is ignored:
 
 | Match on | |
 |---|---|
-| **In Entra group** | Picked from **Device groups**. Follows nested groups. |
+| **In Entra group** | Picked from **Entra ID → Device groups**. Follows nested groups. |
 | **Model / Manufacturer / Device name / OS** | `contains`, `is exactly`, `starts with` — case-insensitive |
 | **This one device** | The **Ignore** link on any row in the list |
 

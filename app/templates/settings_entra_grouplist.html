@@ -1,0 +1,43 @@
+{# The catalogue of every group, ticked for one purpose or the other. Shared by
+   the Groups and Device groups sub-tabs, which differ only in which column they
+   tick and what they say about it. #}
+{% macro group_table(groups, kind, discovered, group_filter) %}
+{% set ticking = 'sync_devices' if kind == 'device' else 'sync_users' %}
+<form method="post" action="/settings/entra/{{ 'device-groups' if kind == 'device' else 'groups' }}/pick">
+<div class="inline-form">
+  <button type="submit">Save what is ticked</button>
+  <span class="hint">{{ groups|selectattr(ticking)|list|length }} of
+    {{ groups|length }} ticked. Saving only records the choice &mdash; nothing is
+    fetched until you sync.</span>
+</div>
+<table>
+  <thead><tr><th class="pickcol"></th><th>Group</th><th>Membership</th>
+    <th class="num">{{ 'Devices' if kind == 'device' else 'People' }}</th>
+    <th></th></tr></thead>
+  <tbody>
+  {% for g in groups %}
+    <tr>
+      <td class="pickcol"><input type="checkbox" name="pick" value="{{ g.id }}"
+          {% if g[ticking] %}checked{% endif %}></td>
+      <td><strong>{{ g.display_name }}</strong>
+        {% if g.description %}<div class="meta">{{ g.description }}</div>{% endif %}
+        {% if g.membership_rule %}<div class="meta mono">{{ g.membership_rule }}</div>{% endif %}</td>
+      <td>{% if g.looks_like == 'device' %}<span class="tag">dynamic &middot; devices</span>
+          {% elif g.looks_like == 'user' %}<span class="tag">dynamic &middot; users</span>
+          {% else %}assigned{% endif %}</td>
+      <td class="num">{% if g.synced is not none %}{{ g.synced }}
+          {% else %}<span class="meta">&mdash;</span>{% endif %}</td>
+      <td class="row-actions">
+        {% if g.synced is not none %}
+          <a href="/settings/{{ 'device-groups' if kind == 'device' else 'groups' }}/{{ g.id }}">Open</a>
+        {% endif %}</td></tr>
+  {% else %}
+    <tr><td colspan="5" class="empty">
+      {% if discovered %}No groups match
+        {% if group_filter %}<span class="mono">{{ group_filter }}</span>{% endif %}.
+      {% else %}No groups listed yet &mdash; press <strong>Refresh the group list</strong>.{% endif %}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</form>
+{% endmacro %}

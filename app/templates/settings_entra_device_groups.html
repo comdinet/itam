@@ -1,0 +1,53 @@
+{% extends "settings_entra_base.html" %}
+{% from "settings_entra_grouplist.html" import group_table %}
+{% block title %}Device groups &middot; ITAM{% endblock %}
+{% block entra %}
+<p class="meta">The same groups, ticked for their <strong>devices</strong> instead.
+  Ticking here is what makes a group's virtual machines visible to ITAM &mdash;
+  and, once synced, what lets you
+  <a href="/settings/devices">ignore them</a> in one click.</p>
+<p class="meta">The two lists are separate because the two syncs ask Entra
+  different questions: <span class="mono">transitiveMembers/microsoft.graph.user</span>
+  for people, <span class="mono">…/microsoft.graph.device</span> for devices. A
+  group of virtual machines has no user members, which is why it looks empty on
+  the Groups tab.</p>
+
+<div class="inline-form">
+  <form method="post" action="/settings/entra/groups/discover">
+    <button type="submit" {% if not cfg.configured %}disabled{% endif %}>Refresh the group list</button>
+  </form>
+  <form method="post" action="/settings/entra/device-groups/sync">
+    <button class="light" type="submit" {% if not cfg.configured %}disabled{% endif %}>Sync the ticked groups</button>
+  </form>
+  <span class="hint">Listed {{ discovered or 'never' }}. Last device sync:
+    {{ last.last or 'never' }}.</span>
+</div>
+
+{% if empty %}
+<div class="warn">
+  <strong>{{ empty|length }} ticked group came back with no devices.</strong>
+  <ul>
+  {% for e in empty %}
+    <li><strong>{{ e.name }}</strong> &mdash;
+      {% if e.no_device_id %}
+        Entra returned {{ e.returned }} device(s), but none carried a
+        <span class="mono">deviceId</span> to key on.
+      {% elif e.probe and e.probe.total %}
+        the device cast returned nothing, yet the group holds
+        {{ e.probe.total }} member(s):
+        {% for kind, n in e.probe.kinds.items() %}{{ n }} {{ kind }}{% if not loop.last %}, {% endif %}{% endfor %}.
+        If devices are listed there, the app registration most likely needs
+        <span class="mono">Device.Read.All</span> alongside
+        <span class="mono">Group.Read.All</span> &mdash;
+        <a href="/settings/entra">test the connection</a> to see which
+        permissions answer.
+      {% else %}
+        the group has no members at all.
+      {% endif %}</li>
+  {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{{ group_table(groups, 'device', discovered, group_filter) }}
+{% endblock %}

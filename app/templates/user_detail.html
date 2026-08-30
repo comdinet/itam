@@ -107,7 +107,7 @@
   <thead><tr><th>Licence</th><th>String ID</th></tr></thead>
   <tbody>
   {% for l in entra_licences %}
-    <tr><td><a href="/settings/licences/{{ l.sku_id }}">{{ l.display_name }}</a></td>
+    <tr><td><a href="/settings/entra/licences/{{ l.sku_id }}">{{ l.display_name }}</a></td>
         <td class="mono">{{ l.sku_part_number }}</td></tr>
   {% else %}
     <tr><td colspan="2" class="empty">None, or licences have not been checked yet.</td></tr>

@@ -1,0 +1,79 @@
+{% extends "settings_entra_base.html" %}
+{% block title %}Users &middot; ITAM{% endblock %}
+{% block entra %}
+<p class="meta">{{ last.n }} user(s) sourced from Entra ID, {{ people }} in total.
+  Last sync: {{ last.last or 'never' }}.</p>
+
+<h3>Filters</h3>
+<p class="meta">These are <strong>OData</strong> <span class="mono">$filter</span>
+  expressions, which are <em>not</em> the same language as an Intune dynamic-group
+  membership rule even though they look alike. Rules use
+  <span class="mono">-eq</span> and double quotes; OData uses
+  <span class="mono">eq</span> and single quotes, with no
+  <span class="mono">device.</span> prefix.</p>
+
+<table>
+  <thead><tr><th>Sync</th><th>Filter in effect</th><th>Example</th><th></th></tr></thead>
+  <tbody>
+  {% for kind, label, current, example in [
+      ('user', 'Users', cfg.filter, "accountEnabled eq true and userType eq 'Member'"),
+      ('group', 'Groups', cfg.group_filter, "startsWith(displayName, 'ITAM-')"),
+      ('device', 'Devices', cfg.device_filter, "operatingSystem eq 'macOS'")] %}
+    <tr>
+      <td>{{ label }}</td>
+      <td class="mono">{{ current or 'none — everything' }}
+        {% if filter_checks[kind].dialect %}
+          <div class="meta"><span class="tag">wrong language</span></div>
+        {% endif %}</td>
+      <td class="mono meta">{{ example }}</td>
+      <td class="row-actions">
+        {% if current %}
+        <form method="post" action="/settings/entra/test-filter">
+          <input type="hidden" name="kind" value="{{ kind }}">
+          <button class="link">Test it</button></form>
+        {% endif %}</td></tr>
+    {% if filter_checks[kind].dialect %}
+      <tr><td colspan="4">
+        <div class="warn">
+          <strong>That is {{ filter_checks[kind].dialect }}, not OData.</strong>
+          <ul>{% for w in filter_checks[kind].why %}<li>{{ w }}</li>{% endfor %}</ul>
+          {% if filter_checks[kind].suggestion %}
+            <p>In OData it is
+              <span class="mono">{{ filter_checks[kind].suggestion }}</span> — though
+              <span class="mono">managedDevices</span> accepts
+              <span class="mono">$filter</span> on far fewer properties than
+              <span class="mono">/users</span> does, so
+              <strong>test it</strong> before relying on it.</p>
+          {% endif %}
+          {% if kind == 'device' %}
+            <p>To leave virtual machines out, you do not need this at all:
+              <a href="/settings/devices">Settings &rarr; Devices</a> ignores them by
+              their Entra group or by model, entirely inside ITAM, with none of
+              Graph's restrictions on what can be filtered.</p>
+          {% endif %}
+        </div></td></tr>
+    {% endif %}
+  {% endfor %}
+  </tbody>
+</table>
+
+{% if filter_test %}
+<div class="{{ 'ok-panel' if filter_test.ok else 'warn' }}">
+  <strong>{{ filter_test.kind|capitalize }} filter:
+    {{ 'accepted' if filter_test.ok else 'rejected' }}</strong>
+  <p class="mono">{{ filter_test.detail }}</p>
+  {% if filter_test.verdict and filter_test.verdict.suggestion %}
+    <p>Try <span class="mono">{{ filter_test.verdict.suggestion }}</span>.</p>
+  {% endif %}
+</div>
+{% endif %}
+
+<p class="hint">A filter is optional. Leave it blank and everything syncs — then
+  narrow what you keep inside ITAM, where nothing is at the mercy of which
+  properties Graph will filter on.</p>
+<form method="post" action="/settings/entra/sync">
+  <button type="submit" {% if not cfg.configured %}disabled{% endif %}>Sync users from Entra ID now</button>
+</form>
+<p class="hint">Sync upserts on UPN. It never deletes: accounts disabled in Entra are
+  flagged here so their assets and licences stay visible for reclaim.</p>
+{% endblock %}

@@ -1,0 +1,28 @@
+{% extends "settings_entra_base.html" %}
+{% from "settings_entra_grouplist.html" import group_table %}
+{% block title %}Groups &middot; ITAM{% endblock %}
+{% block entra %}
+<p class="meta">Every group Entra knows about. Tick the ones whose <strong>people</strong>
+  ITAM should track &mdash; that membership is what
+  <a href="/settings/rules">entitlement rules</a> and the pricing conditions apply
+  to. Fetching membership is one call per group, so on a real tenant most groups
+  are nothing to do with ITAM and are better left unticked.</p>
+
+<div class="inline-form">
+  <form method="post" action="/settings/entra/groups/discover">
+    <button type="submit" {% if not cfg.configured %}disabled{% endif %}>Refresh the group list</button>
+  </form>
+  <form method="post" action="/settings/entra/groups/sync">
+    <button class="light" type="submit" {% if not cfg.configured %}disabled{% endif %}>Sync the ticked groups</button>
+  </form>
+  <span class="hint">Listed {{ discovered or 'never' }}
+    {%- if group_filter %}, narrowed by <span class="mono">{{ group_filter }}</span>{% endif %}.
+    Last member sync: {{ last.last or 'never' }}.</span>
+</div>
+
+{{ group_table(groups, 'user', discovered, group_filter) }}
+
+<p class="hint">Refreshing the list is one call for the whole tenant and keeps
+  your ticks. Narrow what appears with <span class="mono">ENTRA_GROUP_FILTER</span>
+  under <a href="/settings/entra">General</a> if the list is unwieldy.</p>
+{% endblock %}

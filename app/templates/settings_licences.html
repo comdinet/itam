@@ -1,6 +1,6 @@
-{% extends "settings_base.html" %}
+{% extends "settings_entra_base.html" %}
 {% block title %}Licences &middot; ITAM{% endblock %}
-{% block admin %}
+{% block entra %}
 <h2>Entra ID licences <span class="count">{{ licences|length }}</span></h2>
 <p class="meta">What the tenant owns and who holds it, read straight from Entra.
   Last sync: {{ (last.last or 'never')[:16].replace('T',' ') }}.</p>
@@ -21,7 +21,7 @@
   credentials under <a href="/settings/entra">Entra ID</a> first.</div>
 {% endif %}
 
-<form method="post" action="/settings/licences/sync" class="inline-form">
+<form method="post" action="/settings/entra/licences/sync" class="inline-form">
   <button type="submit" {% if not cfg.configured %}disabled{% endif %}>Check licences in Entra</button>
   <span class="hint">Needs <span class="mono">Organization.Read.All</span> on top of
     <span class="mono">User.Read.All</span>.</span>
@@ -43,7 +43,7 @@
   <tbody>
   {% for l in licences %}
     <tr>
-      <td><a href="/settings/licences/{{ l.sku_id }}">{{ l.display_name }}</a></td>
+      <td><a href="/settings/entra/licences/{{ l.sku_id }}">{{ l.display_name }}</a></td>
       <td class="mono">{{ l.sku_part_number }}</td>
       <td class="num">{{ l.prepaid }}</td>
       <td class="num">{{ l.consumed }}</td>
@@ -55,7 +55,7 @@
           <a href="/subscriptions/{{ l.sub_id }}">tracked</a>
           {% if not l.monthly_cost_cents %}<span class="tag">no cost set</span>{% endif %}
         {% else %}
-          <form method="post" action="/settings/licences/{{ l.sku_id }}/create-subscription">
+          <form method="post" action="/settings/entra/licences/{{ l.sku_id }}/create-subscription">
             <button class="link">Create subscription</button></form>
         {% endif %}</td></tr>
   {% else %}

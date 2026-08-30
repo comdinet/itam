@@ -29,10 +29,8 @@ SPEC: dict[str, tuple] = {
     "ENTRA_CLIENT_ID":      ("str",  "", "Client ID", "entra", False),
     "ENTRA_CLIENT_SECRET":  ("str",  "", "Client secret", "entra", True),
     "ENTRA_USER_FILTER":    ("str",  "", "User filter (OData)", "entra", False),
-    "ENTRA_GROUP_FILTER":   ("str",  "", "Group filter (OData)", "entra", False),
-    "ENTRA_DEVICE_GROUP_FILTER": ("str", "", "Device group filter (OData) - narrows "
-                                 "which groups are scanned for device members",
-                                 "entra", False),
+    "ENTRA_GROUP_FILTER":   ("str",  "", "Group filter (OData) - narrows which groups "
+                             "appear in the list you tick from", "entra", False),
     "INTUNE_DEVICE_FILTER": ("str",  "", "Device filter (OData)", "entra", False),
     "INTUNE_ATTRIBUTE_FILTER": ("str", "", "macOS custom attributes to sync "
                                 "(comma separated, blank = all, * allowed)",

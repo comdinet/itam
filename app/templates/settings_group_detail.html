@@ -1,4 +1,4 @@
-{% extends "settings_base.html" %}
+{% extends "settings_entra_base.html" %}
 {% block title %}{{ g.display_name }} &middot; ITAM{% if unlinked %}
 <h2>Not matched to an ITAM user <span class="count">{{ unlinked|length }}</span></h2>
 <div class="warn">{{ unlinked_reason }}</div>
@@ -10,8 +10,8 @@
 </table>
 {% endif %}
 {% endblock %}
-{% block admin %}
-<p class="crumb"><a href="/settings/groups">&larr; Groups</a></p>
+{% block entra %}
+<p class="crumb"><a href="/settings/entra/groups">&larr; Groups</a></p>
 <h2>{{ g.display_name }}</h2>
 <p class="meta">{{ g.description or 'No description' }} &middot;
   {{ members|length }} member(s) known here of {{ g.member_count }} in Entra &middot;

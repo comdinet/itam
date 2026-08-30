@@ -189,6 +189,22 @@ CREATE TABLE IF NOT EXISTS device_ignore_rules (
     created_at TEXT
 );
 
+-- Every group Entra knows about, with what you have asked ITAM to do with it.
+-- Discovery is one cheap call; syncing members is a call per group, so which
+-- groups are worth that is a decision, not a guess. Ticking a box is that
+-- decision, made once and visible.
+CREATE TABLE IF NOT EXISTS entra_groups (
+    id              TEXT PRIMARY KEY,
+    display_name    TEXT NOT NULL,
+    description     TEXT,
+    group_types     TEXT,        -- comma separated, as Entra reports them
+    membership_rule TEXT,        -- present when membership is dynamic
+    looks_like      TEXT,        -- 'device' | 'user' | 'assigned'
+    sync_users      INTEGER NOT NULL DEFAULT 0,
+    sync_devices    INTEGER NOT NULL DEFAULT 0,
+    discovered_at   TEXT
+);
+
 -- Entra groups whose members are DEVICES. The user-group sync casts members to
 -- microsoft.graph.user, so a group full of virtual machines syncs as empty and
 -- looks like nothing - these are kept apart so each list means one thing.

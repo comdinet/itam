@@ -1,7 +1,7 @@
 {% extends "settings_base.html" %}
 {% block title %}{{ g.display_name }} &middot; ITAM{% endblock %}
 {% block admin %}
-<p class="crumb"><a href="/settings/device-groups">&larr; Device groups</a></p>
+<p class="crumb"><a href="/settings/entra/device-groups">&larr; Device groups</a></p>
 <h2>{{ g.display_name }}
   {% if ignoring %}<span class="tag">its devices are ignored</span>{% endif %}</h2>
 {% if g.description %}<p class="meta">{{ g.description }}</p>{% endif %}
@@ -17,7 +17,7 @@
 {% endif %}
 
 {% if not ignoring %}
-<form method="post" action="/settings/device-groups/{{ g.id }}/ignore"
+<form method="post" action="/settings/entra/device-groups/{{ g.id }}/ignore"
       class="inline-form"
       onsubmit="return confirm('Ignore the devices in {{ g.display_name }}?')">
   <button type="submit">Ignore these devices</button>
