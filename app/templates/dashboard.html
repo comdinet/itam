@@ -37,37 +37,52 @@
 {% endif %}
 
 <h2>By currency</h2>
-<p class="meta">What was actually paid, and the same figures in {{ reporting }}.
-  {% if rate_asof %}Rates set {{ rate_asof }}.{% endif %}
-  A consolidated total is only as good as those rates &mdash; the amounts on the
-  left are exact.</p>
+<p class="meta">What was actually paid, in the money it was paid in, and the same
+  figures in {{ reporting }}. {% if rate_asof %}Rates set {{ rate_asof }}.{% endif %}
+  The amounts on the left are exact; a consolidated total is only as good as
+  those rates.</p>
+<div class="scroller">
 <table>
-  <thead><tr><th>Currency</th><th class="num">Assets</th><th class="num">Pooled</th>
-    <th class="num">Monthly</th><th class="num">One-off in {{ reporting }}</th></tr></thead>
+  <thead><tr><th>Currency</th>
+    <th class="num">Assets</th><th class="num">Counted</th>
+    <th class="num">One-off paid</th>
+    <th class="num">Monthly paid</th>
+    <th class="num">One-off in {{ reporting }}</th>
+    <th class="num">Monthly in {{ reporting }}</th></tr></thead>
   <tbody>
-  {% set ns = namespace(total=0) %}
+  {% set ns = namespace(oneoff=0, monthly=0) %}
   {% for c in by_currency %}
-    {% if c.asset_raw or c.pooled_raw or c.monthly_raw %}
-      {% set ns.total = ns.total + c.asset_rep + c.pooled_rep %}
-      <tr>
-        <td><span class="chip">{{ c.code }}</span> {{ c.symbol }}
-          {% if c.rate_source != 'base' %}
-            <div class="meta mono">rate {{ '%.6f'|format((c.rate_micro or 1000000) / 1000000) }}</div>
+    {% set ns.oneoff = ns.oneoff + c.oneoff_rep %}
+    {% set ns.monthly = ns.monthly + c.monthly_rep %}
+    <tr {% if not c.used %}class="disabled"{% endif %}>
+      <td>{% if c.unset %}<span class="tag">no currency recorded</span>
+          {% else %}<span class="chip">{{ c.code }}</span> {{ c.symbol }}
+            {% if c.rate_source != 'base' %}
+              <div class="meta mono">rate {{ '%.6f'|format((c.rate_micro or 1000000) / 1000000) }}</div>
+            {% endif %}
           {% endif %}</td>
-        <td class="num">{{ c.asset_raw|money }}</td>
-        <td class="num">{{ c.pooled_raw|money }}</td>
-        <td class="num">{{ c.monthly_raw|money }}</td>
-        <td class="num">{{ (c.asset_rep + c.pooled_rep)|money }}</td></tr>
-    {% endif %}
+      <td class="num">{{ c.asset_raw|money }}</td>
+      <td class="num">{{ c.pooled_raw|money }}</td>
+      <td class="num"><strong>{{ c.oneoff_raw|money }}</strong></td>
+      <td class="num">{{ c.monthly_raw|money }}</td>
+      <td class="num">{{ c.oneoff_rep|money }}</td>
+      <td class="num">{{ c.monthly_rep|money }}</td></tr>
   {% else %}
-    <tr><td colspan="5" class="empty">Nothing recorded yet.</td></tr>
+    <tr><td colspan="7" class="empty">Nothing recorded yet.</td></tr>
   {% endfor %}
   </tbody>
-  {% if ns.total %}
-  <tfoot><tr><td colspan="4">Consolidated one-off</td>
-    <td class="num"><strong>{{ reporting }} {{ ns.total|money }}</strong></td></tr></tfoot>
+  {% if by_currency %}
+  <tfoot><tr><td colspan="5">Consolidated, converted to {{ reporting }}</td>
+    <td class="num"><strong>{{ ns.oneoff|money }}</strong></td>
+    <td class="num"><strong>{{ ns.monthly|money }}</strong></td></tr></tfoot>
   {% endif %}
 </table>
+</div>
+{% if by_currency|selectattr('unset')|selectattr('used')|list %}
+<p class="hint">A row with <strong>no currency recorded</strong> is counted at a
+  rate of 1, as if it were {{ reporting }}. That is a guess. Open those records
+  and set what they were actually paid in.</p>
+{% endif %}
 
 <h2>Subscriptions by monthly spend</h2>
 <table>

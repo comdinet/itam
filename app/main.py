@@ -14,7 +14,7 @@ from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse,
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import api, auth, db, entra, fx, pooled, pricing, rules, saml, settings
+from . import api, auth, db, entra, fx, imports, pooled, pricing, rules, saml, settings
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -154,11 +154,6 @@ def back(url: str, msg: str | None = None):
 
 
 # --- cost queries --------------------------------------------------------
-
-# How many units of a counted asset exist: what people hold, plus what came
-# back. Never a stored number - see app/pooled.py.
-POOLED_OWNED = """(COALESCE((SELECT SUM(quantity) FROM pooled_allocations a
-                             WHERE a.item_id = p.id), 0) + p.spare)"""
 
 USER_COSTS = """
 SELECT u.upn, u.display_name, u.job_title, u.department, u.country,
@@ -710,25 +705,7 @@ def dashboard(request: Request):
            JOIN users u ON u.upn = ss.upn
            WHERE u.account_enabled = 0 ORDER BY sub.name"""
     )
-    by_currency = db.q(
-        """SELECT c.code, c.symbol, c.rate_micro, c.rate_source, c.rate_set_on,
-                  COALESCE(a.raw, 0) AS asset_raw, COALESCE(a.rep, 0) AS asset_rep,
-                  COALESCE(k.raw, 0) AS pooled_raw, COALESCE(k.rep, 0) AS pooled_rep,
-                  COALESCE(s.raw, 0) AS monthly_raw, COALESCE(s.rep, 0) AS monthly_rep
-           FROM currencies c
-           LEFT JOIN (SELECT currency, SUM(cost_cents) raw,
-                             SUM(""" + db.conv("cost_cents", "rate_micro") + """) rep
-                        FROM assets GROUP BY currency) a ON a.currency = c.code
-           LEFT JOIN (SELECT p.currency, SUM(""" + POOLED_OWNED + """ * p.unit_cost_cents) raw,
-                             SUM(""" + db.conv(POOLED_OWNED + " * p.unit_cost_cents", "p.rate_micro") + """) rep
-                        FROM pooled_items p GROUP BY p.currency) k ON k.currency = c.code
-           LEFT JOIN (SELECT sub.currency, SUM(sub.monthly_cost_cents) raw,
-                             SUM(""" + db.conv("sub.monthly_cost_cents", "sub.rate_micro") + """) rep
-                        FROM subscription_seats ss
-                        JOIN subscriptions sub ON sub.id = ss.subscription_id
-                       GROUP BY sub.currency) s ON s.currency = c.code
-           WHERE c.active = 1
-           ORDER BY (COALESCE(a.rep,0) + COALESCE(k.rep,0)) DESC, c.code""")
+    by_currency = fx.breakdown()
     rate_asof = db.q1(
         "SELECT MAX(rate_set_on) AS d FROM currencies WHERE rate_source != 'base'")
     return render(request, "dashboard.html", t=totals, by_dept=by_dept,
@@ -1653,6 +1630,76 @@ def pricing_apply(group_id: int):
 
 
 # --- settings: rules -----------------------------------------------------
+
+# --- import -------------------------------------------------------------
+
+MAX_IMPORT_BYTES = 1_000_000      # ~20k rows; past that, something is wrong
+
+
+@app.get("/settings/import", response_class=HTMLResponse)
+def settings_import(request: Request):
+    return render(request, "settings_import.html",
+                  templates_=list(imports.TEMPLATES.values()),
+                  spec=imports.SUBSCRIPTION_SEATS, plan=None, csv_text="",
+                  filename="", section="import")
+
+
+@app.get("/settings/import/{template_id}/template.csv")
+def import_template(template_id: str):
+    spec = imports.TEMPLATES.get(template_id)
+    if not spec:
+        return back("/settings/import", "No such template")
+    return Response(
+        imports.template_csv(spec), media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{spec["filename"]}"'})
+
+
+@app.post("/settings/import/subscription-seats/preview", response_class=HTMLResponse)
+async def import_preview(request: Request):
+    """Parse and show what would happen. Nothing is written here."""
+    form = await request.form()
+    upload = form.get("file")
+    text = str(form.get("csv_text") or "")
+    filename = str(form.get("filename") or "")
+    if upload is not None and getattr(upload, "filename", ""):
+        raw = await upload.read()
+        if len(raw) > MAX_IMPORT_BYTES:
+            return back("/settings/import",
+                        f"That file is {len(raw) // 1024} KB. The limit is "
+                        f"{MAX_IMPORT_BYTES // 1024} KB - split it up.")
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            return back("/settings/import",
+                        "That file is not UTF-8 text. Re-save it as CSV UTF-8.")
+        filename = upload.filename
+    if not text.strip():
+        return back("/settings/import", "Choose a CSV file first")
+    try:
+        plan = imports.plan_subscription_seats(text)
+    except imports.ImportError_ as exc:
+        return back("/settings/import", str(exc))
+    return render(request, "settings_import.html",
+                  templates_=list(imports.TEMPLATES.values()),
+                  spec=imports.SUBSCRIPTION_SEATS, plan=plan, csv_text=text,
+                  filename=filename, section="import")
+
+
+@app.post("/settings/import/subscription-seats/apply")
+async def import_apply(request: Request):
+    form = await request.form()
+    text = str(form.get("csv_text") or "")
+    if not text.strip():
+        return back("/settings/import", "Nothing to import")
+    try:
+        result = imports.apply_subscription_seats(text)
+    except imports.ImportError_ as exc:
+        return back("/settings/import", str(exc))
+    return back("/settings/import",
+                f"Created {result['created']} subscription(s) and assigned "
+                f"{result['seats']} seat(s). {result['already']} already had one, "
+                f"{result['skipped']} row(s) skipped.")
+
 
 @app.get("/settings/rules", response_class=HTMLResponse)
 def settings_rules(request: Request):

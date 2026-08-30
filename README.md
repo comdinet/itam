@@ -390,6 +390,8 @@ Sync behaviour:
   - **Pricing** — price a fleet by specification, optionally narrowed to or
     held back from the people in an Entra group.
   - **Rules** — entitlement rules and who is short against them.
+  - **Import** — download a CSV template, fill it in, upload it back. Shows a
+    preview before writing anything.
   - **Accounts** (admins only) — create, delete, and reset local sign-in accounts.
   - **API** (admins only) — API keys, field mapping, and the recent call log.
 - **My account** — change your own password.
@@ -503,7 +505,13 @@ fixing a typo in a name never revalues the purchase.
   figure beside it.
 - **Pricing groups** are priced in one currency, and applying one carries that
   currency onto the assets it prices. A group covering both Israeli and UK
-  laptops needs splitting in two.
+  laptops needs splitting in two — or one group per region, using a holder
+  condition.
+- The dashboard's **By currency** table lists every active currency, including
+  ones you have not spent in yet, and shows each one's own total alongside the
+  converted figure. Anything with **no currency recorded** gets its own row:
+  those are counted at a rate of 1 in the headline figures, so hiding them made
+  the table and the cards disagree.
 
 Rates are stored as USD-per-unit × 1,000,000, and every conversion is integer
 arithmetic with explicit half-up rounding — floats would drift, and Python's
@@ -795,6 +803,58 @@ for is flagged as over-provisioned and left alone, for you to reclaim by hand.
 Rules can be paused, which keeps them without evaluating them. Deleting a group
 deletes its rules.
 
+## Import from a CSV
+
+**Settings → Import** takes a CSV in *ITAM's* format, not the vendor's.
+
+That is deliberate. Claude, ChatGPT, Cursor and Notion all export something
+different, all of them change it without warning, and chasing that is a
+permanent job. So ITAM publishes a template: download it, paste your data into
+the columns, upload it back. One shape to fill in, and it works for a vendor
+nobody has heard of yet.
+
+### Subscription seats
+
+One row per person per licence:
+
+```
+Email,Subscription name,Subscription tier
+amit@example.com,Claude AI,Premium
+shay@example.com,Claude AI,Premium
+brachi@example.com,Claude AI,Standard
+```
+
+That creates **two** subscriptions — `Claude AI Premium` and `Claude AI
+Standard` — and gives each person a seat on the right one. The tier is appended
+to the name; leave it blank for a product that has no tiers.
+
+| Column | | |
+|---|---|---|
+| `Email` | required | The person's UPN, as it is in Entra ID |
+| `Subscription name` | required | Rows sharing a name share a subscription |
+| `Subscription tier` | optional | Appended to the name |
+| `Monthly cost` | optional | Per seat, per month |
+| `Currency` | optional | Required if you give a cost |
+| `Vendor` | optional | For your own reporting |
+
+Column order does not matter and headings are matched case-insensitively.
+
+**Nothing is written until you have seen a preview.** Uploading shows what
+would happen — subscriptions to create, seats to assign, and every row it
+cannot use — and only then offers the button.
+
+- **People are never invented.** An address ITAM has not seen is listed as
+  skipped with the line number. People come from Entra ID; sync them first.
+- **A cost with no currency is dropped**, not guessed, and the preview says
+  which line. Same for a currency you have not set up.
+- **Two different prices for one subscription**: the first wins, and the clash
+  is reported rather than resolved silently.
+- **Re-importing the same file does nothing.** Subscriptions are matched by
+  name and seats already held are left alone, so a re-run after adding people
+  only adds the new ones.
+- An existing subscription **keeps the price you set by hand** unless the file
+  states one.
+
 ## API for webhooks
 
 Other systems can create assets in ITAM over HTTP — for example a Frappe
@@ -942,10 +1002,11 @@ your backups as secrets either way.
 ./tests/run_all.sh
 ```
 
-Seventeen suites covering money parsing, currencies and frozen rates, the Entra
-user/group/licence syncs, Intune devices and macOS custom attributes, OData
-filters, pricing groups and pricing by region, counted assets and their returns,
-the entitlement rules, the schema migrations, and two-factor authentication. Two of them guard
+Eighteen suites covering money parsing, currencies and frozen rates, CSV import,
+the Entra user/group/licence syncs, Intune devices and macOS custom attributes,
+OData filters, pricing groups and pricing by region, counted assets and their
+returns, the entitlement rules, the schema migrations, and two-factor
+authentication. Two of them guard
 against rename damage: one signs in and GETs every page there is, the other
 statically checks that no template reads a name its route does not pass. Each uses a throwaway database and a mocked Graph, so none of
 them touch a real tenant or your data.

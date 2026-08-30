@@ -262,3 +262,73 @@ def fetch_boi() -> dict:
         })
     return {"as_of": as_of or _today(), "target": target,
             "source": "boi", "proposals": proposals}
+
+
+def breakdown() -> list[dict]:
+    """What was paid, per currency, with the reporting-currency equivalent.
+
+    Every active currency gets a row, even at zero. A table that quietly omits
+    the currencies you deal in is not a picture of the estate - and worse, the
+    old version omitted rows whose currency was never recorded, while the
+    headline cards counted those at a rate of 1. The two disagreed, and the
+    table was the one that looked right.
+
+    So anything with no currency recorded gets its own row here, visibly, and
+    the totals add up to what the cards say.
+    """
+    from . import pooled
+
+    owned = pooled.owned_expr("p")
+    sources = {
+        "asset": ("""SELECT COALESCE(NULLIF(TRIM(a.currency),''),'') AS code,
+                            SUM(a.cost_cents) AS raw,
+                            SUM(""" + db.conv("a.cost_cents", "a.rate_micro") + """) AS rep
+                     FROM assets a GROUP BY code"""),
+        "pooled": ("""SELECT COALESCE(NULLIF(TRIM(p.currency),''),'') AS code,
+                             SUM(""" + owned + """ * p.unit_cost_cents) AS raw,
+                             SUM(""" + db.conv(owned + " * p.unit_cost_cents", "p.rate_micro") + """) AS rep
+                      FROM pooled_items p GROUP BY code"""),
+        "monthly": ("""SELECT COALESCE(NULLIF(TRIM(s.currency),''),'') AS code,
+                              SUM(s.monthly_cost_cents) AS raw,
+                              SUM(""" + db.conv("s.monthly_cost_cents", "s.rate_micro") + """) AS rep
+                       FROM subscription_seats ss
+                       JOIN subscriptions s ON s.id = ss.subscription_id
+                       GROUP BY code"""),
+    }
+
+    rows: dict[str, dict] = {}
+
+    def row(code: str) -> dict:
+        if code not in rows:
+            known = get(code) if code else None
+            rows[code] = {
+                "code": code, "symbol": symbol(code) if code else "",
+                "name": known["name"] if known else "",
+                "rate_micro": known["rate_micro"] if known else MICRO,
+                "rate_source": known["rate_source"] if known else "none",
+                "active": bool(known["active"]) if known else False,
+                "unset": not code,
+                "asset_raw": 0, "asset_rep": 0, "pooled_raw": 0, "pooled_rep": 0,
+                "monthly_raw": 0, "monthly_rep": 0,
+            }
+        return rows[code]
+
+    for code in [c["code"] for c in listing(active_only=True)]:
+        row(code)
+    for kind, sql in sources.items():
+        for found in db.q(sql):
+            here = row(found["code"])
+            here[f"{kind}_raw"] += found["raw"] or 0
+            here[f"{kind}_rep"] += found["rep"] or 0
+
+    out = []
+    for entry in rows.values():
+        entry["oneoff_raw"] = entry["asset_raw"] + entry["pooled_raw"]
+        entry["oneoff_rep"] = entry["asset_rep"] + entry["pooled_rep"]
+        entry["used"] = bool(entry["oneoff_raw"] or entry["monthly_raw"])
+        out.append(entry)
+    # Currencies actually carrying money first, then the rest alphabetically;
+    # anything with no currency recorded last, since it is a data problem
+    # rather than a currency.
+    out.sort(key=lambda e: (e["unset"], not e["used"], e["code"]))
+    return out

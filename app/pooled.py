@@ -71,10 +71,24 @@ def assigned_units(item_id: int) -> int:
                  "WHERE item_id = ?", (item_id,))["q"]
 
 
-# Owned is derived, never typed: what people hold, plus what came back.
-ASSIGNED = """COALESCE((SELECT SUM(quantity) FROM pooled_allocations a
-                        WHERE a.item_id = s.id), 0)"""
-OWNED = f"({ASSIGNED} + s.spare)"
+def assigned_expr(alias: str = "s") -> str:
+    """SQL for how many units of a counted item are out with people."""
+    return (f"COALESCE((SELECT SUM(quantity) FROM pooled_allocations a "
+            f"WHERE a.item_id = {alias}.id), 0)")
+
+
+def owned_expr(alias: str = "s") -> str:
+    """SQL for how many units exist: what people hold, plus what came back.
+
+    Owned is derived, never typed, and more than one module needs to say so -
+    the dashboard totals must agree with this page or one of them is lying.
+    The alias comes from calling code, never from a request.
+    """
+    return f"({assigned_expr(alias)} + {alias}.spare)"
+
+
+ASSIGNED = assigned_expr()
+OWNED = owned_expr()
 
 
 def listing(category: str | None = None):

@@ -49,7 +49,7 @@ with TestClient(main.app) as client:          # lifespan runs: init_db, bootstra
               "subscription_id": sub, "sub_id": sub, "group_id": "g-il",
               "sku_id": "none", "device_id": "none", "code": "USD", "key_id": 1,
               "user_id": 1, "category": "Monitor", "job": "users", "id": 1,
-              "rest": "x"}
+              "rest": "x", "template_id": "subscription-seats"}
     # Same parameter name, different thing, depending on the page it is on.
     per_path = {"/settings/pricing/{group_id}": {"group_id": grp}}
     skip = {"/logout", "/healthz"}          # side effect, and already covered

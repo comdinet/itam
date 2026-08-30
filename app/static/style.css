@@ -50,6 +50,8 @@ th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: v
 tbody tr:last-child td { border-bottom: 0; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 tr.disabled { opacity: .62; }
+/* A wide table scrolls inside itself rather than pushing the page sideways. */
+.scroller { overflow-x: auto; }
 .empty { color: var(--muted); text-align: center; padding: 22px; }
 
 .tag { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 99px;

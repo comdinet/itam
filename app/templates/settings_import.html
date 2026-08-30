@@ -1,0 +1,124 @@
+{% extends "settings_base.html" %}
+{% block title %}Import &middot; ITAM{% endblock %}
+{% block admin %}
+<h2>Import from a CSV</h2>
+<p class="meta">ITAM publishes the template; you fill it in. Deliberately not an
+  importer for anybody's export format &mdash; every vendor exports something
+  different and changes it without telling you. One shape to fill in works for a
+  vendor nobody has heard of yet.</p>
+
+<h3>{{ spec.label }}</h3>
+<p class="meta">{{ spec.blurb }}</p>
+<table>
+  <thead><tr><th>Column</th><th>Required</th><th>What goes in it</th></tr></thead>
+  <tbody>
+  {% for name, required, help in spec.columns %}
+    <tr><td class="mono">{{ name }}</td>
+        <td>{% if required %}<strong>yes</strong>{% else %}optional{% endif %}</td>
+        <td class="meta">{{ help }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="hint">Column order does not matter and the headings are matched
+   case-insensitively. The template comes with two example rows using
+   <span class="mono">example.com</span> addresses &mdash; delete them, or leave
+   them and they will be skipped as unknown people.</p>
+
+<form class="inline-form" method="post"
+      action="/settings/import/subscription-seats/preview" enctype="multipart/form-data">
+  <a class="btn light" href="/settings/import/{{ spec.id }}/template.csv">Download the template</a>
+  <input type="file" name="file" accept=".csv,text/csv" required>
+  <button type="submit">Check the file</button>
+</form>
+<p class="hint">Checking writes nothing. You see exactly what would happen first.</p>
+
+{% if plan %}
+<h2>What this would do{% if filename %} &mdash; <span class="mono">{{ filename }}</span>{% endif %}</h2>
+<div class="cards">
+  <div class="card"><span class="label">Rows read</span>
+    <span class="big">{{ plan.rows }}</span></div>
+  <div class="card"><span class="label">Subscriptions to create</span>
+    <span class="big">{{ plan.to_create|length }}</span>
+    <span class="sub">{{ plan.subscriptions|length - plan.to_create|length }} already exist</span></div>
+  <div class="card"><span class="label">Seats to assign</span>
+    <span class="big">{{ plan.seats|length }}</span>
+    <span class="sub">{{ plan.already|length }} already had one</span></div>
+  <div class="card"><span class="label">Rows skipped</span>
+    <span class="big">{{ plan.skipped|length }}</span></div>
+</div>
+
+<h3>Subscriptions</h3>
+<table>
+  <thead><tr><th>Name</th><th>Vendor</th><th class="num">Per seat / month</th>
+    <th class="num">Seats from this file</th><th></th></tr></thead>
+  <tbody>
+  {% for e in plan.subscriptions %}
+    <tr><td>{{ e.name }}</td>
+        <td>{{ e.vendor or '' }}</td>
+        <td class="num">{% if e.currency %}{{ e.cost_cents|money }}
+            <span class="chip">{{ e.currency }}</span>
+          {% else %}<span class="tag">no price yet</span>{% endif %}</td>
+        <td class="num">{{ e.upns|length }}</td>
+        <td>{% if e.exists %}<span class="tag">exists already</span>
+            {% else %}<span class="tag spare">new</span>{% endif %}</td></tr>
+    {% for p in e.problems %}
+      <tr><td colspan="5" class="meta">&#9888; {{ p }}</td></tr>
+    {% endfor %}
+  {% else %}
+    <tr><td colspan="5" class="empty">No usable rows in that file.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% if plan.unpriced %}
+<p class="hint">{{ plan.unpriced|length }} new subscription(s) arrive with no
+   price, so they add nothing to the run-rate until you set one under
+   <a href="/subscriptions">Subscriptions</a>. Put a <span class="mono">Monthly
+   cost</span> and <span class="mono">Currency</span> in the file to set it here
+   instead.</p>
+{% endif %}
+
+{% if plan.skipped %}
+<h3>Skipped <span class="count">{{ plan.skipped|length }}</span></h3>
+<p class="meta">Nothing is invented for these. People come from Entra ID, so an
+  address ITAM has never seen cannot be given a seat &mdash;
+  <a href="/settings/entra">sync your users</a> if someone is missing.</p>
+<table>
+  <thead><tr><th class="num">Line</th><th>Row</th><th>Why</th></tr></thead>
+  <tbody>
+  {% for s in plan.skipped %}
+    <tr><td class="num">{{ s.line }}</td><td class="mono">{{ s.what }}</td>
+        <td class="meta">{{ s.why }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if plan.already %}
+<details class="panel">
+  <summary>{{ plan.already|length }} row(s) already have that seat &mdash; they will be left alone</summary>
+  <table>
+    <thead><tr><th class="num">Line</th><th>Person</th><th>Subscription</th></tr></thead>
+    <tbody>
+    {% for a in plan.already %}
+      <tr><td class="num">{{ a.line }}</td><td class="mono">{{ a.upn }}</td>
+          <td>{{ a.name }}{% if a.duplicate_row %}
+            <span class="meta">(repeated in this file)</span>{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</details>
+{% endif %}
+
+{% if plan.seats or plan.to_create %}
+<form method="post" action="/settings/import/subscription-seats/apply"
+      onsubmit="return confirm('Create {{ plan.to_create|length }} subscription(s) and assign {{ plan.seats|length }} seat(s)?')">
+  <input type="hidden" name="csv_text" value="{{ csv_text }}">
+  <button type="submit">Import {{ plan.seats|length }} seat(s)</button>
+</form>
+<p class="hint">Re-importing the same file later changes nothing: seats already
+   held are left alone and subscriptions are matched by name.</p>
+{% else %}
+<p class="hint">There is nothing to import from this file.</p>
+{% endif %}
+{% endif %}
+{% endblock %}
