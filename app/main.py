@@ -1555,6 +1555,8 @@ def pricing_apply(group_id: int):
 def settings_rules(request: Request):
     return render(request, "settings_rules.html",
                   overview=rules.compliance_overview(),
+                  items_by_category=rules.assets_by_category(),
+                  grants_label=rules.grants_label,
                   groups=db.q(
                       """SELECT * FROM groups
                          ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, display_name""",
@@ -1593,7 +1595,8 @@ async def rule_new(request: Request):
     if kind == "asset":
         if not category:
             return back("/settings/rules", "Choose what the rule grants")
-        rule_id = rules.create(name, group_id, "asset", qty, category=category)
+        rule_id = rules.create(name, group_id, "asset", qty, category=category,
+                               asset_name=str(form.get("asset_name") or "").strip())
     else:
         if not subscription_id.isdigit():
             return back("/settings/rules", "Choose which subscription the rule grants")
@@ -1677,7 +1680,7 @@ def rule_detail(request: Request, rule_id: int):
     return render(request, "settings_rule_detail.html", r=rule,
                   s=rules.summarise(rule), all_users_group=db.ALL_USERS_GROUP,
                   groups=db.q("SELECT * FROM groups ORDER BY display_name"),
-                  section="rules")
+                  grants_label=rules.grants_label, section="rules")
 
 
 # --- settings: general ---------------------------------------------------

@@ -11,7 +11,8 @@ from . import db
 
 
 def create(name: str, group_id: str, kind: str, quantity: int,
-           category: str | None = None, subscription_id: int | None = None) -> int:
+           category: str | None = None, subscription_id: int | None = None,
+           asset_name: str | None = None) -> int:
     # A person either holds a licence seat or does not, so quantity only means
     # something for assets. Clamping here keeps such a rule from reading as
     # permanently short.
@@ -19,10 +20,11 @@ def create(name: str, group_id: str, kind: str, quantity: int,
         quantity = 1
     return db.execute(
         """INSERT INTO rules (name, group_id, kind, category, subscription_id,
-                              quantity, created_at)
-           VALUES (?,?,?,?,?,?,?)""",
+                              quantity, created_at, asset_name)
+           VALUES (?,?,?,?,?,?,?,?)""",
         (name.strip(), group_id, kind, category, subscription_id, max(1, quantity),
-         datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")))
+         datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+         (asset_name or "").strip() or None))
 
 
 def listing():
@@ -114,9 +116,15 @@ def evaluate(rule) -> list[dict]:
     out = []
     for m in members:
         if rule["kind"] == "asset":
-            have = db.q1(
-                "SELECT COUNT(*) c FROM assets WHERE assigned_upn = ? AND category = ?",
-                (m["upn"], rule["category"]))["c"]
+            if rule["asset_name"]:
+                have = db.q1(
+                    """SELECT COUNT(*) c FROM assets
+                       WHERE assigned_upn = ? AND category = ? AND name = ?""",
+                    (m["upn"], rule["category"], rule["asset_name"]))["c"]
+            else:
+                have = db.q1(
+                    "SELECT COUNT(*) c FROM assets WHERE assigned_upn = ? AND category = ?",
+                    (m["upn"], rule["category"]))["c"]
         else:
             have = db.q1(
                 "SELECT COUNT(*) c FROM subscription_seats WHERE upn = ? AND subscription_id = ?",
@@ -143,8 +151,10 @@ def summarise(rule) -> dict:
     available = 0
     if rule["kind"] == "asset":
         available = db.q1(
-            "SELECT COUNT(*) c FROM assets WHERE assigned_upn IS NULL AND category = ?",
-            (rule["category"],))["c"]
+            "SELECT COUNT(*) c FROM assets WHERE assigned_upn IS NULL AND category = ?"
+            + (" AND name = ?" if rule["asset_name"] else ""),
+            (rule["category"], rule["asset_name"]) if rule["asset_name"]
+            else (rule["category"],))["c"]
     return {"members": len(rows), "compliant": len(rows) - len(short) - len(over),
             "short": len(short), "over": len(over), "needed": needed,
             "available": available, "rows": rows,
@@ -189,10 +199,16 @@ def apply(rule) -> dict:
 
         received = 0
         for _ in range(gap):
-            spare = db.q1(
-                """SELECT id FROM assets
-                   WHERE assigned_upn IS NULL AND category = ?
-                   ORDER BY id LIMIT 1""", (rule["category"],))
+            if rule["asset_name"]:
+                spare = db.q1(
+                    """SELECT id FROM assets
+                       WHERE assigned_upn IS NULL AND category = ? AND name = ?
+                       ORDER BY id LIMIT 1""", (rule["category"], rule["asset_name"]))
+            else:
+                spare = db.q1(
+                    """SELECT id FROM assets
+                       WHERE assigned_upn IS NULL AND category = ?
+                       ORDER BY id LIMIT 1""", (rule["category"],))
             if not spare:
                 break
             db.execute("UPDATE assets SET assigned_upn = ?, assigned_on = ? WHERE id = ?",
@@ -244,3 +260,25 @@ def compliance_overview() -> list[dict]:
             continue
         out.append({"rule": rule, "summary": summarise(rule)})
     return out
+
+
+def assets_by_category() -> dict:
+    """Distinct item names you own, grouped by category.
+
+    Feeds the second step of the rule form: pick a category, then the actual
+    item, so a rule can grant "a Dell U2723QE" rather than "any monitor".
+    """
+    out: dict[str, list[str]] = {}
+    for row in db.q(
+            """SELECT DISTINCT category, name FROM assets
+               WHERE TRIM(COALESCE(name,'')) != '' ORDER BY category, name"""):
+        out.setdefault(row["category"], []).append(row["name"])
+    return out
+
+
+def grants_label(rule) -> str:
+    if rule["kind"] != "asset":
+        return rule["subscription_name"] or "a licence"
+    if rule["asset_name"]:
+        return rule["asset_name"]
+    return f"{rule['category']} (any)"

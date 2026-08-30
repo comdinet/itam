@@ -234,6 +234,7 @@ CREATE TABLE IF NOT EXISTS rules (
     group_id        TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
     kind            TEXT NOT NULL,       -- 'asset' or 'subscription'
     category        TEXT,                -- asset category, when kind='asset'
+    asset_name      TEXT,                -- a specific item, or NULL for any in the category
     subscription_id INTEGER REFERENCES subscriptions(id) ON DELETE CASCADE,
     quantity        INTEGER NOT NULL DEFAULT 1,
     active          INTEGER NOT NULL DEFAULT 1,
@@ -379,6 +380,11 @@ def init_db():
         cols = [r["name"] for r in conn.execute("PRAGMA table_info(assets)")]
         if "external_id" not in cols:
             conn.execute("ALTER TABLE assets ADD COLUMN external_id TEXT")
+
+        # Migration: a rule can name a specific item, not just a category.
+        rcols = [r["name"] for r in conn.execute("PRAGMA table_info(rules)")]
+        if "asset_name" not in rcols:
+            conn.execute("ALTER TABLE rules ADD COLUMN asset_name TEXT")
 
         # Migration: money-bearing rows gain the currency they were paid in and
         # the rate that applied then. Existing rows inherit the reporting

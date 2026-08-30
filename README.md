@@ -670,6 +670,21 @@ members are compliant, how many are short, how many items that adds up to, and
 how many spares you have to cover it. The rule's own page lists every member
 with what they have against what they should.
 
+### What a rule grants
+
+The form reveals itself a step at a time. Choose whether the rule grants an
+**asset** or a **licence**, and only the fields for that appear:
+
+- **Asset** → choose a **category**, then the **item** within it. The item list
+  is the distinct names you already own in that category, so a rule can grant
+  *two Dell U2723QE* rather than *two of any monitor*. Leave it on
+  *any in this category* for the broader version.
+- **Licence** → choose the subscription. Quantity disappears, since a licence
+  is one per person.
+
+A rule naming an item only ever hands out that item: with three Dells and two
+LGs spare, a Dell rule leaves the LGs alone.
+
 ### Who a rule covers
 
 A rule applies to one group, then narrows or widens it:

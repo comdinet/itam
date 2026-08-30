@@ -66,6 +66,34 @@ check("covers the non-CSE members only", sorted(rules.covered_upns(rules.get(rid
       ["noa@x.com", "yael@x.com"])
 rules.delete(rid2)
 
+print("\n--- a rule can name one item, not just a category ---")
+db.execute("INSERT INTO assets (name,category,cost_cents) VALUES ('Dell U2723QE','Monitor',59900)")
+db.execute("INSERT INTO assets (name,category,cost_cents) VALUES ('Dell U2723QE','Monitor',59900)")
+db.execute("INSERT INTO assets (name,category,cost_cents) VALUES ('LG UltraFine 32','Monitor',89900)")
+named = rules.create("Dells only", "g-il", "asset", 1,
+                     category="Monitor", asset_name="Dell U2723QE")
+rules.add_group(named, "g-cse", "exclude")
+nr = rules.get(named)
+check("the item is stored", nr["asset_name"], "Dell U2723QE")
+check("label names the item", rules.grants_label(nr), "Dell U2723QE")
+check("spares counted for that model only", rules.summarise(nr)["available"], 2)
+r = rules.apply(nr)
+check("both Dells handed out", r["granted"], 2)
+check("the LG was left alone",
+      db.q1("SELECT assigned_upn FROM assets WHERE name='LG UltraFine 32'")["assigned_upn"], None)
+
+anymon = rules.create("Any monitor", "g-il", "asset", 1, category="Monitor")
+check("without an item it is category-wide", rules.get(anymon)["asset_name"], None)
+check("label says any", rules.grants_label(rules.get(anymon)), "Monitor (any)")
+check("and the LG now counts as available", rules.summarise(rules.get(anymon))["available"], 1)
+
+check("the item list is grouped by category",
+      sorted(rules.assets_by_category().get("Monitor", [])),
+      ["Dell U2723QE", "LG UltraFine 32"])
+for rid_ in (named, anymon):
+    rules.delete(rid_)
+db.execute("DELETE FROM assets")
+
 print("\n--- a rule serves each person once ---")
 for i in range(4):
     db.execute("INSERT INTO assets (name,category,cost_cents) VALUES (?,'Monitor',59900)",
