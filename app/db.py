@@ -183,6 +183,26 @@ CREATE TABLE IF NOT EXISTS device_attributes (
     PRIMARY KEY (device_id, name)
 );
 
+-- Extra groups a rule includes, and groups it excludes. The rule's own
+-- group_id is the primary include; these narrow or widen it.
+CREATE TABLE IF NOT EXISTS rule_groups (
+    rule_id  INTEGER NOT NULL REFERENCES rules(id) ON DELETE CASCADE,
+    group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    mode     TEXT NOT NULL,             -- include | exclude
+    PRIMARY KEY (rule_id, group_id, mode)
+);
+
+-- Who a rule has already been applied to. A rule fulfils a person once; it
+-- does not maintain a level forever, so returning a monitor does not silently
+-- earn another.
+CREATE TABLE IF NOT EXISTS rule_fulfilments (
+    rule_id      INTEGER NOT NULL REFERENCES rules(id) ON DELETE CASCADE,
+    upn          TEXT NOT NULL REFERENCES users(upn) ON DELETE CASCADE,
+    granted      INTEGER NOT NULL DEFAULT 0,
+    fulfilled_at TEXT,
+    PRIMARY KEY (rule_id, upn)
+);
+
 -- Device groups defined by specification, each with a price. Lets a fleet be
 -- priced by spec ("MacBook Air 13 M4/16/512 = 1299") instead of per machine.
 CREATE TABLE IF NOT EXISTS price_groups (

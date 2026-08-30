@@ -1602,6 +1602,34 @@ def rule_toggle(rule_id: int, active: str = Form("")):
     return back("/settings/rules", "Rule updated")
 
 
+@app.post("/settings/rules/{rule_id}/groups/add")
+def rule_group_add(rule_id: int, group_id: str = Form(...), mode: str = Form(...)):
+    if not rules.get(rule_id):
+        return back("/settings/rules", "No such rule")
+    problem = rules.add_group(rule_id, group_id, mode)
+    return back(f"/settings/rules/{rule_id}",
+                problem or ("Group added" if mode == "include" else "Group excluded"))
+
+
+@app.post("/settings/rules/{rule_id}/groups/remove")
+def rule_group_remove(rule_id: int, group_id: str = Form(...), mode: str = Form(...)):
+    rules.remove_group(rule_id, group_id, mode)
+    return back(f"/settings/rules/{rule_id}", "Condition removed")
+
+
+@app.post("/settings/rules/{rule_id}/fulfilment/clear")
+def rule_fulfilment_clear(rule_id: int, upn: str = Form("")):
+    if not rules.get(rule_id):
+        return back("/settings/rules", "No such rule")
+    if upn.strip():
+        rules.clear_fulfilment(rule_id, upn.strip().lower())
+        return back(f"/settings/rules/{rule_id}",
+                    f"{upn.strip().lower()} can be served by this rule again")
+    n = rules.clear_all_fulfilments(rule_id)
+    return back(f"/settings/rules/{rule_id}",
+                f"Cleared {n} record(s); the rule can serve everyone again")
+
+
 @app.post("/settings/rules/{rule_id}/apply")
 def rule_apply(rule_id: int):
     rule = rules.get(rule_id)
@@ -1623,6 +1651,7 @@ def rule_detail(request: Request, rule_id: int):
         return HTMLResponse("<h1>404</h1><p>No such rule.</p>", status_code=404)
     return render(request, "settings_rule_detail.html", r=rule,
                   s=rules.summarise(rule), all_users_group=db.ALL_USERS_GROUP,
+                  groups=db.q("SELECT * FROM groups ORDER BY display_name"),
                   section="rules")
 
 

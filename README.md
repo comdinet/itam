@@ -670,6 +670,35 @@ members are compliant, how many are short, how many items that adds up to, and
 how many spares you have to cover it. The rule's own page lists every member
 with what they have against what they should.
 
+### Who a rule covers
+
+A rule applies to one group, then narrows or widens it:
+
+- **Except members of** — excluded even if another condition would include them.
+- **Also include members of** — a second group covered by the same rule.
+
+So *"everyone in Israel gets 2 monitors, except CSE"* is the Israel group with
+CSE excluded. Exclusion always wins over inclusion.
+
+### A rule serves each person once
+
+Applying a rule records who it served. Someone already served is **finished
+with** — if they hand a monitor back later, the rule does not quietly issue
+another. It is a one-time entitlement, not a level the app keeps restoring.
+
+Three cases, deliberately different:
+
+- **Served in full** → recorded, never revisited.
+- **Served in part** (stock ran out mid-way) → *not* recorded, so a later apply
+  completes them once you restock. Finishing an entitlement is not the same as
+  topping someone up.
+- **Already had enough** by other means → recorded without consuming anything,
+  so the rule does not come back to them later.
+
+A new joiner in the group is short and gets served; everyone already served is
+left alone. If a rule was applied by mistake, **Allow again** on a person — or
+on the whole rule — lets it serve them once more.
+
 **Apply** closes the gaps it can:
 
 - **Assets** are only ever taken from existing spares. ITAM will not invent

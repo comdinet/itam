@@ -1,5 +1,43 @@
 {% extends "settings_base.html" %}
-{% block title %}{{ r.name }} &middot; ITAM{% endblock %}
+{% block title %}{{ r.name }} &middot; ITAM<h2>Who it covers</h2>
+<p class="meta">The rule applies to
+  <strong>{{ r.group_name }}</strong>{% if s.conditions %}, adjusted by the
+  conditions below{% endif %}. Someone in an excluded group is left out even if
+  another group would include them.</p>
+<table>
+  <thead><tr><th>Condition</th><th>Group</th><th></th></tr></thead>
+  <tbody>
+    <tr><td><span class="chip">applies to</span></td>
+        <td>{{ r.group_name }}</td><td class="meta">the rule's own group</td></tr>
+  {% for c in s.conditions %}
+    <tr>
+      <td>{% if c.mode == 'include' %}<span class="chip">also include</span>
+          {% else %}<span class="tag">except</span>{% endif %}</td>
+      <td>{{ c.display_name }}</td>
+      <td class="row-actions">
+        <form method="post" action="/settings/rules/{{ r.id }}/groups/remove">
+          <input type="hidden" name="group_id" value="{{ c.group_id }}">
+          <input type="hidden" name="mode" value="{{ c.mode }}">
+          <button class="link danger">Remove</button></form></td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<form class="inline-form" method="post" action="/settings/rules/{{ r.id }}/groups/add">
+  <select name="mode">
+    <option value="exclude">Except members of</option>
+    <option value="include">Also include members of</option>
+  </select>
+  <select name="group_id" required>
+    <option value="">Choose a group&hellip;</option>
+    {% for g in groups %}
+      {% if g.id != r.group_id %}<option value="{{ g.id }}">{{ g.display_name }}</option>{% endif %}
+    {% endfor %}
+  </select>
+  <button type="submit">Add condition</button>
+</form>
+
+{% endblock %}
 {% block admin %}
 <p class="crumb"><a href="/settings/rules">&larr; Rules</a></p>
 <h2>{{ r.name }}</h2>
@@ -8,11 +46,23 @@
   {% if r.kind == 'asset' %}&times; {{ r.category }}{% else %}&times; {{ r.subscription_name }} licence{% endif %}.
   {% if not r.active %}<span class="tag">paused</span>{% endif %}</p>
 
+{% if s.conditions %}
+<p class="meta">
+  {% for c in s.conditions %}
+    {% if c.mode == 'include' %}<span class="chip">also {{ c.display_name }}</span>
+    {% else %}<span class="tag">except {{ c.display_name }}</span>{% endif %}
+  {% endfor %}
+</p>
+{% endif %}
+
 <div class="cards">
   <div class="card"><span class="label">Compliant</span>
     <span class="big">{{ s.compliant }} / {{ s.members }}</span></div>
   <div class="card"><span class="label">Short</span><span class="big">{{ s.short }}</span>
     <span class="sub">{{ s.needed }} item(s) needed</span></div>
+  <div class="card"><span class="label">Already served</span>
+    <span class="big">{{ s.fulfilled }}</span>
+    <span class="sub">this rule will not serve them again</span></div>
   <div class="card"><span class="label">Over-provisioned</span><span class="big">{{ s.over }}</span>
     <span class="sub">more than the rule asks for</span></div>
   {% if r.kind == 'asset' %}
@@ -37,7 +87,7 @@
 <h2>Members</h2>
 <table>
   <thead><tr><th>Name</th><th>UPN</th><th class="num">Has</th>
-    <th class="num">Should have</th><th>Status</th></tr></thead>
+    <th class="num">Should have</th><th>Status</th><th></th></tr></thead>
   <tbody>
   {% for m in s.rows %}
     <tr {% if not m.account_enabled %}class="disabled"{% endif %}>
@@ -46,11 +96,20 @@
       <td class="mono">{{ m.upn }}</td>
       <td class="num">{{ m.have }}</td>
       <td class="num">{{ m.want }}</td>
-      <td>{% if m.gap > 0 %}<span class="tag">short {{ m.gap }}</span>
+      <td>{% if m.fulfilled %}
+            <span class="ok">served {{ m.fulfilled_at }}</span>
+            {% if m.granted %}<span class="meta">({{ m.granted }} given)</span>{% endif %}
+          {% elif m.gap > 0 %}<span class="tag">short {{ m.gap }}</span>
           {% elif m.gap < 0 %}<span class="meta">{{ -m.gap }} over</span>
-          {% else %}<span class="ok">ok</span>{% endif %}</td></tr>
+          {% else %}<span class="ok">ok</span>{% endif %}</td>
+      <td class="row-actions">
+        {% if m.fulfilled %}
+          <form method="post" action="/settings/rules/{{ r.id }}/fulfilment/clear">
+            <input type="hidden" name="upn" value="{{ m.upn }}">
+            <button class="link">Allow again</button></form>
+        {% endif %}</td></tr>
   {% else %}
-    <tr><td colspan="5" class="empty">This group has no members known to ITAM.</td></tr>
+    <tr><td colspan="6" class="empty">Nobody is covered by this rule.</td></tr>
   {% endfor %}
   </tbody>
 </table>

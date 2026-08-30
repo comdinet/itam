@@ -3,9 +3,11 @@
 {% block admin %}
 <h2>Entitlement rules <span class="count">{{ overview|length }}</span></h2>
 <p class="meta">A rule says what a group of people should have &mdash;
-  &ldquo;everyone in Design gets 2 monitors&rdquo;. ITAM reports who is short.
-  Applying a rule hands out what you actually have in spares; it never invents
-  hardware you do not own.</p>
+  &ldquo;everyone in Israel gets 2 monitors, except CSE&rdquo;. Applying it hands
+  out what you have in spares; it never invents hardware you do not own.</p>
+<p class="meta">A rule serves each person <strong>once</strong>. Somebody it has
+  already served is finished with, even if they later hand something back &mdash;
+  it is a one-time entitlement, not a level the app keeps restoring.</p>
 
 <details class="panel" open>
   <summary>Add a rule</summary>
@@ -46,7 +48,7 @@
 
 <table>
   <thead><tr><th>Rule</th><th>Applies to</th><th>Grants</th><th class="num">Each</th>
-    <th class="num">Compliant</th><th class="num">Short</th><th class="num">Needed</th>
+    <th class="num">Served</th><th class="num">Awaiting</th><th class="num">Needed</th>
     <th class="num">Spare</th><th></th></tr></thead>
   <tbody>
   {% for o in overview %}
@@ -54,12 +56,20 @@
       <td><a href="/settings/rules/{{ o.rule.id }}"><strong>{{ o.rule.name }}</strong></a>
         {% if not o.rule.active %}<span class="tag">paused</span>{% endif %}</td>
       <td>{% if o.rule.group_id == all_users_group %}{{ o.rule.group_name }}
-          {% else %}<a href="/settings/groups/{{ o.rule.group_id }}">{{ o.rule.group_name }}</a>{% endif %}</td>
+          {% else %}<a href="/settings/groups/{{ o.rule.group_id }}">{{ o.rule.group_name }}</a>{% endif %}
+        {% if o.summary and o.summary.conditions %}
+          <div class="meta">
+            {%- for c in o.summary.conditions -%}
+              {% if c.mode == 'exclude' %}except {{ c.display_name }}{% else %}+ {{ c.display_name }}{% endif %}
+              {%- if not loop.last %}, {% endif -%}
+            {%- endfor -%}
+          </div>
+        {% endif %}</td>
       <td>{% if o.rule.kind == 'asset' %}{{ o.rule.category }}
           {% else %}{{ o.rule.subscription_name }} <span class="meta">(licence)</span>{% endif %}</td>
       <td class="num">{{ o.rule.quantity }}</td>
       {% if o.summary %}
-        <td class="num">{{ o.summary.compliant }} / {{ o.summary.members }}</td>
+        <td class="num">{{ o.summary.fulfilled }} / {{ o.summary.members }}</td>
         <td class="num">{% if o.summary.short %}<strong>{{ o.summary.short }}</strong>{% else %}0{% endif %}</td>
         <td class="num">{{ o.summary.needed }}</td>
         <td class="num">{% if o.rule.kind == 'asset' %}{{ o.summary.available }}{% else %}&mdash;{% endif %}</td>
