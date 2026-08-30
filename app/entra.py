@@ -548,29 +548,55 @@ def _store_group_devices(group_id: str, members: list[dict]) -> None:
             (group_id, m["azure_device_id"], m["device_name"]))
 
 
-def sync_device_groups() -> dict:
+def is_device_rule(group: dict) -> bool:
+    """Does this group's own membership rule say it collects devices?
+
+    A "Dynamic Device" group in the portal is a group whose groupTypes include
+    DynamicMembership and whose membershipRule is written against `device.`.
+    That is decided here rather than in an OData $filter on purpose: filtering
+    directory objects with contains() is not reliably supported, and a filter
+    Graph silently will not run is worse than no filter.
+    """
+    types = [str(t).lower() for t in (group.get("groupTypes") or [])]
+    if "dynamicmembership" not in types:
+        return False
+    return "device." in (group.get("membershipRule") or "").lower()
+
+
+GROUP_SELECT = "id,displayName,description,groupTypes,membershipRule"
+
+
+def sync_device_groups(mode: str = "dynamic") -> dict:
     """Find the Entra groups that contain devices, and what is in them.
 
-    One Graph call per group, because there is no way to ask "which groups have
-    device members" in one go. On a large tenant that is a lot of calls, so
-    ENTRA_DEVICE_GROUP_FILTER narrows which groups are looked at - and the
-    result says how many were scanned, so the cost is never a surprise.
+    Two ways round it, because they cost very different amounts:
+
+    "dynamic" reads the group list once and looks inside only the groups whose
+    own membership rule is written against `device.` - the Dynamic Device
+    groups. One extra call per candidate, and on most tenants that is a handful.
+
+    "all" looks inside every group, because a group with Assigned membership can
+    hold devices too and nothing about it says so from the outside. One call per
+    group; ENTRA_DEVICE_GROUP_FILTER narrows which.
 
     Needs Group.Read.All, the same as the user-group sync.
     """
     group_filter = settings.get("ENTRA_DEVICE_GROUP_FILTER")
-    params = {"$select": "id,displayName,description", "$top": "999"}
+    params = {"$select": GROUP_SELECT, "$top": "999"}
     if group_filter:
         params["$filter"] = group_filter
     groups = _get_all("/groups", params, advanced=bool(group_filter))
 
+    candidates = [g for g in groups if g.get("id")]
+    dynamic_hits = [g for g in candidates if is_device_rule(g)]
+    if mode == "dynamic":
+        candidates = dynamic_hits
+
     now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     total_devices = 0
     scanned_ids, kept_ids = [], []
-    for g in groups:
-        gid = g.get("id")
-        if not gid:
-            continue
+    for g in candidates:
+        gid = g["id"]
         scanned_ids.append(gid)
         members = fetch_group_devices(gid)
         if not members:
@@ -578,31 +604,36 @@ def sync_device_groups() -> dict:
         kept_ids.append(gid)
         total_devices += len(members)
         db.execute(
-            """INSERT INTO device_groups (id, display_name, description,
-                                          device_count, synced_at)
-               VALUES (?,?,?,?,?)
+            """INSERT INTO device_groups (id, display_name, description, device_count,
+                                          dynamic, membership_rule, synced_at)
+               VALUES (?,?,?,?,?,?,?)
                ON CONFLICT(id) DO UPDATE SET
                    display_name=excluded.display_name,
                    description=excluded.description,
                    device_count=excluded.device_count,
+                   dynamic=excluded.dynamic,
+                   membership_rule=excluded.membership_rule,
                    synced_at=excluded.synced_at""",
             (gid, g.get("displayName") or "(no name)", g.get("description"),
-             len(members), now))
+             len(members), 1 if is_device_rule(g) else 0,
+             g.get("membershipRule"), now))
         _store_group_devices(gid, members)
 
     # A group we looked at this run and found no devices in is no longer a
-    # device group. Groups outside the filter were never looked at, so nothing
-    # was learned about them and they are left exactly as they were.
-    emptied = set(scanned_ids) - set(kept_ids)
+    # device group. Groups we did not look at were never asked, so nothing was
+    # learned about them and they are left exactly as they were.
     dropped = 0
-    for gid in emptied:
+    for gid in set(scanned_ids) - set(kept_ids):
         if db.q1("SELECT 1 FROM device_groups WHERE id = ?", (gid,)):
             db.execute("DELETE FROM device_groups WHERE id = ?", (gid,))
             db.execute("DELETE FROM device_group_members WHERE group_id = ?", (gid,))
             dropped += 1
 
-    return {"scanned": len(scanned_ids), "device_groups": len(kept_ids),
-            "devices": total_devices, "dropped": dropped}
+    return {"mode": mode, "groups_listed": len(groups),
+            "dynamic_device_groups": len(dynamic_hits),
+            "scanned": len(scanned_ids), "device_groups": len(kept_ids),
+            "devices": total_devices, "dropped": dropped,
+            "filter": group_filter}
 
 
 def refresh_ignore_groups() -> int:

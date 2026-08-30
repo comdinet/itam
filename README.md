@@ -635,15 +635,34 @@ since it was enrolled, or `INTUNE_DEVICE_FILTER` is keeping it out.
 **Ignore its devices** is one click from this page, and creates the ignore rule
 described below.
 
-There is no way to ask Entra *"which groups hold devices"*, so the sync looks in
-each group in turn — **one Graph call per group**. On a large tenant, narrow it
-with `ENTRA_DEVICE_GROUP_FILTER` (for example `startsWith(displayName,
-'Devices-')`); the result always says how many groups were scanned, so the cost
-is never a surprise. Only groups that turn out to hold devices are kept, and a
-group scanned but found empty is dropped. Groups outside the filter are left
-alone — they were not looked at, so nothing was learned about them.
+There is no way to ask Entra *"which groups hold devices"*, so there are two
+ways round it:
 
-It needs `Group.Read.All`, the same as the user-group sync.
+**Sync dynamic device groups** (the default) reads the group list once and looks
+inside only the groups whose own membership rule is written against `device.` —
+what the portal calls **Dynamic Device**. A handful of extra calls, not one per
+group.
+
+That test is made locally, on `groupTypes` and `membershipRule`, rather than as
+an OData `$filter` like `contains(membershipRule, 'device.')`. Filtering
+directory objects with `contains()` is not reliably supported, and a filter
+Graph silently declines to run is worse than no filter at all.
+
+**Look in every group** is the thorough pass. A group with **Assigned**
+membership can hold devices too, and nothing about it says so from the outside,
+so the only way to find out is to look — one call per group. Narrow it with
+`ENTRA_DEVICE_GROUP_FILTER` if your tenant is large.
+
+Only groups that turn out to hold devices are kept either way, a group looked at
+and found empty is dropped, and groups that were never looked at are left exactly
+as they were. It needs `Group.Read.All`, the same as the user-group sync.
+
+A filter is matched against the group's **exact display name**: a group called
+`Virtual Machines` is found by `startsWith(displayName, 'Virtual')` and *not* by
+`startsWith(displayName, 'Virtual-')`. When a sync comes back with nothing, the
+message says which step was empty — the filter matched no groups, or no group
+had a device rule, or the groups had no device members — because each has a
+different fix.
 
 ### Ignoring devices that are not kit
 

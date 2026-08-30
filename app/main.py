@@ -1188,17 +1188,36 @@ def settings_device_groups(request: Request):
 
 
 @app.post("/settings/device-groups/sync")
-def settings_device_groups_sync():
+def settings_device_groups_sync(mode: str = Form("dynamic")):
     if not entra.is_configured():
         return back("/settings/device-groups", "Entra ID is not configured yet")
     try:
-        r = entra.sync_device_groups()
+        r = entra.sync_device_groups("all" if mode == "all" else "dynamic")
     except Exception as exc:
         return back("/settings/device-groups",
                     f"Device group sync failed: {why(exc)}"[:300])
     devices.recompute()
-    msg = (f"Scanned {r['scanned']} group(s); {r['device_groups']} contain devices, "
-           f"{r['devices']} membership(s) recorded")
+
+    # "Scanned 0" is true and useless. Say which step came back empty, because
+    # each one has a different fix.
+    if r["filter"] and not r["groups_listed"]:
+        return back("/settings/device-groups",
+                    f"Your group filter matched no groups at all: "
+                    f"{r['filter']} - check the spelling against the group's name "
+                    f"in Entra, or clear the filter to look at every group")
+    if not r["groups_listed"]:
+        return back("/settings/device-groups",
+                    "Entra returned no groups at all - check the Group.Read.All "
+                    "permission under Entra ID")
+    if r["mode"] == "dynamic" and not r["scanned"]:
+        return back("/settings/device-groups",
+                    f"Looked at {r['groups_listed']} group(s); none has a dynamic "
+                    f"membership rule written against 'device.'. If your device "
+                    f"group has Assigned membership, run 'Look in every group'.")
+    msg = (f"Looked in {r['scanned']} of {r['groups_listed']} group(s); "
+           f"{r['device_groups']} hold devices, {r['devices']} membership(s) recorded")
+    if r["mode"] == "dynamic":
+        msg += f" ({r['dynamic_device_groups']} dynamic device group(s) found)"
     if r["dropped"]:
         msg += f"; {r['dropped']} no longer hold devices"
     return back("/settings/device-groups", msg)

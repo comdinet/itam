@@ -21,9 +21,17 @@ def check(label, got, want):
 # --- a Graph that answers from a fixture, so no tenant is involved --------
 TENANT = {
     "groups": [
-        {"id": "g-vm", "displayName": "Virtual machines", "description": "Build agents"},
-        {"id": "g-people", "displayName": "Israel", "description": None},
-        {"id": "g-kiosk", "displayName": "Kiosks", "description": None},
+        # Exactly Edgar's group: Security, Dynamic Device, rule against device.
+        {"id": "g-vm", "displayName": "Virtual Machines", "description": "Build agents",
+         "groupTypes": ["DynamicMembership"],
+         "membershipRule": '(device.deviceOSType -eq "Windows")'},
+        # A dynamic USER group: same groupTypes, rule against user.
+        {"id": "g-people", "displayName": "Israel", "description": None,
+         "groupTypes": ["DynamicMembership"],
+         "membershipRule": '(user.country -eq "Israel")'},
+        # Assigned membership, but devices in it anyway.
+        {"id": "g-kiosk", "displayName": "Kiosks", "description": None,
+         "groupTypes": [], "membershipRule": None},
     ],
     "members": {
         "g-vm": [{"id": "o1", "deviceId": "AAAA-1", "displayName": "BUILD-VM-01"},
@@ -45,34 +53,64 @@ def fake_get_all(path, params=None, base=None, advanced=False):
 
 entra._get_all = fake_get_all
 
-print("--- the sync keeps only the groups that hold devices ---")
-r = entra.sync_device_groups()
-check("every group was looked in", r["scanned"], 3)
-check("two hold devices", r["device_groups"], 2)
-check("three memberships recorded", r["devices"], 3)
-check("the user group is not kept",
-      [g["id"] for g in devices.groups_listing()], ["g-kiosk", "g-vm"])
+print("--- a Dynamic Device group is told apart by its own rule ---")
+check("device rule", entra.is_device_rule(TENANT["groups"][0]), True)
+check("user rule, same groupTypes", entra.is_device_rule(TENANT["groups"][1]), False)
+check("assigned membership", entra.is_device_rule(TENANT["groups"][2]), False)
+
+print("\n--- the default mode looks only in those ---")
+r = entra.sync_device_groups("dynamic")
+check("one candidate found", r["dynamic_device_groups"], 1)
+check("and only it was looked in", r["scanned"], 1)
+check("one listing plus one members call", len(calls), 2)
+check("it holds devices", r["device_groups"], 1)
+check("the kiosk group is not found this way",
+      [g["id"] for g in devices.groups_listing()], ["g-vm"])
 check("it casts to device, never to user",
       any("microsoft.graph.user" in c for c in calls), False)
 check("and follows nested groups",
       all("transitiveMembers" in c for c in calls if c != "/groups"), True)
 
-print("\n--- one call per group, and the filter is what narrows that ---")
-check("one listing plus one per group", len(calls), 4)
+print("\n--- 'every group' is the thorough pass, for Assigned membership ---")
 calls.clear()
-settings.set_value("ENTRA_DEVICE_GROUP_FILTER", "startsWith(displayName, 'Virtual')", "test")
-TENANT["groups"] = [g for g in TENANT["groups"] if g["id"] == "g-vm"]
-r = entra.sync_device_groups()
-check("only the filtered group is scanned", r["scanned"], 1)
-check("so only two calls", len(calls), 2)
-check("and a group outside the filter is left alone, not deleted",
+r = entra.sync_device_groups("all")
+check("every group looked in", r["scanned"], 3)
+check("two hold devices", r["device_groups"], 2)
+check("three memberships", r["devices"], 3)
+check("one call per group, plus the listing", len(calls), 4)
+check("now the kiosk group is there",
+      sorted(g["id"] for g in devices.groups_listing()), ["g-kiosk", "g-vm"])
+check("the dynamic user group is still not kept",
+      "g-people" in [g["id"] for g in devices.groups_listing()], False)
+
+print("\n--- Edgar's mistake: a filter that matches nothing says so ---")
+calls.clear()
+settings.set_value("ENTRA_DEVICE_GROUP_FILTER", "startsWith(displayName, 'Virtual-')", "test")
+TENANT["groups"] = []                    # what Graph returns for that filter
+r = entra.sync_device_groups("dynamic")
+check("nothing listed", r["groups_listed"], 0)
+check("nothing scanned", r["scanned"], 0)
+check("and the filter is reported back so the message can name it",
+      r["filter"], "startsWith(displayName, 'Virtual-')")
+check("no group was deleted for being unreachable",
       sorted(g["id"] for g in devices.groups_listing()), ["g-kiosk", "g-vm"])
 
+settings.set_value("ENTRA_DEVICE_GROUP_FILTER", "startsWith(displayName, 'Virtual')", "test")
+TENANT["groups"] = [{"id": "g-vm", "displayName": "Virtual Machines",
+                     "description": "Build agents", "groupTypes": ["DynamicMembership"],
+                     "membershipRule": '(device.deviceOSType -eq "Windows")'}]
+r = entra.sync_device_groups("dynamic")
+check("the corrected filter finds it", r["device_groups"], 1)
+check("and its rule is kept for the page",
+      devices.group("g-vm")["membership_rule"], '(device.deviceOSType -eq "Windows")')
+check("flagged as dynamic", devices.group("g-vm")["dynamic"], 1)
+
 print("\n--- a group that stops holding devices is dropped ---")
-TENANT["groups"] = [{"id": "g-kiosk", "displayName": "Kiosks", "description": None}]
+TENANT["groups"] = [{"id": "g-kiosk", "displayName": "Kiosks", "description": None,
+                     "groupTypes": [], "membershipRule": None}]
 TENANT["members"]["g-kiosk"] = []
 settings.set_value("ENTRA_DEVICE_GROUP_FILTER", "", "test")
-r = entra.sync_device_groups()
+r = entra.sync_device_groups("all")
 check("reported as dropped", r["dropped"], 1)
 check("gone from the list", [g["id"] for g in devices.groups_listing()], ["g-vm"])
 check("and its membership rows went with it",
@@ -99,10 +137,12 @@ check("members from Entra", row["members"], 2)
 check("matched to Intune records", row["matched"], 2)
 check("and that a rule is using it", row["ignoring"], 1)
 
-TENANT["groups"] = [{"id": "g-vm", "displayName": "Virtual machines", "description": None}]
+TENANT["groups"] = [{"id": "g-vm", "displayName": "Virtual Machines", "description": None,
+                     "groupTypes": ["DynamicMembership"],
+                     "membershipRule": '(device.deviceOSType -eq "Windows")'}]
 TENANT["members"]["g-vm"] = TENANT["members"]["g-vm"] + [
     {"id": "o9", "deviceId": "DDDD-9", "displayName": "BUILD-VM-09"}]
-entra.sync_device_groups()
+entra.sync_device_groups("dynamic")
 row = [g for g in devices.groups_listing() if g["id"] == "g-vm"][0]
 check("a member Intune has not synced still shows", row["members"], 3)
 check("but is not counted as known", row["matched"], 2)

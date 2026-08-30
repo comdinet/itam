@@ -6,6 +6,15 @@
   {% if ignoring %}<span class="tag">its devices are ignored</span>{% endif %}</h2>
 {% if g.description %}<p class="meta">{{ g.description }}</p>{% endif %}
 <p class="meta mono">{{ g.id }} &middot; synced {{ g.synced_at or 'never' }}</p>
+{% if g.membership_rule %}
+<p class="meta">Membership is <strong>dynamic</strong>, by this rule:</p>
+<p class="mono">{{ g.membership_rule }}</p>
+<p class="hint">That is a membership-rule expression, which is why it uses
+  <span class="mono">-eq</span> and double quotes. The
+  <a href="/settings/entra">sync filters</a> are OData and use
+  <span class="mono">eq</span> and single quotes &mdash; the two are not
+  interchangeable.</p>
+{% endif %}
 
 {% if not ignoring %}
 <form method="post" action="/settings/device-groups/{{ g.id }}/ignore"

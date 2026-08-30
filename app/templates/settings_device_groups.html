@@ -15,15 +15,33 @@
 <p class="meta">Last sync: {{ last.last or 'never' }}.
   Filter in effect: <span class="mono">{{ group_filter or 'none — every group is scanned' }}</span></p>
 
-<form method="post" action="/settings/device-groups/sync" class="inline-form">
-  <button type="submit" {% if not cfg.configured %}disabled{% endif %}>Sync device groups</button>
-  <span class="hint">There is no way to ask Entra "which groups hold devices", so
-    this looks in each group in turn &mdash; one call per group. On a large tenant
-    narrow it with <span class="mono">ENTRA_DEVICE_GROUP_FILTER</span> under
-    <a href="/settings/entra">Entra ID</a>, for example
-    <span class="mono">startsWith(displayName, 'Devices-')</span>. Only groups
-    that turn out to hold devices are kept.</span>
-</form>
+<div class="inline-form">
+  <form method="post" action="/settings/device-groups/sync">
+    <input type="hidden" name="mode" value="dynamic">
+    <button type="submit" {% if not cfg.configured %}disabled{% endif %}>Sync dynamic device groups</button>
+  </form>
+  <form method="post" action="/settings/device-groups/sync">
+    <input type="hidden" name="mode" value="all">
+    <button class="light" type="submit" {% if not cfg.configured %}disabled{% endif %}>Look in every group</button>
+  </form>
+</div>
+<p class="hint"><strong>Sync dynamic device groups</strong> reads the group list
+  once and looks inside only the groups whose own membership rule is written
+  against <span class="mono">device.</span> &mdash; the ones the portal calls
+  <em>Dynamic Device</em>. That is a handful of extra calls, not one per group.
+  <br><strong>Look in every group</strong> is the thorough pass, for a group with
+  <em>Assigned</em> membership that holds devices: nothing about such a group says
+  so from the outside, so the only way to find out is to look. One call per group
+  &mdash; narrow it with <span class="mono">ENTRA_DEVICE_GROUP_FILTER</span> under
+  <a href="/settings/entra">Entra ID</a> if your tenant is large.
+  <br>Only groups that turn out to hold devices are kept, either way.</p>
+{% if group_filter %}
+<p class="hint">The filter is matched against the group's <strong>exact display
+  name</strong>. A group called <span class="mono">Virtual Machines</span> is
+  matched by <span class="mono">startsWith(displayName, 'Virtual')</span> and
+  <em>not</em> by <span class="mono">startsWith(displayName, 'Virtual-')</span>.
+  <a href="/settings/entra">Test the filter</a> if a sync comes back empty.</p>
+{% endif %}
 
 <table>
   <thead><tr><th>Group</th><th class="num">Devices</th><th class="num">Known to ITAM</th>
@@ -32,7 +50,9 @@
   {% for g in groups %}
     <tr>
       <td><a href="/settings/device-groups/{{ g.id }}"><strong>{{ g.display_name }}</strong></a>
-        {% if g.description %}<div class="meta">{{ g.description }}</div>{% endif %}</td>
+        {% if g.dynamic %}<span class="tag">dynamic</span>{% endif %}
+        {% if g.description %}<div class="meta">{{ g.description }}</div>{% endif %}
+        {% if g.membership_rule %}<div class="meta mono">{{ g.membership_rule }}</div>{% endif %}</td>
       <td class="num">{{ g.members }}</td>
       <td class="num">{{ g.matched }}
         {% if g.members > g.matched %}
@@ -49,7 +69,11 @@
         {% endif %}</td></tr>
   {% else %}
     <tr><td colspan="5" class="empty">
-      {% if last.last %}No group scanned held any devices.
+      {% if last.last %}No group looked at held any devices.
+        {% if group_filter %}Your filter is
+          <span class="mono">{{ group_filter }}</span> &mdash; check it against the
+          group's exact name.{% else %}Try <strong>Look in every group</strong>,
+          in case the group has Assigned rather than Dynamic membership.{% endif %}
       {% else %}Nothing synced yet &mdash; run a sync above.{% endif %}</td></tr>
   {% endfor %}
   </tbody>

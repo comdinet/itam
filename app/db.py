@@ -193,11 +193,13 @@ CREATE TABLE IF NOT EXISTS device_ignore_rules (
 -- microsoft.graph.user, so a group full of virtual machines syncs as empty and
 -- looks like nothing - these are kept apart so each list means one thing.
 CREATE TABLE IF NOT EXISTS device_groups (
-    id           TEXT PRIMARY KEY,
-    display_name TEXT NOT NULL,
-    description  TEXT,
-    device_count INTEGER NOT NULL DEFAULT 0,
-    synced_at    TEXT
+    id              TEXT PRIMARY KEY,
+    display_name    TEXT NOT NULL,
+    description     TEXT,
+    device_count    INTEGER NOT NULL DEFAULT 0,
+    dynamic         INTEGER NOT NULL DEFAULT 0,   -- membership type Dynamic Device
+    membership_rule TEXT,                         -- the rule, when it is dynamic
+    synced_at       TEXT
 );
 
 -- Which Entra devices are in such a group. Refreshed whenever devices or device
@@ -468,6 +470,12 @@ def init_db():
         gcols = [r["name"] for r in conn.execute("PRAGMA table_info(device_group_members)")]
         if "device_name" not in gcols:
             conn.execute("ALTER TABLE device_group_members ADD COLUMN device_name TEXT")
+        dgcols = [r["name"] for r in conn.execute("PRAGMA table_info(device_groups)")]
+        if "membership_rule" not in dgcols:
+            conn.execute("ALTER TABLE device_groups ADD COLUMN membership_rule TEXT")
+        if "dynamic" not in dgcols:
+            conn.execute("ALTER TABLE device_groups ADD COLUMN dynamic "
+                         "INTEGER NOT NULL DEFAULT 0")
 
         # Migration: counted assets no longer declare how many were bought.
         # What you owned but had not handed out is exactly what is on the shelf,
