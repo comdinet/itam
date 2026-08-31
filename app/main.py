@@ -877,7 +877,7 @@ def assign_sub(upn: str, subscription_id: int = Form(...)):
 # count. Both are assets, both live under the same categories, and each
 # category has its own page listing both kinds.
 
-def asset_rows(q: str = "", category: str = "", state: str = ""):
+def asset_rows(q: str = "", category: str = "", state: str = "", priced: str = ""):
     sql = """SELECT a.*, u.display_name FROM assets a
              LEFT JOIN users u ON u.upn = a.assigned_upn"""
     where, params = [], []
@@ -891,38 +891,56 @@ def asset_rows(q: str = "", category: str = "", state: str = ""):
         where.append("a.assigned_upn IS NULL")
     elif state == "assigned":
         where.append("a.assigned_upn IS NOT NULL")
+    # A cost of zero is "nobody has said what this cost", not "it was free".
+    # Kit created from an Intune sync lands at zero unless a pricing group
+    # covers it, so this is the list of what still needs a number.
+    if priced == "unpriced":
+        where.append("COALESCE(a.cost_cents,0) = 0")
+    elif priced == "priced":
+        where.append("COALESCE(a.cost_cents,0) > 0")
     if where:
         sql += " WHERE " + " AND ".join(where)
     return db.q(sql + " ORDER BY a.category, a.name", params)
 
 
-def assets_view(request: Request, category: str | None, q: str, state: str):
-    rows = asset_rows(q, category or "", state)
+def assets_view(request: Request, category: str | None, q: str, state: str,
+                priced: str = ""):
+    rows = asset_rows(q, category or "", state, priced)
     items = pooled.listing(category)
     if q:
         needle = q.lower()
         items = [i for i in items if needle in (i["name"] or "").lower()]
+    if priced == "unpriced":
+        items = [i for i in items if not i["unit_cost_cents"]]
+    elif priced == "priced":
+        items = [i for i in items if i["unit_cost_cents"]]
     # Mixed currencies cannot be added raw, so the total is in reporting currency.
     total = (sum(fx.to_reporting(r["cost_cents"], r["rate_micro"]) for r in rows)
              + sum(i["value_rep"] for i in items))
-    users = db.q("SELECT upn, display_name FROM users ORDER BY display_name")
+    users = db.q("SELECT upn, display_name FROM users WHERE ignored_reason IS NULL "
+                 "ORDER BY display_name")
+    # Counted across the category regardless of the other filters, so the hint
+    # can offer the whole job rather than what happens to be on screen.
+    unpriced = (len(asset_rows("", category or "", "", "unpriced"))
+                + len([i for i in pooled.listing(category) if not i["unit_cost_cents"]]))
     return render(request, "assets.html", assets=rows, items=items, users=users,
-                  q=q, category=category, state=state, total=total,
-                  pooled_totals=pooled.totals(category),
+                  q=q, category=category, state=state, priced=priced, total=total,
+                  unpriced=unpriced, pooled_totals=pooled.totals(category),
                   currencies=fx.listing(active_only=True))
 
 
 @app.get("/assets", response_class=HTMLResponse)
-def assets_list(request: Request, q: str = "", state: str = ""):
-    return assets_view(request, None, q, state)
+def assets_list(request: Request, q: str = "", state: str = "", priced: str = ""):
+    return assets_view(request, None, q, state, priced)
 
 
 # Declared before /assets/{asset_id}: that path takes an int, so "c" and
 # "pooled" would never reach it, but keeping the order explicit means a later
 # change of type cannot silently swallow these.
 @app.get("/assets/c/{category}", response_class=HTMLResponse)
-def assets_category(request: Request, category: str, q: str = "", state: str = ""):
-    return assets_view(request, category, q, state)
+def assets_category(request: Request, category: str, q: str = "", state: str = "",
+                    priced: str = ""):
+    return assets_view(request, category, q, state, priced)
 
 
 @app.post("/assets/new")

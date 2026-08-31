@@ -33,9 +33,25 @@
     <option value="assigned" {% if state=='assigned' %}selected{% endif %}>Assigned</option>
     <option value="spare" {% if state=='spare' %}selected{% endif %}>Spare</option>
   </select>
+  <select name="priced"><option value="">Any cost</option>
+    <option value="unpriced" {% if priced=='unpriced' %}selected{% endif %}>No cost set</option>
+    <option value="priced" {% if priced=='priced' %}selected{% endif %}>Has a cost</option>
+  </select>
   <button type="submit">Filter</button>
   <a class="btn light" href="{{ here }}">Reset</a>
 </form>
+{% if unpriced and priced != 'unpriced' %}
+<p class="hint"><strong>{{ unpriced }}</strong>
+  {%- if category %} {{ category }}{% endif %} record(s) have no cost set, so they
+  contribute nothing to any total.
+  <a href="{{ here }}?priced=unpriced">Show just those</a> &mdash; or price a whole
+  fleet at once under <a href="/settings/pricing">Settings &rarr; Pricing</a>.</p>
+{% elif priced == 'unpriced' %}
+<p class="hint">Everything here is missing a cost. A zero means nobody has said
+  what it cost, not that it was free &mdash; kit created from an Intune sync lands
+  at zero unless a <a href="/settings/pricing">pricing group</a> covers its
+  specification.</p>
+{% endif %}
 
 <details class="panel" {% if not assets and not items %}open{% endif %}>
   <summary>Add {{ 'a ' ~ what if category else 'an asset' }} &mdash; tracked by its serial</summary>
@@ -100,12 +116,13 @@
       <td class="mono">{{ a.serial or '' }}</td>
       <td>{% if a.assigned_upn %}<a href="/users/{{ a.assigned_upn }}">{{ a.display_name }}</a>
           {% else %}<span class="tag spare">spare</span>{% endif %}</td>
-      <td class="num">{{ a.cost_cents|money }}
-        <span class="chip">{{ a.currency or currency }}</span></td>
+      <td class="num">{% if a.cost_cents %}{{ a.cost_cents|money }}
+          <span class="chip">{{ a.currency or currency }}</span>
+        {% else %}<span class="tag">no cost set</span>{% endif %}</td>
       <td class="row-actions"><a href="/assets/{{ a.id }}">Edit</a></td></tr>
   {% else %}
     <tr><td colspan="{{ 6 if not category else 5 }}" class="empty">
-      {% if q or state %}Nothing here matches those filters.
+      {% if q or state or priced %}Nothing here matches those filters.
       {% elif category %}No {{ category }} tracked by serial yet &mdash; add one above.
       {% else %}No assets yet &mdash; add your first one above.{% endif %}</td></tr>
   {% endfor %}
@@ -124,8 +141,9 @@
         {% if i.notes %}<div class="meta">{{ i.notes }}</div>{% endif %}</td>
       {% if not category %}<td>{{ i.category }}</td>{% endif %}
       <td>{{ i.vendor or '' }}</td>
-      <td class="num">{{ i.unit_cost_cents|money }}
-        <span class="chip">{{ i.currency or currency }}</span></td>
+      <td class="num">{% if i.unit_cost_cents %}{{ i.unit_cost_cents|money }}
+          <span class="chip">{{ i.currency or currency }}</span>
+        {% else %}<span class="tag">no cost set</span>{% endif %}</td>
       <td class="num">{{ i.assigned }}{% if i.holders %}
         <span class="meta">({{ i.holders }} people)</span>{% endif %}</td>
       <td class="num">{{ i.spare }}</td>
@@ -135,7 +153,7 @@
         {% endif %}</td></tr>
   {% else %}
     <tr><td colspan="{{ 7 if not category else 6 }}" class="empty">
-      {% if q %}Nothing here matches that search.
+      {% if q or priced %}Nothing here matches those filters.
       {% elif category %}No counted {{ category }} yet &mdash; add one above.
       {% else %}Nothing counted yet &mdash; add an item above.{% endif %}</td></tr>
   {% endfor %}

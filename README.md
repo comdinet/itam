@@ -382,7 +382,11 @@ Sync behaviour:
 - **Assets** — one tab per category. Each tab lists what you own in it, both
   the machines tracked by serial and the counted items, with an **Add** for
   each kind that files it under the category you are on. Search by name or
-  serial and filter by assigned/spare.
+  serial, filter by assigned/spare, and filter by **no cost set** — a zero is
+  "nobody has said what this cost", not "it was free", and kit created from an
+  Intune sync lands at zero unless a pricing group covers it. The count of
+  unpriced records is offered on the page, so the gap is not something you have
+  to go looking for.
 - **Subscriptions** — per-seat cost, seat count, monthly and annual spend;
   manage seats per subscription.
 - **Settings** — subsections:
@@ -1169,7 +1173,7 @@ your backups as secrets either way.
 ./tests/run_all.sh
 ```
 
-Twenty-five suites covering money parsing, currencies and frozen rates, the
+Twenty-six suites covering money parsing, currencies and frozen rates, the
 dashboard's country filter, bulk assignment, CSV import, the Entra
 user/group/licence syncs, device groups, Intune devices, ignored devices and people,
 macOS custom attributes, OData filters and the dynamic-group syntax they get
