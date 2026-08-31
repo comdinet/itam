@@ -1,0 +1,40 @@
+{
+	# HTTP/1.1 and HTTP/2 only. HTTP/3 would advertise "Alt-Svc: h3=:443",
+	# sending browsers to a UDP port this deployment does not publish.
+	servers {
+		protocols h1 h2
+	}
+	email {$ITAM_ACME_EMAIL}
+}
+
+# The real certificate, from Let's Encrypt, proved by a DNS TXT record that
+# Caddy writes and removes through the Cloudflare API. Nothing inbound is
+# needed for this - no port 80 from the internet, no public reachability - so
+# the app can stay on an internal address and still have a certificate every
+# browser trusts.
+{$ITAM_PUBLIC_HOSTNAME} {
+	tls {
+		dns cloudflare {$CLOUDFLARE_API_TOKEN}
+		resolvers 1.1.1.1 1.0.0.1
+	}
+	encode gzip
+	reverse_proxy itam:8000 {
+		header_up X-Real-IP {remote_host}
+	}
+}
+
+# Anything else that reaches 443 - the short hostname, the IP address - keeps
+# the self-signed certificate. Reaching the box directly still works, it just
+# warns, exactly as it did before.
+:443 {
+	tls /certs/itam.crt /certs/itam.key
+	encode gzip
+	reverse_proxy itam:8000 {
+		header_up X-Real-IP {remote_host}
+	}
+}
+
+# Plain HTTP redirects to HTTPS.
+http:// {
+	redir https://{host}{uri} permanent
+}

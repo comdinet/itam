@@ -88,8 +88,11 @@ sudo ufw allow from 10.0.0.0/8 to any port 80 proto tcp
 
 ### HTTPS
 
-The stack serves HTTPS with a **self-signed certificate**. No ACME, no DNS
-requirements, nothing to reach the internet for.
+Out of the box the stack serves HTTPS with a **self-signed certificate**. No
+ACME, no DNS requirements, nothing to reach the internet for. For a certificate
+browsers trust — which SSO requires — see
+[A real certificate, over Cloudflare DNS](#a-real-certificate-over-cloudflare-dns)
+below.
 
 `./make-cert.sh` builds one certificate covering every name in
 `ITAM_SITE_ADDRESS` plus `localhost` and this host's IP, valid for 10 years.
@@ -114,6 +117,70 @@ Browsers show a warning the first time, because the certificate signs itself.
 Click through it, or install `certs/itam.crt` as a trusted certificate on the
 machines that use the app to stop the warning. `certs/` is gitignored — the
 private key lives only on the server.
+
+### A real certificate, over Cloudflare DNS
+
+The self-signed certificate is fine for direct access, but SSO needs a URL
+browsers trust. `enable-cloudflare-tls.sh` swaps it for a real one from Let's
+Encrypt, proved by a **DNS TXT record** written through the Cloudflare API.
+
+That matters: DNS-01 needs **nothing inbound**. The server does not have to be
+reachable from the internet, port 80 does not have to be open to the world, and
+the DNS record can stay DNS-only (grey cloud). The certificate is proved by
+controlling the zone, not by answering traffic.
+
+**1. Point the name at the server.** In Cloudflare DNS, an `A` record for
+`itam` → your server's address. Proxy status **DNS only** unless you
+specifically want traffic going through Cloudflare.
+
+**2. Make an API token.** <https://dash.cloudflare.com/profile/api-tokens> →
+**Create Token** → **Edit zone DNS** template. Then:
+
+| | |
+|---|---|
+| Permissions | `Zone` · `DNS` · **Edit** |
+| Permissions | `Zone` · `Zone` · **Read** |
+| Zone Resources | Include → Specific zone → your zone |
+
+Nothing else. Copy the token — Cloudflare shows it once.
+
+**3. Run it.** On the server, in `/opt/itam`:
+
+```bash
+sudo ./enable-cloudflare-tls.sh
+```
+
+It asks for the name, the token and an email for expiry notices, **checks the
+token against the Cloudflare API and confirms it can see the zone before
+changing anything**, then builds Caddy with the DNS module and restarts. First
+issuance takes 30–90 seconds while the TXT record propagates; the script waits
+and tells you.
+
+Non-interactive:
+
+```bash
+sudo ./enable-cloudflare-tls.sh --hostname itam.example.com --token cf_xxx --email you@example.com
+```
+
+**4. Point SSO at it.** Settings → SSO, base URL `https://itam.example.com`.
+Entra will not accept a self-signed reply URL, which is why this comes first.
+
+Notes:
+
+- The token goes in `.env` (mode 600) and is passed only to the Caddy
+  container, never to the app.
+- Every `docker compose …` command keeps working unchanged: `COMPOSE_FILE` in
+  `.env` names both compose files, so nothing has to be typed differently
+  afterwards.
+- Direct access by IP or short hostname still works and still uses the
+  self-signed certificate, with its warning. Only the DNS name gets the real
+  one.
+- Renewal is automatic. Caddy keeps its account and certificates in the
+  `caddy_data` volume, so a rebuild does not re-issue.
+- To go back: `sudo ./enable-cloudflare-tls.sh --disable`. The token stays in
+  `.env`, so switching back again needs no arguments.
+- Caddy needs outbound HTTPS to `acme-v02.api.letsencrypt.org` and
+  `api.cloudflare.com`.
 
 ### Back up
 
@@ -145,7 +212,9 @@ falls back to the container's own Python if the host lacks it.
 | Health check never turns healthy | `docker compose logs --tail=50` — the startup error is there |
 | `port is already allocated` | Something else has that port. Change `ITAM_PORT` in `.env` and `docker compose up -d` |
 | `permission denied` on the Docker socket | `sudo usermod -aG docker $USER`, then log out and back in |
-| Browser warns about the certificate | Expected — it is self-signed. Click through, or install `certs/itam.crt` on the client machines. |
+| Browser warns about the certificate | Expected with the self-signed certificate. Click through, install `certs/itam.crt` on the client machines, or switch to a real one with `./enable-cloudflare-tls.sh`. |
+| `Invalid access token` from Cloudflare in the Caddy log | The API token is wrong or lacks the zone. It needs `Zone:DNS:Edit` **and** `Zone:Zone:Read`, scoped to include your zone. Re-run `./enable-cloudflare-tls.sh` — it checks the token before changing anything. |
+| Certificate never arrives, no error | Caddy needs outbound HTTPS to `api.cloudflare.com` and `acme-v02.api.letsencrypt.org`. `docker compose logs caddy` shows the attempt. |
 | **"Secure Connection Failed" / `SSL_ERROR_INTERNAL_ERROR_ALERT`** | Caddy had no certificate to serve. Run `./make-cert.sh && docker compose restart caddy`. Confirm with `openssl s_client -connect HOST:443` — `alert number 80` means no certificate was loaded; check `docker compose logs caddy`. |
 | `itam,: command not found` | An `.env` value was typed at the shell prompt. `ITAM_SITE_ADDRESS=...` belongs **inside** `.env`; editing that file is the only step. |
 | Signed in, but immediately bounced back to the login page | The app is on plain HTTP while `ITAM_COOKIE_SECURE=1`, so the browser refuses to send the session cookie. Use HTTPS, or set it to 0. |

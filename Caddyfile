@@ -1,26 +1,25 @@
 {
-    servers {
-        # HTTP/1.1 and HTTP/2 only. HTTP/3 would advertise "Alt-Svc: h3=:443",
-        # sending browsers to a UDP port this deployment does not publish.
-        protocols h1 h2
-    }
-    # No ACME, no local CA: the certificate is a file, made by setup.sh.
-    auto_https disable_certs
+	servers {
+		# HTTP/1.1 and HTTP/2 only. HTTP/3 would advertise "Alt-Svc: h3=:443",
+		# sending browsers to a UDP port this deployment does not publish.
+		protocols h1 h2
+	}
+	# No ACME, no local CA: the certificate is a file, made by setup.sh.
+	auto_https disable_certs
 }
 
 # Catch-all on 443: one self-signed certificate is served for every hostname
 # and IP address, so nothing can fail because a name was not configured.
 :443 {
-    tls /certs/itam.crt /certs/itam.key
-    encode gzip
+	tls /certs/itam.crt /certs/itam.key
+	encode gzip
 
-    reverse_proxy itam:8000 {
-        header_up X-Real-IP {remote_host}
-        header_up X-Forwarded-Proto {scheme}
-    }
+	reverse_proxy itam:8000 {
+		header_up X-Real-IP {remote_host}
+	}
 }
 
 # Plain HTTP redirects to HTTPS.
 :80 {
-    redir https://{host}{uri} permanent
+	redir https://{host}{uri} permanent
 }

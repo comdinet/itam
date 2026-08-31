@@ -1,0 +1,21 @@
+# Overrides that swap the self-signed certificate for a real one from Let's
+# Encrypt, proved over Cloudflare DNS.
+#
+# Not passed on the command line: COMPOSE_FILE in .env names both files, so
+# `docker compose up -d` and every other documented command keeps working
+# unchanged.
+services:
+  caddy:
+    build: ./caddy
+    image: itam-caddy:cloudflare
+    volumes:
+      - ./Caddyfile.cloudflare:/etc/caddy/Caddyfile:ro
+      - ./certs:/certs:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      # Read by Caddyfile.cloudflare. Kept out of the app's env_file so the
+      # token is only ever in the process that needs it.
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:?set CLOUDFLARE_API_TOKEN in .env}
+      ITAM_PUBLIC_HOSTNAME: ${ITAM_PUBLIC_HOSTNAME:?set ITAM_PUBLIC_HOSTNAME in .env}
+      ITAM_ACME_EMAIL: ${ITAM_ACME_EMAIL:-}
