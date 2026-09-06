@@ -36,6 +36,11 @@ a { color: var(--accent); }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
 .ok { color: var(--ok); }
 
+.tally { display: flex; flex-wrap: wrap; gap: 6px 20px; align-items: baseline;
+         margin: 14px 0 18px; padding: 10px 14px; background: var(--panel);
+         border: 1px solid var(--line); border-radius: 10px; }
+.tally strong { font-variant-numeric: tabular-nums; }
+
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin: 18px 0; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px;
         display: flex; flex-direction: column; gap: 2px; }

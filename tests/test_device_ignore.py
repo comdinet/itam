@@ -157,6 +157,27 @@ with TestClient(main.app) as client:
           sorted(k for k, v in links("ignored_reason IS NULL").items() if v),
           visible_unlinked)
 
+print("\n--- the summary line counts what is on the page, not what is hidden ---")
+with TestClient(main.app) as client:
+    client.post("/login", data={"username": "admin", "password": "IgnoreTest!2345"},
+                follow_redirects=False)
+    page = client.get("/settings/devices").text
+    tally = page.split('class="tally"', 1)[1].split("</p>", 1)[0]
+    check("the custom-attribute widget is gone", "Custom attributes</span>" in page, False)
+    check("OS counts live in one widget, not one each", tally.count("By OS"), 1)
+    visible = db.q1("SELECT COUNT(*) c FROM devices WHERE ignored_reason IS NULL")["c"]
+    check("the managed count excludes ignored devices",
+          f"Managed devices <strong>{visible}</strong>" in tally, True)
+    for row in db.q("""SELECT COALESCE(NULLIF(TRIM(os),''),'(not reported)') os, COUNT(*) n
+                       FROM devices WHERE ignored_reason IS NULL GROUP BY os"""):
+        check(f"{row['os']} counted", f"{row['os']} <strong>{row['n']}</strong>" in tally, True)
+    hidden_os = db.q1("""SELECT os FROM devices WHERE ignored_reason IS NOT NULL
+                         AND os NOT IN (SELECT os FROM devices WHERE ignored_reason IS NULL)
+                         LIMIT 1""")
+    if hidden_os:
+        check("an OS only present on ignored devices is not listed",
+              hidden_os["os"] in tally, False)
+
 print()
 print("FAILURES:", ", ".join(fails) if fails else "none")
 sys.exit(1 if fails else 0)

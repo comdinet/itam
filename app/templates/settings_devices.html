@@ -3,17 +3,14 @@
 {% block admin %}
 <h2>Intune devices <span class="count">{{ devices|length }}</span></h2>
 
-<div class="cards">
-  <div class="card"><span class="label">Managed devices</span>
-    <span class="big">{{ counts.total or 0 }}</span>
-    <span class="sub">last sync {{ (last.last or 'never')[:16].replace('T',' ') }}</span></div>
-  <div class="card"><span class="label">Not linked to an asset</span>
-    <span class="big">{{ counts.unlinked or 0 }}</span>
-    <span class="sub">matched on serial number</span></div>
-  <div class="card"><span class="label">Custom attributes</span>
-    <span class="big">{{ counts.attributes or 0 }}</span>
-    <span class="sub">values merged onto devices</span></div>
-</div>
+<p class="tally">
+  <span>Managed devices <strong>{{ counts.total or 0 }}</strong></span>
+  <span>Not linked to an asset <strong>{{ counts.unlinked or 0 }}</strong></span>
+  <span>By OS
+    {%- for o in by_os %} {{ o.os }} <strong>{{ o.n }}</strong>{% if not loop.last %},{% endif %}
+    {%- else %} <span class="meta">nothing synced yet</span>{% endfor %}</span>
+  <span class="meta">last sync {{ (last.last or 'never')[:16].replace('T',' ') }}</span>
+</p>
 
 {% if not cfg.configured %}
 <div class="warn"><strong>Entra ID is not configured</strong> &mdash; set the

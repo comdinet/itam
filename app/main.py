@@ -1418,9 +1418,15 @@ def settings_devices(request: Request, q: str = "", os_filter: str = "",
     # "create assets" button will actually do.
     counts = db.q1(
         """SELECT COUNT(*) AS total,
-                  SUM(CASE WHEN asset_id IS NULL THEN 1 ELSE 0 END) AS unlinked,
-                  (SELECT COUNT(*) FROM device_attributes) AS attributes
+                  SUM(CASE WHEN asset_id IS NULL THEN 1 ELSE 0 END) AS unlinked
            FROM devices WHERE ignored_reason IS NULL""")
+    # One line per OS, in the same widget: a card each would be a wall of cards
+    # that grows every time somebody enrols a different kind of thing.
+    by_os = db.q(
+        """SELECT COALESCE(NULLIF(TRIM(os),''),'(not reported)') AS os,
+                  COUNT(*) AS n
+           FROM devices WHERE ignored_reason IS NULL
+           GROUP BY os ORDER BY n DESC, os""")
     unlinked_here = sum(1 for d in rows if not d["asset_id"])
     return render(request, "settings_devices.html", devices=rows, attrs=attrs,
                   oses=oses, q=q, os_filter=os_filter, linked=linked,
@@ -1430,6 +1436,7 @@ def settings_devices(request: Request, q: str = "", os_filter: str = "",
                   ignored=devices.ignored_listing(), ignore_counts=devices.counts(),
                   entra_groups=devices.groups_listing(),
                   unlinked_here=unlinked_here, last=last, counts=counts,
+                  by_os=by_os,
                   gap=devices.holder_gap(),
                   cfg=entra.config_status(),
                   attr_filter=settings.get("INTUNE_ATTRIBUTE_FILTER"),
