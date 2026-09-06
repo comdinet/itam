@@ -19,6 +19,53 @@
     <a href="/settings/entra">OData filter</a> decides who Entra sends.</span>
 </form>
 
+{% if renamed %}
+<div class="warn">
+  <strong>{{ renamed|length }} person/people appear twice.</strong>
+  Each pair shares one Entra object id, which is what a <em>renamed UPN</em>
+  looks like from here: the same person, under two names. The next user sync
+  folds these together on its own; the button does it now.
+  <table>
+    <thead><tr><th>Old name</th><th>New name</th><th></th></tr></thead>
+    <tbody>
+    {% for r in renamed %}
+      <tr><td class="mono">{{ r.old_upn }}<div class="meta">{{ r.old_name }}</div></td>
+          <td class="mono">{{ r.new_upn }}<div class="meta">{{ r.new_name }}</div></td>
+          <td class="row-actions">
+            <form method="post" action="/settings/entra/users/merge"
+                  onsubmit="return confirm('Move everything from {{ r.old_upn }} to {{ r.new_upn }} and delete the first?')">
+              <input type="hidden" name="from_upn" value="{{ r.old_upn }}">
+              <input type="hidden" name="into_upn" value="{{ r.new_upn }}">
+              <button class="link">Merge into the new one</button></form></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<details class="panel" data-panel="merge-people">
+  <summary>Merge two people</summary>
+  <p class="meta">Everything the first holds &mdash; assets, counted units,
+    licence seats, group membership &mdash; moves to the second, and the first is
+    deleted. Nothing they held is lost: where both hold the same counted item the
+    quantities are added.</p>
+  <p class="meta">Needed when somebody was recreated as a new Entra object, so
+    the object id does not match and the sync cannot see that they are the same
+    person.</p>
+  <form class="grid-form" method="post" action="/settings/entra/users/merge"
+        onsubmit="return confirm('Move everything across and delete the first person?')">
+    <label>Move everything from<select name="from_upn" required>
+      <option value="">&mdash; choose &mdash;</option>
+      {% for u in everyone %}<option value="{{ u.upn }}">{{ u.display_name }} — {{ u.upn }}</option>{% endfor %}
+    </select></label>
+    <label>Onto<select name="into_upn" required>
+      <option value="">&mdash; choose &mdash;</option>
+      {% for u in everyone %}<option value="{{ u.upn }}">{{ u.display_name }} — {{ u.upn }}</option>{% endfor %}
+    </select></label>
+    <button type="submit">Merge</button>
+  </form>
+</details>
+
 <details class="panel" data-panel="ignored-people" {% if not rules %}{% else %}open{% endif %}>
   <summary>Ignored people <span class="count">{{ counts.ignored }}</span></summary>
   <p class="meta">Service accounts, shared mailboxes, test identities. The OData

@@ -123,3 +123,103 @@ def listing(q: str = "", show_ignored: bool = False):
     if where:
         sql += " WHERE " + " AND ".join(where)
     return db.q(sql + " ORDER BY u.display_name", params)
+
+
+# --- when somebody's UPN changes -----------------------------------------
+#
+# UPN is the key everything hangs off, and it is not stable: rename somebody in
+# Entra and the next sync sees a person who has never existed, while everything
+# they hold stays attached to a name nobody uses any more. Entra's own stable
+# identifier is the object id, which is already stored as users.entra_id, so a
+# rename is detectable rather than guessed at.
+
+# (table, upn column, the rest of its primary key). Everything that points at a
+# person. A merge that misses one silently strands whatever it holds.
+UPN_TABLES = [
+    ("assets", "assigned_upn", None),
+    ("group_members", "upn", "group_id"),
+    ("group_members_unlinked", "upn", "group_id"),
+    ("rule_fulfilments", "upn", "rule_id"),
+    ("subscription_seats", "upn", "subscription_id"),
+    ("user_licenses", "upn", "sku_id"),
+]
+
+
+def merge(from_upn: str, into_upn: str) -> dict | str:
+    """Move everything from one person onto another, then delete the first.
+
+    Returns a report, or a complaint if it cannot be done. Deliberately
+    all-or-nothing per table and never destructive of holdings: where both
+    people hold the same thing the counts are added, not dropped.
+    """
+    from_upn = (from_upn or "").strip().lower()
+    into_upn = (into_upn or "").strip().lower()
+    if not from_upn or not into_upn:
+        return "Both people are needed"
+    if from_upn == into_upn:
+        return "That is the same person"
+    if not db.q1("SELECT 1 FROM users WHERE upn = ?", (from_upn,)):
+        return f"No such person: {from_upn}"
+    if not db.q1("SELECT 1 FROM users WHERE upn = ?", (into_upn,)):
+        return f"No such person: {into_upn}"
+
+    moved = {}
+
+    # Counted units: both may hold the same item, and the quantities have to
+    # add up. Anything else would quietly lose kit.
+    for row in db.q("SELECT item_id, quantity, assigned_on FROM pooled_allocations "
+                    "WHERE upn = ?", (from_upn,)):
+        db.execute(
+            """INSERT INTO pooled_allocations (item_id, upn, quantity, assigned_on)
+               VALUES (?,?,?,?)
+               ON CONFLICT(item_id, upn) DO UPDATE SET
+                   quantity = pooled_allocations.quantity + excluded.quantity""",
+            (row["item_id"], into_upn, row["quantity"], row["assigned_on"]))
+    units = db.q1("SELECT COALESCE(SUM(quantity),0) c FROM pooled_allocations "
+                  "WHERE upn = ?", (from_upn,))["c"]
+    db.execute("DELETE FROM pooled_allocations WHERE upn = ?", (from_upn,))
+    if units:
+        moved["counted units"] = units
+
+    for table, column, other_key in UPN_TABLES:
+        before = db.q1(f"SELECT COUNT(*) c FROM {table} WHERE {column} = ?",
+                       (from_upn,))["c"]
+        if not before:
+            continue
+        if other_key:
+            # A composite key: the row may already exist for the other person,
+            # in which case there is nothing to move, only to drop.
+            db.execute(
+                f"UPDATE OR IGNORE {table} SET {column} = ? WHERE {column} = ?",
+                (into_upn, from_upn))
+            db.execute(f"DELETE FROM {table} WHERE {column} = ?", (from_upn,))
+        else:
+            db.execute(f"UPDATE {table} SET {column} = ? WHERE {column} = ?",
+                       (into_upn, from_upn))
+        moved[table.replace("_", " ")] = before
+
+    # Intune owns primary_upn and will correct it on the next device sync, but
+    # leaving a stale name there means the holder check reports a disagreement
+    # that is really just this rename.
+    stale = db.q1("SELECT COUNT(*) c FROM devices WHERE primary_upn = ?",
+                  (from_upn,))["c"]
+    if stale:
+        db.execute("UPDATE devices SET primary_upn = ? WHERE primary_upn = ?",
+                   (into_upn, from_upn))
+        moved["devices"] = stale
+
+    db.execute("DELETE FROM users WHERE upn = ?", (from_upn,))
+    return {"from": from_upn, "into": into_upn, "moved": moved}
+
+
+def renamed() -> list[dict]:
+    """People whose Entra object id already belongs to somebody else here.
+
+    That is what a UPN change looks like from this side: two rows, one object.
+    """
+    return [dict(r) for r in db.q(
+        """SELECT a.upn AS old_upn, a.display_name AS old_name,
+                  b.upn AS new_upn, b.display_name AS new_name, a.entra_id
+           FROM users a JOIN users b
+             ON a.entra_id = b.entra_id AND a.upn < b.upn
+           WHERE TRIM(COALESCE(a.entra_id,'')) != ''""")]

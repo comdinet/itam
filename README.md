@@ -755,6 +755,32 @@ most likely wants `Device.Read.All` alongside `Group.Read.All`. What it already
 had is kept, because an empty answer is as likely to be a permission as a real
 change.
 
+### When somebody's UPN changes
+
+UPN is the key everything hangs off, and it is not stable. Rename somebody in
+Entra and the plain reading is that an old person still holds a laptop and three
+licences while a new person holds nothing.
+
+Entra keeps the **object id** across a rename, and ITAM already stores it, so
+the two are recognisable as one. The user sync now folds them together by
+itself: everything moves to the new UPN and the old row goes. It is reported as
+`renamed=1` rather than counted as somebody new.
+
+Until that sync runs, **Settings → Entra ID → Users** shows any pair sharing an
+object id, with a button to merge them now.
+
+For somebody **recreated as a new Entra object** — a different object id, which
+no amount of matching can spot — **Merge two people** does it by hand. Either
+way:
+
+- assets, counted units, licence seats, group membership and rule records all
+  move
+- where both hold the same counted item the **quantities are added**, never
+  dropped
+- the Intune device's primary user is corrected too, so the holder check does
+  not report the rename as a disagreement
+- the old person is deleted, having nothing left to lose
+
 ### Ignoring people who are not people
 
 **Settings → Entra ID → Users** lists everyone synced, with the display name,
@@ -1267,7 +1293,7 @@ your backups as secrets either way.
 ./tests/run_all.sh
 ```
 
-Twenty-six suites covering money parsing, currencies and frozen rates, the
+Twenty-nine suites covering money parsing, currencies and frozen rates, the
 dashboard's country filter, bulk assignment, CSV import, the Entra
 user/group/licence syncs, device groups, Intune devices, ignored devices and people,
 macOS custom attributes, OData filters and the dynamic-group syntax they get

@@ -2339,9 +2339,30 @@ def settings_entra_users(request: Request, q: str = "", show_ignored: str = ""):
                   users=people.listing(q, bool(show_ignored)), q=q,
                   show_ignored=show_ignored, counts=people.counts(),
                   rules=people.rules(), describe_rule=people.describe,
-                  hiding=people.hiding(),
+                  hiding=people.hiding(), renamed=people.renamed(),
+                  everyone=db.q("SELECT upn, display_name FROM users "
+                                "ORDER BY display_name"),
                   ignore_fields=people.FIELDS, ignore_ops=people.OPS,
                   **_entra_ctx("users"))
+
+
+@app.post("/settings/entra/users/merge")
+def settings_users_merge(request: Request, from_upn: str = Form(...),
+                         into_upn: str = Form(...)):
+    """Fold one person into another: everything moves, the first is deleted.
+
+    For the case the sync cannot spot on its own - somebody recreated as a new
+    Entra object, or a row synced before object ids were stored. Admin only:
+    it deletes a person, even though nothing they held is lost.
+    """
+    if not require_admin(request):
+        return back("/settings/entra/users", "Admin accounts only")
+    result = people.merge(from_upn, into_upn)
+    if isinstance(result, str):
+        return back("/settings/entra/users", result)
+    what = ", ".join(f"{v} {k}" for k, v in result["moved"].items()) or "nothing to move"
+    return back("/settings/entra/users",
+                f"Merged {result['from']} into {result['into']}: {what}")
 
 
 @app.post("/settings/entra/users/ignore/add")

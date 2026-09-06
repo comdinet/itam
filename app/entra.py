@@ -358,7 +358,29 @@ def sync() -> dict:
                 updated += 1
             else:
                 created += 1
-    return {"fetched": len(users), "created": created, "updated": updated, "skipped": skipped}
+    # A renamed UPN, last: by now the new name has a row of its own, so this is
+    # a merge rather than a rename, and every reference can be moved without
+    # touching a primary key SQLite will not cascade.
+    #
+    # Without it, renaming somebody in Entra invents a second person here and
+    # leaves the first holding their laptop and licences under a name nobody
+    # uses. Entra keeps the object id across a rename, which is what makes the
+    # two recognisable as one.
+    from . import people
+    renamed = 0
+    for u in users:
+        upn = (u.get("userPrincipalName") or "").strip().lower()
+        oid = (u.get("id") or "").strip()
+        if not upn or not oid:
+            continue
+        for old in db.q("SELECT upn FROM users WHERE entra_id = ? AND upn != ?",
+                        (oid, upn)):
+            if isinstance(people.merge(old["upn"], upn), dict):
+                renamed += 1
+                created = max(0, created - 1)   # not a new person, a renamed one
+
+    return {"fetched": len(users), "created": created, "updated": updated,
+            "skipped": skipped, "renamed": renamed}
 
 
 # --- groups --------------------------------------------------------------
