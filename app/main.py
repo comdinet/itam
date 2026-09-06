@@ -14,7 +14,7 @@ from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse,
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import (api, auth, db, devices, entra, fx, imports, people, pooled,
+from . import (api, auth, db, devices, entra, fx, imports, jobs, people, pooled,
                pricing, rules, saml, settings)
 
 @asynccontextmanager
@@ -1309,7 +1309,7 @@ def settings_entra_device_groups_sync():
     if not entra.is_configured():
         return back("/settings/entra/device-groups", "Entra ID is not configured yet")
     try:
-        r = entra.sync_device_groups()
+        r = run_job("device_groups")
     except Exception as exc:
         return back("/settings/entra/device-groups",
                     f"Device group sync failed: {why(exc)}"[:300])
@@ -1334,7 +1334,7 @@ def settings_groups_sync():
     if not entra.is_configured():
         return back("/settings/entra/groups", "Entra ID is not configured yet")
     try:
-        r = entra.sync_groups()
+        r = run_job("groups")
     except Exception as exc:
         return back("/settings/entra/groups", f"Sync failed: {why(exc)}"[:300])
     msg = (f"Synced {r['groups']} group(s); {r['members_linked']} membership(s) linked")
@@ -1427,7 +1427,7 @@ def settings_devices_sync():
     if not entra.is_configured():
         return back("/settings/devices", "Entra ID is not configured yet")
     try:
-        r = entra.sync_devices()
+        r = run_job("devices")
     except Exception as exc:
         return back("/settings/devices", f"Device sync failed: {why(exc)}"[:300])
     msg = (f"Synced {r['devices']} device(s); {r['linked_to_assets']} matched an "
@@ -1442,7 +1442,7 @@ def settings_devices_sync_attrs():
     if not entra.is_configured():
         return back("/settings/devices", "Entra ID is not configured yet")
     try:
-        r = entra.sync_custom_attributes()
+        r = run_job("attributes")
     except Exception as exc:
         return back("/settings/devices", f"Attribute sync failed: {why(exc)}"[:300])
     msg = (f"Synced {r['scripts_synced']} of {r['scripts_found']} attribute(s); "
@@ -1513,7 +1513,7 @@ def settings_devices_ignore_unlink():
 
 @app.post("/settings/devices/fill-holders")
 def settings_devices_fill_holders():
-    filled = devices.fill_holders_from_intune()
+    filled = run_job("holders")["filled"]
     if not filled:
         return back("/settings/devices",
                     "Nothing to fill in - every linked asset either has a holder "
@@ -1636,7 +1636,7 @@ def settings_licences_sync():
     if not entra.is_configured():
         return back("/settings/entra/licences", "Entra ID is not configured yet")
     try:
-        r = entra.sync_licenses()
+        r = run_job("licences")
     except Exception as exc:
         return back("/settings/entra/licences", f"Licence sync failed: {why(exc)}"[:300])
     msg = f"Synced {r['skus']} SKU(s) and {r['assignments']} assignment(s)"
@@ -2268,7 +2268,53 @@ def admin_entra(request: Request):
     return render(request, "settings_entra.html", last=last,
                   people=headcount, fields=settings.group("entra"), probe=None,
                   filter_checks=_filter_checks(), filter_test=None,
-                  **_entra_ctx("general"))
+                  runs=_sync_history(), **_entra_ctx("general"))
+
+
+def run_job(name: str):
+    """Run a sync exactly as cron would, and record it the same way.
+
+    The buttons and the nightly job used to call different functions, so the
+    UI device sync did not recompute the ignore rules and the cron one did.
+    One path now, one history.
+    """
+    started = jobs._iso()
+    _label, fn = jobs.JOBS[name]
+    try:
+        result = fn()
+    except Exception as exc:
+        jobs.record(name, started, False, why(exc), "ui")
+        raise
+    jobs.record(name, started, True,
+                ", ".join(f"{k}={v}" for k, v in result.items()), "ui")
+    return result
+
+
+def _sync_history():
+    """The last run of each job, and whether anything has run at all.
+
+    "Did the nightly sync happen" cannot be answered from the inventory: a sync
+    that fetched nothing looks exactly like a sync that never ran, and a cron
+    entry nobody installed looks like both.
+    """
+    latest = db.q("""SELECT job, MAX(id) AS id FROM sync_runs GROUP BY job""")
+    by_job = {}
+    for row in latest:
+        by_job[row["job"]] = db.q1("SELECT * FROM sync_runs WHERE id = ?", (row["id"],))
+    newest = db.q1("SELECT MAX(finished_at) AS d FROM sync_runs")["d"]
+    stale = True
+    if newest:
+        try:
+            when = datetime.datetime.fromisoformat(newest)
+            stale = (datetime.datetime.now(datetime.timezone.utc) - when).days >= 2
+        except ValueError:
+            stale = True
+    return {"jobs": [(name, label, by_job.get(name))
+                     for name, (label, _fn) in
+                     ((n, jobs.JOBS[n]) for n in jobs.ORDER)],
+            "newest": newest, "stale": stale,
+            "failures": db.q("""SELECT * FROM sync_runs WHERE ok = 0
+                                ORDER BY id DESC LIMIT 5""")}
 
 
 @app.get("/settings/entra/users", response_class=HTMLResponse)
@@ -2344,7 +2390,7 @@ def admin_sync():
     if not entra.is_configured():
         return back("/settings/entra", "Entra ID is not configured - set the environment variables first")
     try:
-        r = entra.sync()
+        r = run_job("users")
     except Exception as exc:  # surface the Graph error rather than a 500 page
         return back("/settings/entra/users", f"Sync failed: {why(exc)}"[:300])
     # Re-apply the ignore rules, or somebody who joins after a rule was written

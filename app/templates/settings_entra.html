@@ -118,6 +118,41 @@
   narrow what you keep inside ITAM, where nothing is at the mercy of which
   properties Graph will filter on.</p>
 
+<h3>Scheduled sync</h3>
+{% if runs.stale %}
+<div class="warn">
+  <strong>{% if not runs.newest %}Nothing has ever synced from the command line.
+    {% else %}The last sync was {{ runs.newest[:16].replace('T',' ') }} UTC.{% endif %}</strong>
+  ITAM does not sync on its own &mdash; a cron entry has to exist on the server.
+  On the box, in the install directory:
+  <p class="mono">./sync.sh --install-cron</p>
+  <p>That schedules everything nightly at 03:00 and is safe to re-run.
+     <span class="mono">./sync.sh --show-cron</span> says what is scheduled now;
+     <span class="mono">./sync.sh</span> runs it once, immediately.</p>
+</div>
+{% endif %}
+
+<table>
+  <thead><tr><th>Job</th><th>Last run</th><th>Result</th></tr></thead>
+  <tbody>
+  {% for name, label, run in runs.jobs %}
+    <tr {% if run and not run.ok %}class="disabled"{% endif %}>
+      <td>{{ label }}<div class="meta mono">{{ name }}</div></td>
+      <td>{% if run %}{{ run.finished_at[:16].replace('T',' ') }} UTC
+            <div class="meta">{{ run.source }}</div>
+          {% else %}<span class="tag">never</span>{% endif %}</td>
+      <td>{% if not run %}<span class="meta">&mdash;</span>
+          {% elif run.ok %}<span class="ok">ok</span>
+            <div class="meta mono">{{ run.detail }}</div>
+          {% else %}<span class="tag">failed</span>
+            <div class="meta mono">{{ run.detail }}</div>{% endif %}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="hint">Recorded by <span class="mono">./sync.sh</span>. Buttons pressed
+   in this UI sync immediately and are recorded too, so a job that only ever
+   shows <em>ui</em> is one nothing is scheduling.</p>
+
 <p class="hint">Syncing itself lives on the tabs above:
   <a href="/settings/entra/users">Users</a>,
   <a href="/settings/entra/groups">Groups</a>,

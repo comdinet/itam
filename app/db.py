@@ -190,6 +190,20 @@ CREATE TABLE IF NOT EXISTS device_ignore_rules (
     created_at TEXT
 );
 
+-- One row per sync job run. "Did the nightly sync happen" is not answerable
+-- from the data alone: a sync that fetched nothing looks exactly like a sync
+-- that never ran, and a cron entry nobody installed looks like both.
+CREATE TABLE IF NOT EXISTS sync_runs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    job         TEXT NOT NULL,
+    started_at  TEXT NOT NULL,
+    finished_at TEXT,
+    ok          INTEGER NOT NULL DEFAULT 0,
+    detail      TEXT,
+    source      TEXT NOT NULL DEFAULT 'cron'   -- 'cron' or 'ui'
+);
+CREATE INDEX IF NOT EXISTS idx_sync_runs_job ON sync_runs(job, id DESC);
+
 -- People Entra returns that ITAM should not track: service accounts, shared
 -- mailboxes, test identities. Same shape as the device rules, and for the same
 -- reason - an OData filter cannot express "except these", and getting it wrong

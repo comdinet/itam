@@ -528,11 +528,28 @@ licences, devices, and custom attributes:
 ./sync.sh licences     # just one
 ```
 
-Nightly at 03:00 (`crontab -e`):
+**ITAM does not sync on its own.** Nothing is scheduled until you say so:
+
+```bash
+./sync.sh --install-cron
+```
+
+That writes the nightly 03:00 entry, is safe to re-run, and leaves any other
+crontab lines alone. `./sync.sh --show-cron` says what is scheduled now — worth
+running if the data looks stale.
+
+The equivalent by hand (`crontab -e`):
 
 ```
 0 3 * * * cd /opt/itam && ./sync.sh >> /var/log/itam-sync.log 2>&1
 ```
+
+**Every run is recorded**, and the last run of each job is shown on
+**Settings → Entra ID → General** with its result. If nothing has run for two
+days the page says so and tells you how to fix it — because a sync that fetched
+nothing looks exactly like a sync that never ran, and a cron entry nobody
+installed looks like both. Buttons pressed in the UI are recorded too, so a job
+that only ever shows *ui* is one nothing is scheduling.
 
 Every job is safe to re-run: syncs upsert and never delete inventory. Each line
 of output says what changed, and the exit status is non-zero if any job failed,
@@ -799,9 +816,13 @@ is not a licence to delete data.
 
 An asset takes its holder from the Intune device **once**, when the asset is
 created, and only if that person was already synced into ITAM. Sync devices
-before people — or take somebody on afterwards — and the asset stays unassigned
-for good, with nothing on screen to say why. That is the usual reason for a pile
-of "unassigned" kit that is plainly on somebody's desk.
+before people, take somebody on afterwards, or hand a machine to somebody else —
+and the asset stays as it was, with nothing on screen to say why. That is the
+usual reason for a pile of "unassigned" kit that is plainly on somebody's desk.
+
+The nightly sync now closes this itself: **`holders`** is the last job in
+`./sync.sh`, after both the people and the devices are current. It fills in
+assets that have **no holder at all** and reports the rest.
 
 **Settings → Devices** now shows the gap and offers to close it, splitting it
 four ways so you can tell a fixable case from a real one:
