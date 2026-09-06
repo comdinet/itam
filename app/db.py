@@ -229,6 +229,7 @@ CREATE TABLE IF NOT EXISTS entra_groups (
     looks_like      TEXT,        -- 'device' | 'user' | 'assigned'
     sync_users      INTEGER NOT NULL DEFAULT 0,
     sync_devices    INTEGER NOT NULL DEFAULT 0,
+    scope_devices   INTEGER NOT NULL DEFAULT 0,   -- limit the device sync to this
     discovered_at   TEXT
 );
 
@@ -513,6 +514,11 @@ def init_db():
         gcols = [r["name"] for r in conn.execute("PRAGMA table_info(device_group_members)")]
         if "device_name" not in gcols:
             conn.execute("ALTER TABLE device_group_members ADD COLUMN device_name TEXT")
+        egcols = [r["name"] for r in conn.execute("PRAGMA table_info(entra_groups)")]
+        if "scope_devices" not in egcols:
+            conn.execute("ALTER TABLE entra_groups ADD COLUMN scope_devices "
+                         "INTEGER NOT NULL DEFAULT 0")
+
         dgcols = [r["name"] for r in conn.execute("PRAGMA table_info(device_groups)")]
         if "membership_rule" not in dgcols:
             conn.execute("ALTER TABLE device_groups ADD COLUMN membership_rule TEXT")

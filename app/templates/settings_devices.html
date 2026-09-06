@@ -68,6 +68,47 @@
 </form>
 {% endif %}
 
+<details class="panel" data-panel="device-scope" {% if scoped %}open{% endif %}>
+  <summary>What gets synced
+    {% if scoped %}<span class="count">{{ scoped|length }} group(s)</span>
+    {% else %}<span class="count">everything Intune manages</span>{% endif %}</summary>
+  <p class="meta">Tick a group to sync <strong>only</strong> the devices in it.
+    Nothing ticked means every device Intune manages, which is the default.</p>
+  <p class="meta">Intune cannot filter its device list by group at the API, so the
+    whole list still comes down and is narrowed here against the membership
+    recorded by the <a href="/settings/entra/device-groups">device group sync</a>.
+    Ticking a group here makes that sync fetch its members, whether or not you
+    also track it as a device group.</p>
+  <form method="post" action="/settings/devices/scope">
+    <table>
+      <thead><tr><th class="pickcol"></th><th>Group</th><th>Membership</th>
+        <th class="num">Members recorded</th></tr></thead>
+      <tbody>
+      {% for g in scope_groups %}
+        <tr>
+          <td class="pickcol"><input type="checkbox" name="pick" value="{{ g.id }}"
+              {% if g.ticked %}checked{% endif %}></td>
+          <td><strong>{{ g.display_name }}</strong>
+            {% if g.membership_rule %}<div class="meta mono">{{ g.membership_rule }}</div>{% endif %}</td>
+          <td>{% if g.looks_like == 'device' %}<span class="tag">dynamic &middot; devices</span>
+              {% elif g.looks_like == 'user' %}<span class="tag">dynamic &middot; users</span>
+              {% else %}assigned{% endif %}</td>
+          <td class="num">{{ g.members }}
+            {%- if g.ticked and not g.members %}
+              <div class="meta">none yet &mdash; sync device groups first</div>{% endif %}</td></tr>
+      {% else %}
+        <tr><td colspan="4" class="empty">No groups listed yet &mdash;
+          <a href="/settings/entra/groups">refresh the group list</a>.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <button type="submit">Save the scope</button>
+  </form>
+  <p class="hint">A scoped sync refuses to run rather than bring in nothing when
+     the group's membership has not been fetched: an empty result there is a
+     missing sync, not an empty fleet.</p>
+</details>
+
 <details class="panel" data-panel="ignored-devices" {% if ignore_counts.ignored_with_asset %}open{% endif %}>
   <summary>Ignored devices
     <span class="count">{{ ignore_counts.ignored }} of {{ ignore_counts.total }}</span></summary>

@@ -473,8 +473,19 @@ def _int_or_none(value):
         return None
 
 
+def scope_group_ids() -> list[str]:
+    """Groups the device sync is limited to. Empty means every managed device."""
+    return [r["id"] for r in
+            db.q("SELECT id FROM entra_groups WHERE scope_devices = 1")]
+
+
 def sync_devices() -> dict:
     """Pull managed devices from Intune and link them to assets by serial.
+
+    With scope groups set, only devices in those groups are kept. managedDevices
+    cannot be filtered by group membership at the API - $filter there is very
+    limited - so the whole list comes down and is narrowed here against the
+    membership the device-group sync recorded.
 
     Needs the Graph application permission
     DeviceManagementManagedDevices.Read.All with admin consent.
@@ -485,6 +496,26 @@ def sync_devices() -> dict:
         params["$filter"] = device_filter
     # Intune's managedDevices does not support advanced query, so no opt-in here.
     devices = _get_all("/deviceManagement/managedDevices", params)
+
+    scope = scope_group_ids()
+    out_of_scope = 0
+    if scope:
+        marks = ",".join("?" for _ in scope)
+        allowed = {r["azure_device_id"] for r in db.q(
+            f"SELECT azure_device_id FROM device_group_members WHERE group_id IN ({marks})",
+            scope)}
+        if not allowed:
+            # Filtering against nothing would drop every device and read as a
+            # sync that simply found none. Refuse instead: that is a missing
+            # group membership, not an empty fleet.
+            raise GraphError(
+                "The device sync is scoped to a group with no members recorded. "
+                "Sync device groups first (Settings > Entra ID > Device groups), "
+                "or clear the scope.")
+        kept = [d for d in devices
+                if (d.get("azureADDeviceId") or "").strip().lower() in allowed]
+        out_of_scope = len(devices) - len(kept)
+        devices = kept
 
     now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     created = updated = linked = 0
@@ -545,6 +576,7 @@ def sync_devices() -> dict:
 
     return {"devices": len(devices), "created": created, "updated": updated,
             "linked_to_assets": linked, "ignored": hidden,
+            "out_of_scope": out_of_scope,
             "groups_refreshed": groups_refreshed}
 
 
@@ -700,7 +732,8 @@ def sync_device_groups() -> dict:
     also need Device.Read.All in some tenants; when the cast comes back empty
     the result says what was actually in the group instead of reporting nothing.
     """
-    picked = db.q("SELECT * FROM entra_groups WHERE sync_devices = 1 "
+    picked = db.q("SELECT * FROM entra_groups "
+                  "WHERE sync_devices = 1 OR scope_devices = 1 "
                   "ORDER BY display_name")
     now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     total_devices = looked_up = 0
@@ -737,10 +770,10 @@ def sync_device_groups() -> dict:
     # Untick a group and its devices should stop being tracked; a group that
     # came back empty this time keeps what it had, because an empty answer is
     # as likely to be a permission as a real change.
-    picked_ids = {g["id"] for g in picked}
+    tracked = {g["id"] for g in picked if g["sync_devices"]}
     dropped = 0
     for row in db.q("SELECT id FROM device_groups"):
-        if row["id"] not in picked_ids:
+        if row["id"] not in tracked:
             db.execute("DELETE FROM device_groups WHERE id = ?", (row["id"],))
             db.execute("DELETE FROM device_group_members WHERE group_id = ?", (row["id"],))
             dropped += 1

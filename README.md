@@ -803,6 +803,45 @@ kept out of the People page, the totals and the assignment pickers. Removing the
 rule brings them back at once, and the rules are re-applied after every user
 sync, so somebody who joins later does not walk past them.
 
+### Syncing only the devices in one group
+
+By default the device sync brings in **every device Intune manages**. To narrow
+it to a group — the physical, MDM-managed fleet, say — tick that group under
+**Settings → Devices → What gets synced**.
+
+Intune's `managedDevices` cannot be filtered by group membership at the API, so
+the whole list still comes down and is narrowed here, against the membership the
+device-group sync recorded. Ticking a group as the scope therefore also makes
+that sync fetch its members, whether or not you track it as a device group in
+its own right.
+
+The result says how many were left out, so a scope that is narrower than you
+meant is visible rather than silent.
+
+- A scope group whose membership has **not been fetched** makes the sync
+  **refuse**, naming the fix. Filtering against an empty membership would match
+  nothing and read as a sync that simply found no devices.
+- A device with no `azureADDeviceId` cannot be matched to a group, so a scoped
+  sync leaves it out.
+- Devices already here that fall out of scope are **kept, not deleted** — they
+  just stop being refreshed.
+- Clearing the scope brings everything back on the next sync.
+
+A dynamic device group for the physical fleet:
+
+```
+(device.accountEnabled -eq true)
+-and (device.managementType -eq "MDM")
+-and (device.deviceModel -notContains "VMware")
+-and (device.deviceModel -notContains "Virtual")
+```
+
+`managementType` is what the portal's **MDM** field shows: `MDM` when a device
+is enrolled, null when it reads *None*. Note that a **null property makes a
+comparison false**, so a device that has not reported its model is excluded too
+— use Entra's **Validate rules** against one real machine and one VM before
+relying on it.
+
 ### Ignoring devices that are not kit
 
 Not everything Intune manages is a thing somebody holds. Virtual machines are
@@ -1293,7 +1332,7 @@ your backups as secrets either way.
 ./tests/run_all.sh
 ```
 
-Twenty-nine suites covering money parsing, currencies and frozen rates, the
+Thirty suites covering money parsing, currencies and frozen rates, the
 dashboard's country filter, bulk assignment, CSV import, the Entra
 user/group/licence syncs, device groups, Intune devices, ignored devices and people,
 macOS custom attributes, OData filters and the dynamic-group syntax they get

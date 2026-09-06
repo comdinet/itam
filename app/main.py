@@ -1437,6 +1437,12 @@ def settings_devices(request: Request, q: str = "", os_filter: str = "",
                   entra_groups=devices.groups_listing(),
                   unlinked_here=unlinked_here, last=last, counts=counts,
                   by_os=by_os,
+                  scope_groups=db.q(
+                      """SELECT e.*, e.scope_devices AS ticked,
+                                (SELECT COUNT(*) FROM device_group_members m
+                                  WHERE m.group_id = e.id) AS members
+                         FROM entra_groups e ORDER BY e.display_name"""),
+                  scoped=entra.scope_group_ids(),
                   gap=devices.holder_gap(),
                   cfg=entra.config_status(),
                   attr_filter=settings.get("INTUNE_ATTRIBUTE_FILTER"),
@@ -1454,6 +1460,8 @@ def settings_devices_sync():
         return back("/settings/devices", f"Device sync failed: {why(exc)}"[:300])
     msg = (f"Synced {r['devices']} device(s); {r['linked_to_assets']} matched an "
            f"asset by serial")
+    if r["out_of_scope"]:
+        msg += f"; {r['out_of_scope']} left out, not in the scope group(s)"
     if r["ignored"]:
         msg += f"; {r['ignored']} ignored"
     return back("/settings/devices", msg)
@@ -1478,6 +1486,35 @@ def settings_devices_sync_attrs():
     if r["available"]:
         msg += ". Available: " + ", ".join(r["available"][:8])
     return back("/settings/devices", msg[:400])
+
+
+@app.post("/settings/devices/scope")
+async def settings_devices_scope(request: Request):
+    """Limit the device sync to the groups ticked here.
+
+    Intune's managedDevices cannot be filtered by group membership at the API,
+    so the whole list still comes down and is narrowed against the membership
+    the device-group sync recorded. Ticking a group here therefore also makes
+    that sync fetch its members.
+    """
+    form = await request.form()
+    picked = {g for g in form.getlist("pick") if g}
+    db.execute("UPDATE entra_groups SET scope_devices = 0")
+    for gid in picked:
+        db.execute("UPDATE entra_groups SET scope_devices = 1 WHERE id = ?", (gid,))
+    if not picked:
+        return back("/settings/devices",
+                    "Scope cleared - every device Intune manages will sync")
+    missing = db.q1(
+        """SELECT COUNT(*) c FROM entra_groups e
+           WHERE e.scope_devices = 1
+             AND NOT EXISTS (SELECT 1 FROM device_group_members m
+                             WHERE m.group_id = e.id)""")["c"]
+    msg = f"Device sync limited to {len(picked)} group(s)"
+    if missing:
+        msg += (f"; {missing} of them have no members recorded yet - sync device "
+                f"groups before syncing devices, or nothing will come through")
+    return back("/settings/devices", msg)
 
 
 @app.post("/settings/devices/ignore/add")
