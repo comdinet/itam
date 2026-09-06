@@ -39,6 +39,10 @@ a { color: var(--accent); }
 .tally { display: flex; flex-wrap: wrap; gap: 6px 20px; align-items: baseline;
          margin: 14px 0 18px; padding: 10px 14px; background: var(--panel);
          border: 1px solid var(--line); border-radius: 10px; }
+.copyable { background: var(--panel); border: 1px solid var(--line);
+             border-radius: 6px; padding: 10px 12px; overflow-x: auto;
+             white-space: pre-wrap; word-break: break-word; user-select: all; }
+
 .tally strong { font-variant-numeric: tabular-nums; }
 
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin: 18px 0; }

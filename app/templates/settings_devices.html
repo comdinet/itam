@@ -107,6 +107,23 @@
   <p class="hint">A scoped sync refuses to run rather than bring in nothing when
      the group's membership has not been fetched: an empty result there is a
      missing sync, not an empty fleet.</p>
+
+  <h4>A rule for the physical, Intune-managed fleet</h4>
+  <p class="meta">Paste into a <strong>Dynamic Device</strong> group in Entra.
+    Device groups have no rule builder &mdash; it is the text box or nothing.</p>
+  <p class="mono copyable">(device.accountEnabled -eq true) -and (device.deviceManagementAppId -eq "0000000a-0000-0000-c000-000000000000") -and (device.deviceModel -notContains "VMware") -and (device.deviceModel -notContains "Virtual")</p>
+  <p class="hint"><span class="mono">deviceManagementAppId</span> is the property
+     that means <em>Intune manages this</em>;
+     <span class="mono">0000000a-0000-0000-c000-000000000000</span> is Intune's
+     own application id (Configuration Manager, for co-managed devices, is
+     <span class="mono">54b943f8-d761-4f8d-951e-9cea1846db5a</span>).
+     <strong>Not</strong> <span class="mono">device.managementType</span>:
+     Microsoft documents that one as "for mobile devices", so it does not match
+     managed Macs or PCs and the group comes back missing the fleet.
+     <br>A null property makes a comparison false, so a device that has never
+     reported a model is excluded by the <span class="mono">-notContains</span>
+     clauses too &mdash; check it with <strong>Validate rules</strong> against one
+     real machine and one VM.</p>
 </details>
 
 <details class="panel" data-panel="ignored-devices" {% if ignore_counts.ignored_with_asset %}open{% endif %}>

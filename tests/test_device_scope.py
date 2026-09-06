@@ -102,6 +102,19 @@ check("its members were fetched", asked, ["g-phys"])
 check("but it is not listed as a tracked device group",
       db.q1("SELECT COUNT(*) c FROM device_groups WHERE id='g-phys'")["c"], 0)
 
+print("\n--- the rule the page hands out names the right property ---")
+# device.managementType is documented as "for mobile devices" and does not match
+# managed Macs or PCs, which is exactly how this went wrong the first time.
+import pathlib                                    # noqa: E402
+page = (pathlib.Path(__file__).resolve().parent.parent / "app" / "templates"
+        / "settings_devices.html").read_text()
+check("uses deviceManagementAppId", "device.deviceManagementAppId" in page, True)
+check("with Intune's application id",
+      "0000000a-0000-0000-c000-000000000000" in page, True)
+check("and never offers managementType as the way to do it",
+      'device.managementType -eq' in page, False)
+check("it warns about that one by name", "device.managementType" in page, True)
+
 print()
 print("FAILURES:", ", ".join(fails) if fails else "none")
 sys.exit(1 if fails else 0)

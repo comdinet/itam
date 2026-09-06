@@ -830,17 +830,29 @@ meant is visible rather than silent.
 A dynamic device group for the physical fleet:
 
 ```
-(device.accountEnabled -eq true)
--and (device.managementType -eq "MDM")
--and (device.deviceModel -notContains "VMware")
--and (device.deviceModel -notContains "Virtual")
+(device.accountEnabled -eq true) -and (device.deviceManagementAppId -eq "0000000a-0000-0000-c000-000000000000") -and (device.deviceModel -notContains "VMware") -and (device.deviceModel -notContains "Virtual")
 ```
 
-`managementType` is what the portal's **MDM** field shows: `MDM` when a device
-is enrolled, null when it reads *None*. Note that a **null property makes a
-comparison false**, so a device that has not reported its model is excluded too
-— use Entra's **Validate rules** against one real machine and one VM before
-relying on it.
+`deviceManagementAppId` is the property that means **Intune manages this**;
+`0000000a-0000-0000-c000-000000000000` is Intune's own application id, and
+`54b943f8-d761-4f8d-951e-9cea1846db5a` is Configuration Manager for co-managed
+devices. It is the only device property that names the management authority.
+
+Do **not** use `device.managementType` for this. Microsoft documents it as
+"Mobile device management (for mobile devices)" — it is scoped to mobile, so it
+does not match managed Macs or PCs and the group comes back missing the fleet
+you wanted.
+
+Two more that are useful here:
+
+| | |
+|---|---|
+| `device.profileType -eq "RegisteredDevice"` | the merely *registered* devices — personal machines that touched Entra and were never enrolled |
+| `device.deviceTrustType` | `AzureAD` (Entra joined), `ServerAD` (hybrid joined), `Workplace` (Entra registered) |
+
+A **null property makes a comparison false**, so a device that has not reported
+its model is excluded by the `-notContains` clauses too. Use Entra's **Validate
+rules** against one real machine and one VM before relying on it.
 
 ### Ignoring devices that are not kit
 
