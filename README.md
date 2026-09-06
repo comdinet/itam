@@ -448,6 +448,10 @@ Sync behaviour:
   offered: each is one specific piece of hardware.
 - **Person detail** — assign or return assets, grant or revoke licences, and a
   first-year total cost (assets + 12 months of licences).
+- Filters and panels **stay where you put them**. Adding something from a
+  filtered view comes back to that filtered view, not the whole list, and a
+  panel you collapsed stays collapsed — remembered per browser, so it is your
+  preference rather than shared state.
 - **Assets** — one tab per category. Each tab lists what you own in it, both
   the machines tracked by serial and the counted items, with an **Add** for
   each kind that files it under the category you are on. Search by name or

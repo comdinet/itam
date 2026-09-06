@@ -6,7 +6,7 @@
 <p class="meta">Run-rate: <strong>{{ currency }} {{ monthly|money }}</strong> / month
    &middot; {{ currency }} {{ (monthly * 12)|money }} / year</p>
 
-<details class="panel" {% if not subs %}open{% endif %}>
+<details class="panel" data-panel="add-subscription" {% if not subs %}open{% endif %}>
   <summary>Add a subscription</summary>
   <form class="grid-form" method="post" action="/subscriptions/new">
     <label>Name<input name="name" required placeholder="Microsoft 365 E3"></label>

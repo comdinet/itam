@@ -53,10 +53,10 @@
   specification.</p>
 {% endif %}
 
-<details class="panel" {% if not assets and not items %}open{% endif %}>
+<details class="panel" data-panel="add-serial" {% if not assets and not items %}open{% endif %}>
   <summary>Add {{ 'a ' ~ what if category else 'an asset' }} &mdash; tracked by its serial</summary>
   <form class="grid-form" method="post" action="/assets/new">
-    <input type="hidden" name="redirect" value="{{ here }}">
+    <input type="hidden" name="redirect" value="{{ here_url }}">
     <label>Name<input name="name" required placeholder="MacBook Pro 14 M4"></label>
     {% if category %}
       <input type="hidden" name="category" value="{{ category }}">
@@ -76,10 +76,10 @@
   </form>
 </details>
 
-<details class="panel">
+<details class="panel" data-panel="add-counted">
   <summary>Add {{ what if category else 'an item' }} &mdash; counted, no serial</summary>
   <form class="grid-form" method="post" action="/assets/pooled/new">
-    <input type="hidden" name="redirect" value="{{ here }}">
+    <input type="hidden" name="redirect" value="{{ here_url }}">
     <label>Name<input name="name" required placeholder="Logitech MX Master 3S"></label>
     {% if category %}
       <input type="hidden" name="category" value="{{ category }}">

@@ -64,7 +64,7 @@
     unit and adds {{ i.currency or currency }} {{ i.unit_cost_cents|money }} each.{% endif %}</span>
 </form>
 
-<details class="panel">
+<details class="panel" data-panel="edit-item">
   <summary>Edit item</summary>
   <form class="grid-form" method="post" action="/assets/pooled/{{ i.id }}/edit">
     <label>Name<input name="name" value="{{ i.name }}" required></label>

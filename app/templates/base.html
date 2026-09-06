@@ -27,6 +27,34 @@
   {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
   {% block body %}{% endblock %}
 </main>
+<script>
+  // Remember which panels you collapsed. A panel is per-browser preference,
+  // not shared state, so it lives in localStorage rather than the database.
+  //
+  // The key is an explicit data-panel, not the summary text: several summaries
+  // carry a count ("Ignored devices 7 of 14"), and a panel keyed on that would
+  // forget itself the moment the number moved.
+  (function () {
+    var KEY = 'itam.panels';
+    var saved = {};
+    try { saved = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { saved = {}; }
+
+    function save() {
+      try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch (e) { /* private mode */ }
+    }
+
+    document.querySelectorAll('details[data-panel]').forEach(function (el) {
+      var id = el.getAttribute('data-panel');
+      // A stored choice wins over the server's default; with none, the server
+      // decides - that is what opens "Add" on a page with nothing in it yet.
+      if (Object.prototype.hasOwnProperty.call(saved, id)) el.open = !!saved[id];
+      el.addEventListener('toggle', function () {
+        saved[id] = el.open;
+        save();
+      });
+    });
+  })();
+</script>
 <footer>Costs in {{ currency }}. Assets are one-off cost; subscriptions are per-seat per-month.</footer>
 </body>
 </html>

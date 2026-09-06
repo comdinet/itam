@@ -85,7 +85,7 @@ def reads(name):
 # render(request, "x.html", a=1, b=2) and the defaults render() itself sets.
 # render() sets these on every context; `request` is put there by
 # Starlette itself, since TemplateResponse takes it as its first argument.
-RENDER_DEFAULTS = {"flash", "currency", "me", "request"}
+RENDER_DEFAULTS = {"flash", "currency", "me", "request", "here_url"}
 tree = ast.parse(open(os.path.join(ROOT, "app", "main.py"), encoding="utf-8").read())
 passed: dict[str, set] = {}
 starred = set()

@@ -29,7 +29,7 @@
 </form>
 {% endif %}
 
-<details class="panel" {% if not s.criteria %}open{% endif %}>
+<details class="panel" data-panel="edit-group" {% if not s.criteria %}open{% endif %}>
   <summary>Name, price and notes</summary>
   <form class="grid-form" method="post" action="/settings/pricing/{{ g.id }}/edit">
     <label>Name<input name="name" value="{{ g.name }}" required></label>

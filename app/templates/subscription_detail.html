@@ -43,7 +43,7 @@
   <button type="submit">Assign seat</button>
 </form>
 
-<details class="panel">
+<details class="panel" data-panel="edit-subscription">
   <summary>Edit subscription</summary>
   <form class="grid-form" method="post" action="/subscriptions/{{ s.id }}/edit">
     <label>Name<input name="name" value="{{ s.name }}" required></label>

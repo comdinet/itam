@@ -19,7 +19,7 @@
     <a href="/settings/entra">OData filter</a> decides who Entra sends.</span>
 </form>
 
-<details class="panel" {% if not rules %}{% else %}open{% endif %}>
+<details class="panel" data-panel="ignored-people" {% if not rules %}{% else %}open{% endif %}>
   <summary>Ignored people <span class="count">{{ counts.ignored }}</span></summary>
   <p class="meta">Service accounts, shared mailboxes, test identities. The OData
     filter can say "these"; it is poor at saying "these, except those", and a

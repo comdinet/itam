@@ -71,7 +71,7 @@
 </form>
 {% endif %}
 
-<details class="panel" {% if ignore_counts.ignored_with_asset %}open{% endif %}>
+<details class="panel" data-panel="ignored-devices" {% if ignore_counts.ignored_with_asset %}open{% endif %}>
   <summary>Ignored devices
     <span class="count">{{ ignore_counts.ignored }} of {{ ignore_counts.total }}</span></summary>
   <p class="meta">Not everything Intune manages is kit somebody has. Virtual
@@ -179,7 +179,7 @@
 </script>
 
 {% if gap.fillable or gap.unknown or gap.nobody or gap.mismatch %}
-<details class="panel" {% if gap.fillable %}open{% endif %}>
+<details class="panel" data-panel="holder-gap" {% if gap.fillable %}open{% endif %}>
   <summary>Holders: {{ gap.fillable|length }} asset(s) could take the person Intune
     already knows</summary>
   <p class="meta">An asset takes its holder from Intune once, when the asset is

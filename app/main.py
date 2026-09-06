@@ -6,7 +6,7 @@ import os
 import secrets
 from contextlib import asynccontextmanager
 
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urlencode, urlparse
 
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse,
@@ -132,8 +132,23 @@ def qr_svg(data: str) -> str:
     return svg[svg.index("<svg"):]
 
 
+def here(request: Request) -> str:
+    """The page you are on, filters and all.
+
+    Forms redirect back to this rather than to the bare path, so adding
+    something from a filtered view does not throw the filter away and hand back
+    the whole list. The message parameter is dropped: carrying the last flash
+    into the next redirect would show it twice.
+    """
+    keep = [(k, v) for k, v in request.query_params.multi_items() if k != "msg"]
+    query = urlencode(keep)
+    return request.url.path + (f"?{query}" if query else "")
+
+
 def render(request: Request, name: str, **ctx):
     ctx.setdefault("flash", request.query_params.get("msg"))
+    # Every template can send a form back to exactly where the user was.
+    ctx.setdefault("here_url", here(request))
     # Resolved per request: a settings change must show up without a restart,
     # and a Jinja global holding the function would render the function itself.
     ctx.setdefault("currency", settings.currency())

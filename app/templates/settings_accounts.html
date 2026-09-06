@@ -38,7 +38,7 @@
   </tbody>
 </table>
 
-<details class="panel">
+<details class="panel" data-panel="add-account">
   <summary>Add an account</summary>
   <form class="grid-form" method="post" action="/settings/accounts/new">
     <label>Username<input name="username" required placeholder="e.dawson"></label>
@@ -52,7 +52,7 @@
      at first sign-in. Admins can manage accounts; standard accounts cannot.</p>
 </details>
 
-<details class="panel">
+<details class="panel" data-panel="reset-password">
   <summary>Reset someone's password</summary>
   <form class="grid-form" method="post" action="/settings/accounts/reset">
     <label>Account<select name="username" required>

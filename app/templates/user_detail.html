@@ -44,7 +44,7 @@
           <span class="chip">{{ a.currency or currency }}</span></td>
         <td class="row-actions">
           <form method="post" action="/assets/{{ a.id }}/unassign">
-            <input type="hidden" name="redirect" value="/users/{{ u.upn }}">
+            <input type="hidden" name="redirect" value="{{ here_url }}">
             <button class="link">Return to spares</button></form></td></tr>
   {% else %}
     <tr><td colspan="6" class="empty">Nothing assigned.</td></tr>
@@ -79,7 +79,7 @@
         <td class="row-actions">
           <form method="post" action="/assets/pooled/{{ k.id }}/take-back">
             <input type="hidden" name="upn" value="{{ u.upn }}">
-            <input type="hidden" name="redirect" value="/users/{{ u.upn }}">
+            <input type="hidden" name="redirect" value="{{ here_url }}">
             <button class="link">Take back</button></form></td></tr>
   {% else %}
     <tr><td colspan="6" class="empty">No pooled items held.</td></tr>
@@ -93,7 +93,7 @@
   <form method="post" action="/assets/pooled/{{ k.id }}/assign">
     <input type="hidden" name="upn" value="{{ u.upn }}">
     <input type="hidden" name="quantity" value="1">
-    <input type="hidden" name="redirect" value="/users/{{ u.upn }}">
+    <input type="hidden" name="redirect" value="{{ here_url }}">
     <button class="link">+ {{ k.name }}{% if k.spare %} ({{ k.spare }} on the shelf){% endif %}</button>
   </form>
   {% endfor %}
@@ -130,7 +130,7 @@
         <td class="row-actions">
           <form method="post" action="/subscriptions/{{ s.id }}/seats/remove">
             <input type="hidden" name="upn" value="{{ u.upn }}">
-            <input type="hidden" name="redirect" value="/users/{{ u.upn }}">
+            <input type="hidden" name="redirect" value="{{ here_url }}">
             <button class="link">Revoke</button></form></td></tr>
   {% else %}
     <tr><td colspan="6" class="empty">No licences assigned.</td></tr>

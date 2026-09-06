@@ -41,7 +41,7 @@
   </tbody>
 </table>
 
-<details class="panel" {% if not keys %}open{% endif %}>
+<details class="panel" data-panel="add-key" {% if not keys %}open{% endif %}>
   <summary>Create an API key</summary>
   <form class="grid-form" method="post" action="/settings/api/keys/new">
     <label>Name<input name="name" required placeholder="Frappe HW approval"></label>

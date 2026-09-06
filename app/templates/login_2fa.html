@@ -18,7 +18,7 @@
              pattern="[0-9]*" maxlength="6" autofocus></label>
     <button type="submit">Verify</button>
   </form>
-  <details class="panel" style="margin-top:18px">
+  <details class="panel" data-panel="recovery-code" style="margin-top:18px">
     <summary>Lost your phone?</summary>
     <form method="post" action="/login/2fa" class="stack">
       <input type="hidden" name="next" value="{{ next }}">
