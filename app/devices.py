@@ -424,12 +424,15 @@ def _os_family(raw: str | None) -> str | None:
     return None
 
 
-def overview() -> dict:
-    """Counts for the Assets landing page.
+def overview() -> list[dict]:
+    """The Assets landing page, as one widget per kind of kit.
 
-    Serial-tracked kit is counted per machine; counted kit is counted in units
-    handed to people, because "3 monitors" means three monitors and not three
-    rows or three people.
+    Every widget has the same shape - a total, how many are out with people,
+    and a breakdown of what the total is made of - so the page is one loop and
+    a new kind of kit is a new entry rather than new markup.
+
+    Counted kit is counted in units, never in rows and never in people: three
+    monitors handed to one person is three monitors.
     """
     from . import pooled
 
@@ -441,28 +444,43 @@ def overview() -> dict:
                FROM assets WHERE category = ?""", (category,))
         return {"total": row["total"] or 0, "assigned": row["assigned"] or 0}
 
-    families = {"Windows": 0, "macOS": 0}
-    for row in db.q("""SELECT d.os, COUNT(*) AS n FROM devices d
-                       JOIN assets a ON a.id = d.asset_id
-                       WHERE d.ignored_reason IS NULL GROUP BY d.os"""):
-        family = _os_family(row["os"])
-        if family:
-            families[family] += row["n"]
+    def by_os(category: str) -> list[dict]:
+        """What the machines in a category actually are.
+
+        Ignored devices are left out: hiding a VM should not leave it in the
+        Windows figure. A machine with no device in Intune is in the total but
+        in neither family, the same way a model nobody holds is not a line.
+        """
+        counted = {"Windows": 0, "macOS": 0}
+        for row in db.q("""SELECT d.os, COUNT(*) AS n FROM devices d
+                           JOIN assets a ON a.id = d.asset_id
+                           WHERE d.ignored_reason IS NULL AND a.category = ?
+                           GROUP BY d.os""", (category,)):
+            family = _os_family(row["os"])
+            if family:
+                counted[family] += row["n"]
+        return [{"name": name, "count": n} for name, n in counted.items() if n]
 
     def units(category: str) -> dict:
-        """Units of counted kit in a category, per item name and in total."""
+        """Counted kit in a category, per item name and in total."""
         rows = db.q(
             "SELECT s.name, " + pooled.assigned_expr() + " AS assigned, s.spare "
             "FROM pooled_items s WHERE s.category = ? ORDER BY s.name", (category,))
-        models = [{"name": r["name"], "assigned": r["assigned"]}
-                  for r in rows if r["assigned"]]
         serial = serial_count(category)
+        breakdown = [{"name": r["name"], "count": r["assigned"]}
+                     for r in rows if r["assigned"]]
+        if serial["total"]:
+            breakdown.append({"name": "tracked by serial",
+                              "count": serial["total"]})
         return {
-            "handed_out": sum(r["assigned"] for r in rows) + serial["assigned"],
             "total": sum(r["assigned"] + r["spare"] for r in rows) + serial["total"],
-            "models": models,
-            "serial": serial["total"],
+            "assigned": sum(r["assigned"] for r in rows) + serial["assigned"],
+            "breakdown": breakdown,
         }
 
-    return {"laptops": serial_count("Laptop"), "families": families,
-            "monitors": units("Monitor"), "peripherals": units("Peripheral")}
+    laptops = serial_count("Laptop")
+    laptops["breakdown"] = by_os("Laptop")
+    out = [{"label": "Laptops", **laptops}]
+    for label, category in (("Monitors", "Monitor"), ("Peripherals", "Peripheral")):
+        out.append({"label": label, **units(category)})
+    return out

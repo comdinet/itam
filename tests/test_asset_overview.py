@@ -48,13 +48,23 @@ iid = db.execute("INSERT INTO assets (name, category, cost_cents) VALUES ('VM','
 db.execute("""INSERT INTO devices (id, device_name, os, asset_id, ignored_reason)
               VALUES ('d8','VMWARE','Windows',?,'virtual')""", (iid,))
 
-o = devices.overview()
-check("laptops counted per machine", o["laptops"]["total"], 5)
-check("and how many are with somebody", o["laptops"]["assigned"], 3)
-check("macOS", o["families"]["macOS"], 2)
-check("Windows, without the ignored VM", o["families"]["Windows"], 2)
-check("a phone is in neither family",
-      sum(o["families"].values()), 4)
+def widget(label):
+    return next(w for w in devices.overview() if w["label"] == label)
+
+
+def breakdown(label):
+    return {b["name"]: b["count"] for b in widget(label)["breakdown"]}
+
+
+check("laptops counted per machine", widget("Laptops")["total"], 5)
+check("and how many are handed out", widget("Laptops")["assigned"], 3)
+check("the families are a breakdown inside the Laptops widget, not their own cards",
+      breakdown("Laptops"), {"macOS": 2, "Windows": 2})
+check("so a phone is in neither, and the ignored VM in neither",
+      sum(breakdown("Laptops").values()), 4)
+check("there is no separate macOS widget",
+      [w["label"] for w in devices.overview()],
+      ["Laptops", "Monitors", "Peripherals"])
 
 print("\n--- monitors are counted in monitors, not in rows or people ---")
 u27 = pooled.create("Dell U2725QE", "Monitor", 50000)
@@ -65,35 +75,30 @@ pooled.assign(p27, "c@x.com", 1)
 pooled.take_back(p27, "c@x.com")          # back on the shelf, still owned
 pooled.assign(p27, "a@x.com", 1)          # re-issued from the shelf
 
-o = devices.overview()
-check("three Dells handed out, from two people", o["monitors"]["models"][0],
-      {"name": "Dell U2725QE", "assigned": 3})
-check("and one Lenovo", o["monitors"]["models"][1],
-      {"name": "Lenovo P27", "assigned": 1})
-check("handed out is units, not people", o["monitors"]["handed_out"], 4)
-check("total is every monitor that exists", o["monitors"]["total"], 4)
+check("three Dells handed out, from two people",
+      breakdown("Monitors")["Dell U2725QE"], 3)
+check("and one Lenovo", breakdown("Monitors")["Lenovo P27"], 1)
+check("handed out is units, not people", widget("Monitors")["assigned"], 4)
+check("total is every monitor that exists", widget("Monitors")["total"], 4)
 
 print("\n--- a model nobody holds is not a line in the breakdown ---")
 pooled.create("Old Acer", "Monitor", 10000)
-o = devices.overview()
-check("still two models listed", len(o["monitors"]["models"]), 2)
+check("still two models listed", len(widget("Monitors")["breakdown"]), 2)
 
 print("\n--- a monitor with a serial is counted too, and said so separately ---")
 db.execute("""INSERT INTO assets (name, category, cost_cents, serial, assigned_upn)
               VALUES ('Studio Display','Monitor',0,'SD123','b@x.com')""")
-o = devices.overview()
-check("the total takes it in", o["monitors"]["total"], 5)
-check("handed out too", o["monitors"]["handed_out"], 5)
-check("and it is named as tracked by serial", o["monitors"]["serial"], 1)
+check("the total takes it in", widget("Monitors")["total"], 5)
+check("handed out too", widget("Monitors")["assigned"], 5)
+check("and it has its own line in the breakdown",
+      breakdown("Monitors")["tracked by serial"], 1)
 
 print("\n--- peripherals, the same way ---")
 mouse = pooled.create("MX Master 3S", "Peripheral", 10900)
 pooled.assign(mouse, "a@x.com", 1)
 pooled.assign(mouse, "b@x.com", 2)
-o = devices.overview()
-check("units, not rows", o["peripherals"]["handed_out"], 3)
-check("one model", o["peripherals"]["models"],
-      [{"name": "MX Master 3S", "assigned": 3}])
+check("units, not rows", widget("Peripherals")["assigned"], 3)
+check("one model", breakdown("Peripherals"), {"MX Master 3S": 3})
 
 print("\n--- the landing page shows the widgets and no 100-row table ---")
 from fastapi.testclient import TestClient          # noqa: E402
@@ -103,10 +108,15 @@ with TestClient(main.app) as client:
                 follow_redirects=False)
     page = client.get("/assets").text
     check("Laptops replaces Tracked by serial", "Tracked by serial" in page, False)
-    for label in ("Laptops", "macOS", "Windows", "Monitors", "Peripherals"):
+    for label in ("Laptops", "Monitors", "Peripherals"):
         check(f"{label} widget", f">{label}</span>" in page, True)
+    check("three widgets, no more", page.count('<span class="label">'), 3)
     check("On the shelf is gone", "On the shelf" in page, False)
     check("Counted items is gone", ">Counted items<" in page, False)
+    check("Counted, handed out is gone", "Counted, handed out" in page, False)
+    check("and the families are inside the Laptops card",
+          "macOS <strong>2</strong>" in page.split(">Laptops<", 1)[1]
+          .split("</div>", 1)[0], True)
     check("and the model breakdown is there", "Dell U2725QE" in page, True)
     check("but not the table of every machine", "HOST0" in page or "Machine 0" in page,
           False)

@@ -174,14 +174,16 @@ print("\n--- and an ignored device is not counted on the Assets overview ---")
 # whatever happens to have enrolled. An ignored device must not appear there
 # either, or hiding a VM would still leave it in the Windows figure.
 from app import devices as dev                     # noqa: E402
-families = dev.overview()["families"]
+laptops = next(w for w in dev.overview() if w["label"] == "Laptops")
+families = {b["name"]: b["count"] for b in laptops["breakdown"]}
 for family, os_names in (("Windows", ("windows",)), ("macOS", ("macos", "mac os"))):
     expected = db.q1(
         """SELECT COUNT(*) c FROM devices d JOIN assets a ON a.id = d.asset_id
-           WHERE d.ignored_reason IS NULL
+           WHERE d.ignored_reason IS NULL AND a.category = 'Laptop'
              AND LOWER(COALESCE(d.os,'')) IN (%s)"""
         % ",".join("?" * len(os_names)), os_names)["c"]
-    check(f"{family} counts only what is not ignored", families[family], expected)
+    check(f"{family} counts only what is not ignored",
+          families.get(family, 0), expected)
 
 print()
 print("FAILURES:", ", ".join(fails) if fails else "none")

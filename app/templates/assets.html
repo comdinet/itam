@@ -14,41 +14,18 @@
 
 {% if overview %}
 <div class="cards">
-  <div class="card"><span class="label">Laptops</span>
-    <span class="big">{{ overview.laptops.total }}</span>
-    <span class="sub">{{ overview.laptops.assigned }} with somebody</span></div>
-  <div class="card"><span class="label">macOS</span>
-    <span class="big">{{ overview.families.macOS }}</span>
-    <span class="sub">reporting to Intune</span></div>
-  <div class="card"><span class="label">Windows</span>
-    <span class="big">{{ overview.families.Windows }}</span>
-    <span class="sub">reporting to Intune</span></div>
-  <div class="card"><span class="label">Monitors</span>
-    <span class="big">{{ overview.monitors.total }}</span>
-    <span class="sub">{{ overview.monitors.handed_out }} handed out</span>
-    {% if overview.monitors.models %}
+  {% for w in overview %}
+  <div class="card"><span class="label">{{ w.label }}</span>
+    <span class="big">{{ w.total }}</span>
+    <span class="sub">{{ w.assigned }} handed out</span>
+    {% if w.breakdown %}
       <ul class="breakdown">
-      {% for m in overview.monitors.models %}
-        <li>{{ m.name }} <strong>{{ m.assigned }}</strong></li>
-      {% endfor %}
-      {% if overview.monitors.serial %}
-        <li>tracked by serial <strong>{{ overview.monitors.serial }}</strong></li>
-      {% endif %}
-      </ul>
-    {% endif %}</div>
-  <div class="card"><span class="label">Peripherals</span>
-    <span class="big">{{ overview.peripherals.total }}</span>
-    <span class="sub">{{ overview.peripherals.handed_out }} handed out</span>
-    {% if overview.peripherals.models %}
-      <ul class="breakdown">
-      {% for m in overview.peripherals.models %}
-        <li>{{ m.name }} <strong>{{ m.assigned }}</strong></li>
+      {% for b in w.breakdown %}
+        <li>{{ b.name }} <strong>{{ b.count }}</strong></li>
       {% endfor %}
       </ul>
     {% endif %}</div>
-  <div class="card"><span class="label">Counted, handed out</span>
-    <span class="big">{{ pooled_totals.assigned_units }}</span>
-    <span class="sub">{{ currency }} {{ pooled_totals.assigned_value|money }}</span></div>
+  {% endfor %}
 </div>
 {% else %}
 <div class="cards">
