@@ -926,8 +926,28 @@ def sync_resource_performance() -> dict:
             db.execute("UPDATE devices SET memory_total = ? WHERE id = ?",
                        (int(megabytes * 1024 * 1024), device["id"]))
             rams += 1
-    return {"devices": len(rows), "cpu_models": cpus, "ram_filled": rams,
-            "reported_no_cpu": no_cpu, "not_in_itam": unmatched}
+    out = {"devices": len(rows), "cpu_models": cpus, "ram_filled": rams,
+           "reported_no_cpu": no_cpu, "not_in_itam": unmatched}
+    if not rows:
+        out["note"] = (
+            "Endpoint Analytics returned no devices, so there is nothing to "
+            "read. Switch it on in Intune under Reports > Endpoint analytics: "
+            "the guided setup asks 'Collect device data from', and All "
+            "cloud-managed devices assigns the Intune data collection policy "
+            "to every Intune-managed Windows device. Microsoft says data can "
+            "take up to 24 hours after a restart to appear, and the score "
+            "itself needs at least five devices reporting.")
+    elif cpus == 0 and unmatched == len(rows):
+        out["note"] = (
+            "Endpoint Analytics answered, but none of its deviceId values "
+            "matched a device ITAM holds - not the Intune id, not the Entra "
+            "id, not the device name. This is a bug in the matching, not a "
+            "setting: send this line on.")
+    elif cpus == 0:
+        out["note"] = ("Endpoint Analytics answered but reported no processor "
+                       "names, which is what insufficient data looks like. "
+                       "Check back after the machines have been restarted.")
+    return out
 
 
 def inventory_categories(device_id: str) -> list[dict]:

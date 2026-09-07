@@ -268,6 +268,35 @@ check("the tag alone, no CPU/SSD/RAM beside it",
       dev.specs_for("yael@x.com")[aid],
       [("Mac HW TAG", 'MBA-13.6"-M5/24/512G-10CPU-10GPU')])
 
+print("\n--- a job that did nothing does not report OK ---")
+import io, contextlib                                # noqa: E402
+from app import jobs                                 # noqa: E402
+entra._get_all = lambda path, params=None, base=None, advanced=False: []
+out = entra.sync_resource_performance()
+check("no devices came back", out["devices"], 0)
+check("and the result carries the reason", "Endpoint analytics" in out["note"]
+      or "Endpoint Analytics" in out["note"], True)
+
+entra.is_configured = lambda: True
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    code = jobs.run(["specs"], source="test")
+line = buf.getvalue().strip()
+check("the run itself did not fail", code, 0)
+check("the log says NOTHING, not OK", line.split()[2], "NOTHING")
+check("and the line explains itself", "Reports > Endpoint analytics" in line, True)
+check("the reason is in the history too, not just on screen",
+      "Endpoint Analytics returned no devices" in
+      db.q1("SELECT detail FROM sync_runs WHERE job='specs' "
+            "ORDER BY id DESC")["detail"], True)
+check("note is not printed as a counter", "note=" in line, False)
+
+entra._get_all = lambda path, params=None, base=None, advanced=False: [
+    {"deviceId": "elsewhere", "cpuDisplayName": "AMD Ryzen 7"}]
+out = entra.sync_resource_performance()
+check("answered but matched nothing is called a bug, not a setting",
+      "bug in the matching" in out["note"], True)
+
 print()
 print("FAILURES:", ", ".join(fails) if fails else "none")
 sys.exit(1 if fails else 0)

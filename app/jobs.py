@@ -103,9 +103,16 @@ def run(names: list[str], source: str = "cron") -> int:
         started = _iso()
         try:
             result = fn()
+            # A job that did nothing says why, in the log, on the line itself.
+            # "OK devices=0" is indistinguishable from a job that worked, and
+            # a log you cannot trust at a glance is a log nobody reads.
+            note = result.pop("note", "") if isinstance(result, dict) else ""
             detail = ", ".join(f"{k}={v}" for k, v in result.items())
+            if note:
+                detail = f"{detail} - {note}"
             record(name, started, True, detail, source)
-            print(f"{_stamp()}  OK     {label}: {detail}", flush=True)
+            status = "NOTHING" if note else "OK     "
+            print(f"{_stamp()}  {status} {label}: {detail}", flush=True)
         except Exception as exc:
             failed += 1
             detail = str(exc) if isinstance(exc, entra.GraphError) \
