@@ -851,15 +851,9 @@ def user_detail(request: Request, upn: str):
            FROM assets a
            LEFT JOIN devices d ON d.asset_id = a.id
            WHERE a.assigned_upn = ? ORDER BY a.category, a.name""", (upn,))
-    # The spec Intune reports, per asset. Shown on the person's card because
-    # "what has Yael got" is usually really "how much RAM has Yael got".
-    asset_attrs: dict = {}
-    for row in db.q(
-            """SELECT d.asset_id, da.name, da.value
-               FROM device_attributes da JOIN devices d ON d.id = da.device_id
-               WHERE d.asset_id IN (SELECT id FROM assets WHERE assigned_upn = ?)
-               ORDER BY da.name""", (upn,)):
-        asset_attrs.setdefault(row["asset_id"], []).append(row)
+    # Three facts per asset - processor, memory, disk - not the dozen inventory
+    # properties Intune happens to carry.
+    asset_specs = devices.specs_for(upn)
     subs = db.q(
         """SELECT sub.*, ss.assigned_on FROM subscription_seats ss
            JOIN subscriptions sub ON sub.id = ss.subscription_id
@@ -881,7 +875,7 @@ def user_detail(request: Request, upn: str):
     return render(request, "user_detail.html", u=user, assets=assets, subs=subs,
                   spare=spare, avail_subs=avail_subs, entra_licences=entra_licences,
                   pooled_held=pooled_held, pooled_available=pooled_available,
-                  asset_attrs=asset_attrs)
+                  asset_specs=asset_specs)
 
 
 @app.post("/users/{upn}/assign-asset")

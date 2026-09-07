@@ -122,10 +122,47 @@ with TestClient(main.app) as client:
                 follow_redirects=False)
     page = client.get("/users/yael@x.com").text
     check("the asset is a link", f'href="/assets/{aid}"' in page, True)
-    check("the CPU model is on the card",
-          "Intel(R) Core(TM) Ultra 7 165U" in page, True)
-    check("so is the RAM", "Memory Info / Total physical memory (GB)" in page, True)
-    check("and the device name it came from", "WIN-1" in page, True)
+    row = page.split(f'href="/assets/{aid}"', 1)[1].split("</td>", 1)[0]
+    check("the CPU as Intune reports it, not rewritten",
+          "<b>CPU</b> Intel(R) Core(TM) Ultra 7 165U" in row, True)
+    check("the disk", "<b>SSD</b> 512GB" in row, True)
+    check("the memory", "<b>RAM</b> 64GB" in row, True)
+    check("and nothing else - no raw property names",
+          "Memory Info /" in row or "Number of cores" in row, False)
+    check("only three facts, nothing else",
+          row.count("<span><b>"), 3)
+
+print("\n--- the three facts, from whatever names they arrive under ---")
+from app import devices as dev                      # noqa: E402
+check("Windows, via Device inventory",
+      dev.spec([("CPU / Name", "Intel(R) Core(TM) Ultra 7 165U"),
+                ("CPU / Number of cores", "12"),
+                ("Memory Info / Total physical memory (GB)", "32"),
+                ("Disk Drive 1 / Size (GB)", "512")]),
+      {"cpu": "Intel(R) Core(TM) Ultra 7 165U", "ram": "32GB", "disk": "512GB"})
+check("the processor string is never rewritten",
+      dev.spec([("CPU / Name", "AMD Ryzen 7 PRO 7840U w/ Radeon 780M Graphics")])["cpu"],
+      "AMD Ryzen 7 PRO 7840U w/ Radeon 780M Graphics")
+check("macOS, via a custom attribute script",
+      dev.spec([("Processor", "Apple M4"), ("Total RAM", "16 GB"),
+                ("Disk capacity", "512 GB")]),
+      {"cpu": "Apple M4", "ram": "16GB", "disk": "512GB"})
+check("disk falls back to the storage Intune reports for every device",
+      dev.spec([("CPU / Name", "Apple M4")], storage_total=512110190592),
+      {"cpu": "Apple M4", "ram": None, "disk": "512GB"})
+check("only the unit is added; the number is not re-scaled",
+      dev.spec([("Memory Info / Total physical memory (GB)", "32")])["ram"], "32GB")
+check("bytes are read as bytes, not as a huge number of GB",
+      dev.spec([("Memory / Total", "34359738368")])["ram"], "34GB")
+check("free space is not mistaken for total",
+      dev.spec([("Memory Info / Free physical memory (GB)", "4"),
+                ("Memory Info / Total physical memory (GB)", "32")])["ram"], "32GB")
+check("core count is not mistaken for the model",
+      dev.spec([("CPU / Number of cores", "12")])["cpu"], None)
+check("nothing reported is nothing shown",
+      dev.spec([]), {"cpu": None, "ram": None, "disk": None})
+check("and a zero storage is not 0GB",
+      dev.spec([], storage_total=0)["disk"], None)
 
 print()
 print("FAILURES:", ", ".join(fails) if fails else "none")

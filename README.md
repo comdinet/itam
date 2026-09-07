@@ -448,9 +448,8 @@ Sync behaviour:
   offered: each is one specific piece of hardware.
 - **Person detail** — assign or return assets, grant or revoke licences, and a
   first-year total cost (assets + 12 months of licences). Each asset **links to
-  itself** and carries the spec Intune reports for it — CPU, memory, disk —
-  because "what has this person got" is usually really "how much RAM have they
-  got".
+  itself** and carries three facts from Intune — **CPU, SSD, RAM** — because
+  "what has this person got" is usually really "how much RAM have they got".
 - Filters and panels **stay where you put them**. Adding something from a
   filtered view comes back to that filtered view, not the whole list, and a
   panel you collapsed stays collapsed — remembered per browser, so it is your
@@ -931,18 +930,31 @@ works the same either way.
 | Windows | **Device inventory** — CPU, Memory Info, Disk Drive and the rest | switched on in Intune |
 
 `Sync Windows hardware inventory` on **Settings → Devices** reads it. Attributes
-arrive named for where they came from, so nothing collides:
+are stored named for where they came from, so nothing collides — a category
+reporting one thing is unnumbered, two disks become `Disk Drive 1` and
+`Disk Drive 2`:
 
 ```
 CPU / Name                                Intel(R) Core(TM) Ultra 7 165U
 CPU / Number of cores                     12
 Memory Info / Total physical memory (GB)  32
 Disk Drive 1 / Size (GB)                  512
-Disk Drive 2 / Size (GB)                  1024
 ```
 
-A category reporting one thing is unnumbered; two disks become `Disk Drive 1`
-and `Disk Drive 2`.
+The person's card shows **three** of them and nothing else:
+
+```
+CPU  Intel(R) Core(TM) Ultra 7 165U    SSD  512GB    RAM  32GB
+```
+
+Matched by shape rather than exact key, since the names differ by platform — so
+a macOS script reporting `Processor` / `Total RAM` lands in the same three
+slots. **The values are shown as Intune reports them.** Memory and disk get a
+`GB` because the number arrives without one, and bytes are converted because
+they are unreadable; the processor string is never rewritten.
+
+Disk falls back to the total storage Intune reports for **every** managed
+device, so it shows even where the inventory is not switched on.
 
 Two caveats worth knowing:
 

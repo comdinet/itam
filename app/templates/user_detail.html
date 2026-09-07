@@ -38,11 +38,15 @@
     <th class="num">Cost</th><th></th></tr></thead>
   <tbody>
   {% for a in assets %}
+    {% set spec = asset_specs.get(a.id) %}
     <tr><td><a href="/assets/{{ a.id }}">{{ a.name }}</a>
-          {% if a.device_name %}<div class="meta">{{ a.device_name }}</div>{% endif %}
-          {% for at in asset_attrs.get(a.id, []) %}
-            <span class="attr"><span class="attr-k">{{ at.name }}</span>{{ at.value }}</span>
-          {% endfor %}</td>
+          {% if spec and (spec.cpu or spec.ram or spec.disk) %}
+            <div class="spec">
+              {%- if spec.cpu %}<span><b>CPU</b> {{ spec.cpu }}</span>{% endif %}
+              {%- if spec.disk %}<span><b>SSD</b> {{ spec.disk }}</span>{% endif %}
+              {%- if spec.ram %}<span><b>RAM</b> {{ spec.ram }}</span>{% endif %}
+            </div>
+          {% endif %}</td>
         <td>{{ a.category }}</td>
         <td class="mono">{{ a.serial or '' }}</td><td>{{ a.assigned_on or '' }}</td>
         <td class="num">{% if a.cost_cents %}{{ a.cost_cents|money }}
