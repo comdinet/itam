@@ -40,10 +40,9 @@
   {% for a in assets %}
     {% set spec = asset_specs.get(a.id) %}
     <tr><td><a href="/assets/{{ a.id }}">{{ a.name }}</a>
-          {% if spec and (spec.attrs or spec.disk) %}
+          {% if spec %}
             <div class="spec">
-              {%- for name, value in spec.attrs %}<span><b>{{ name }}</b> {{ value }}</span>{% endfor %}
-              {%- if spec.disk %}<span><b>SSD</b> {{ spec.disk }}</span>{% endif %}
+              {%- for name, value in spec %}<span><b>{{ name }}</b> {{ value }}</span>{% endfor %}
             </div>
           {% endif %}</td>
         <td>{{ a.category }}</td>

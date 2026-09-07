@@ -321,8 +321,8 @@
       <td><strong>{{ d.device_name or '(unnamed)' }}</strong>
         {% if attrs.get(d.id) %}
           <div class="attrs">
-            {% for a in attrs[d.id] %}
-              <span class="attr"><span class="attr-k">{{ a.name }}:</span>{{ a.value }}</span>
+            {% for name, value in attrs[d.id] %}
+              <span class="attr"><span class="attr-k">{{ name }}:</span>{{ value }}</span>
             {% endfor %}
           </div>
         {% endif %}</td>

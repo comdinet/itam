@@ -169,6 +169,7 @@ CREATE TABLE IF NOT EXISTS devices (
     last_contact     TEXT,
     storage_total    INTEGER,
     storage_free     INTEGER,
+    memory_total     INTEGER,           -- physicalMemoryInBytes, from beta
     azure_device_id  TEXT,               -- Entra device object id (azureADDeviceId)
     ignored_reason   TEXT,               -- which rule hid it, recomputed on sync
     synced_at        TEXT,
@@ -511,6 +512,13 @@ def init_db():
         for col in ("azure_device_id", "ignored_reason"):
             if col not in dcols:
                 conn.execute(f"ALTER TABLE devices ADD COLUMN {col} TEXT")
+        # Migration: total RAM sits with the storage Intune reports, not in
+        # device_attributes. The attribute table is what a script on the
+        # machine said; these two are Graph's own fields, and mixing them
+        # meant a Mac's own spec tag arrived next to ITAM's arithmetic.
+        if "memory_total" not in dcols:
+            conn.execute("ALTER TABLE devices ADD COLUMN memory_total INTEGER")
+            conn.execute("DELETE FROM device_attributes WHERE name = 'Total RAM'")
         gcols = [r["name"] for r in conn.execute("PRAGMA table_info(device_group_members)")]
         if "device_name" not in gcols:
             conn.execute("ALTER TABLE device_group_members ADD COLUMN device_name TEXT")

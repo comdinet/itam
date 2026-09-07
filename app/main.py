@@ -1418,9 +1418,7 @@ def settings_devices(request: Request, q: str = "", os_filter: str = "",
     sql, params = _device_query(q, os_filter, linked, include_ignored=bool(show_ignored))
     rows = db.q(sql, params)
     oses = db.q("SELECT DISTINCT COALESCE(os,'') o FROM devices ORDER BY o")
-    attrs = {}
-    for row in db.q("SELECT device_id, name, value FROM device_attributes ORDER BY name"):
-        attrs.setdefault(row["device_id"], []).append(row)
+    attrs = devices.all_specs()
     last = db.q1("SELECT MAX(synced_at) AS last FROM devices")
     # Ignored devices are excluded here so the card agrees with what the
     # "create assets" button will actually do.

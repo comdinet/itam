@@ -151,9 +151,9 @@ r = entra.sync_physical_memory()
 check("stored for the one that reported", r["stored"], 1)
 check("a 0 is not stored as 0GB", r["reported_zero"], 1)
 check("a device ITAM does not have is counted, not invented", r["not_in_itam"], 1)
-check("and it lands where the card reads it",
-      db.q1("SELECT value FROM device_attributes WHERE device_id='w1' "
-            "AND name='Total RAM'")["value"], "34 GB")
+check("and it lands on the device row, in bytes",
+      db.q1("SELECT memory_total FROM devices WHERE id='w1'")["memory_total"],
+      34359738368)
 
 print("\n--- the person's card links the asset and shows its spec ---")
 db.execute("INSERT INTO users (upn, display_name, source) VALUES ('yael@x.com','Yael','entra')")
@@ -176,31 +176,41 @@ with TestClient(main.app) as client:
                if f"<b>{r['name']}</b> {r['value']}" not in row]
     check("every attribute collected is on the card, under its own name",
           missing, [])
-    check("and the disk, from the storage every device reports",
-          "<b>SSD</b>" in row, True)
+    check("and nothing ITAM worked out itself alongside them",
+          "<b>SSD</b>" in row, False)
 
-print("\n--- attributes are shown under the names they were collected under ---")
+print("\n--- a Mac shows its own tag, and only its own tag ---")
 from app import devices as dev                      # noqa: E402
 db.execute("DELETE FROM device_attributes")
-db.execute("UPDATE devices SET storage_total = 512110190592 WHERE id = 'w1'")
-# A macOS custom attribute, named by whoever wrote the script - which is the
-# case an earlier version dropped, because the name says neither "cpu" nor
-# "memory" and it was matching on the name.
-for name, value in [("Hardware", "Apple M4 / 16GB"), ("Warranty until", "2027-03-01")]:
+db.execute("UPDATE devices SET storage_total = 512110190592, memory_total = 25769803776 "
+           "WHERE id = 'w1'")
+db.execute("""INSERT INTO device_attributes (device_id, name, value, collected_at)
+              VALUES ('w1','Mac HW TAG','MBA-13.6\"-M5/24/512G-10CPU-10GPU',
+                      '2026-09-07T00:00:00+00:00')""")
+check("the tag, exactly as the script reported it",
+      dev.specs_for("yael@x.com")[aid],
+      [("Mac HW TAG", 'MBA-13.6"-M5/24/512G-10CPU-10GPU')])
+check("no SSD line beside it - the tag already says 512G",
+      any(n == "SSD" for n, _ in dev.specs_for("yael@x.com")[aid]), False)
+
+print("\n--- a Windows machine, which has no script, shows RAM and disk ---")
+db.execute("DELETE FROM device_attributes")
+check("from the fields Graph carries for every managed device",
+      dev.specs_for("yael@x.com")[aid], [("RAM", "26GB"), ("SSD", "512GB")])
+check("and the devices list shows the same, not a blank cell",
+      dev.all_specs()["w1"], [("RAM", "26GB"), ("SSD", "512GB")])
+db.execute("UPDATE devices SET memory_total = NULL WHERE id = 'w1'")
+check("RAM is left out rather than shown as 0GB when Intune reports none",
+      dev.specs_for("yael@x.com")[aid], [("SSD", "512GB")])
+
+print("\n--- imported or scripted CPU/RAM/Disk win over the fallback ---")
+for name, value in [("CPU", "Intel(R) Core(TM) Ultra 7 165U"), ("RAM", "32GB"),
+                    ("Disk", "1TB")]:
     db.execute("""INSERT INTO device_attributes (device_id, name, value, collected_at)
                   VALUES ('w1',?,?,'2026-09-07T00:00:00+00:00')""", (name, value))
-out = dev.specs_for("yael@x.com")[aid]
-check("both attributes survive, whatever they are called",
-      out["attrs"], [("Hardware", "Apple M4 / 16GB"), ("Warranty until", "2027-03-01")])
-check("and the disk comes from the storage every device reports",
-      out["disk"], "512GB")
-
-db.execute("DELETE FROM device_attributes")
-check("a device with no attributes still shows its disk",
-      dev.specs_for("yael@x.com")[aid], {"attrs": [], "disk": "512GB"})
-db.execute("UPDATE devices SET storage_total = 0 WHERE id = 'w1'")
-check("and a zero storage is nothing, not 0GB",
-      dev.specs_for("yael@x.com")[aid]["disk"], None)
+check("all three, verbatim, no arithmetic",
+      sorted(dev.specs_for("yael@x.com")[aid]),
+      [("CPU", "Intel(R) Core(TM) Ultra 7 165U"), ("Disk", "1TB"), ("RAM", "32GB")])
 
 print()
 print("FAILURES:", ", ".join(fails) if fails else "none")

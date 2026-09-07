@@ -330,26 +330,59 @@ def _bytes_to_gb(raw) -> int | None:
     return int(round(total / 1_000_000_000)) if total else None
 
 
-def specs_for(upn: str) -> dict:
-    """asset id -> {"attrs": [(name, value)...], "disk": "512GB"}.
+def spec_of(attrs, memory_total=None, storage_total=None) -> list[tuple[str, str]]:
+    """What to show about one machine, as (label, value) pairs.
 
-    The attributes are passed through in the order Intune reports them. Disk is
-    derived from the total storage Intune carries for every managed device, so
-    it is there whether or not any inventory has been collected - it is the one
-    fact that needs no script and no beta endpoint.
+    Two sources, and they are never mixed. A custom attribute is a script on
+    the machine reporting its own spec: on a Mac, one tag already reads
+    MBA-13.6"-M5/24/512G-10CPU-10GPU, so it is shown exactly as collected and
+    nothing is appended - a second opinion on the disk size beside it is noise,
+    and when the two disagree it reads as a bug.
+
+    Only when no script reported anything does this fall back to the two
+    hardware fields Graph carries for every managed device. That is the Windows
+    case: there is no custom attribute mechanism for Windows, so RAM and disk
+    come from managedDevices itself. A CPU model arrives here as an attribute
+    or not at all - Graph has no field for it.
     """
-    rows = db.q(
-        """SELECT d.asset_id, d.storage_total, da.name, da.value
-           FROM devices d
-           LEFT JOIN device_attributes da ON da.device_id = d.id
-           WHERE d.asset_id IN (SELECT id FROM assets WHERE assigned_upn = ?)
-           ORDER BY da.name""", (upn,))
-    out: dict = {}
+    if attrs:
+        return list(attrs)
+    out = []
+    ram = _bytes_to_gb(memory_total)
+    if ram:
+        out.append(("RAM", f"{ram}GB"))
+    disk = _bytes_to_gb(storage_total)
+    if disk:
+        out.append(("SSD", f"{disk}GB"))
+    return out
+
+
+def _collect(rows, key: str) -> dict:
+    """Group attribute-joined device rows by `key`, then reduce to a spec."""
+    seen: dict = {}
     for row in rows:
-        entry = out.setdefault(row["asset_id"], {"attrs": [], "disk": None})
-        if entry["disk"] is None:
-            gb = _bytes_to_gb(row["storage_total"])
-            entry["disk"] = f"{gb}GB" if gb else None
+        entry = seen.setdefault(row[key], {
+            "attrs": [], "memory_total": row["memory_total"],
+            "storage_total": row["storage_total"]})
         if row["name"]:
             entry["attrs"].append((row["name"], row["value"]))
-    return out
+    return {k: spec_of(v["attrs"], v["memory_total"], v["storage_total"])
+            for k, v in seen.items()}
+
+
+SPEC_SELECT = """SELECT d.id AS device_id, d.asset_id, d.storage_total,
+                        d.memory_total, da.name, da.value
+                 FROM devices d
+                 LEFT JOIN device_attributes da ON da.device_id = d.id"""
+
+
+def specs_for(upn: str) -> dict:
+    """asset id -> [(label, value)...] for the machine behind that asset."""
+    return _collect(db.q(
+        SPEC_SELECT + " WHERE d.asset_id IN (SELECT id FROM assets "
+                      "WHERE assigned_upn = ?)", (upn,)), "asset_id")
+
+
+def all_specs() -> dict:
+    """device id -> [(label, value)...], for the devices list."""
+    return _collect(db.q(SPEC_SELECT), "device_id")

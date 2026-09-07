@@ -841,11 +841,15 @@ def sync_physical_memory() -> dict:
     It is reported as 0 on some tenants and for some platforms, so the result
     says how many devices actually gave a number. A 0 is stored as nothing
     rather than as "0GB".
+
+    The bytes go on the device row, next to the storage Graph reports the same
+    way. They are not device_attributes: that table is what a script running on
+    the machine said about itself, and a Mac's spec tag should not arrive
+    alongside a figure ITAM worked out by division.
     """
     rows = _get_all("/deviceManagement/managedDevices",
                     {"$select": "id,physicalMemoryInBytes", "$top": "999"},
                     base=GRAPH_BETA)
-    now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     stored = zero = unknown = 0
     for row in rows:
         did = row.get("id")
@@ -861,12 +865,7 @@ def sync_physical_memory() -> dict:
         if total <= 0:
             zero += 1
             continue
-        db.execute(
-            """INSERT INTO device_attributes (device_id, name, value, collected_at)
-               VALUES (?,'Total RAM',?,?)
-               ON CONFLICT(device_id, name) DO UPDATE SET
-                   value = excluded.value, collected_at = excluded.collected_at""",
-            (did, f"{int(round(total / 1_000_000_000))} GB", now))
+        db.execute("UPDATE devices SET memory_total = ? WHERE id = ?", (total, did))
         stored += 1
     return {"devices": len(rows), "stored": stored, "reported_zero": zero,
             "not_in_itam": unknown}
