@@ -55,6 +55,13 @@ a.card .big { color: var(--ink); }
 .card .label { color: var(--muted); font-size: 13px; }
 .card .big { font-size: 24px; font-weight: 650; }
 .card .sub { color: var(--muted); font-size: 13px; }
+/* Per-model lines inside a card: what the models actually are, so "14
+   monitors" can be read as the four kinds of monitor it is made of. */
+.card .breakdown { list-style: none; margin: 8px 0 0; padding: 8px 0 0;
+    border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+.card .breakdown li { display: flex; justify-content: space-between; gap: 12px;
+    padding: 1px 0; }
+.card .breakdown strong { color: var(--ink); font-weight: 600; }
 
 table { width: 100%; border-collapse: collapse; background: var(--panel);
         border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }

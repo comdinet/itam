@@ -6,9 +6,6 @@
 <p class="tally">
   <span>Managed devices <strong>{{ counts.total or 0 }}</strong></span>
   <span>Not linked to an asset <strong>{{ counts.unlinked or 0 }}</strong></span>
-  <span>By OS
-    {%- for o in by_os %} {{ o.os }} <strong>{{ o.n }}</strong>{% if not loop.last %},{% endif %}
-    {%- else %} <span class="meta">nothing synced yet</span>{% endfor %}</span>
   <span class="meta">last sync {{ (last.last or 'never')[:16].replace('T',' ') }}</span>
 </p>
 

@@ -404,3 +404,65 @@ def specs_for(upn: str) -> dict:
 def all_specs() -> dict:
     """device id -> [(label, value)...], for the devices list."""
     return _collect(db.q(SPEC_SELECT), "device_id")
+
+
+# --- the Assets overview --------------------------------------------------
+
+def _os_family(raw: str | None) -> str | None:
+    """Group Intune's operatingSystem into the two families anyone asks about.
+
+    Intune reports "Windows", "macOS", "iOS", "Android" and occasionally
+    nothing. Only the first two are machines somebody is issued here, and a
+    widget per value was a wall of cards that grew whenever somebody enrolled
+    a phone.
+    """
+    text = (raw or "").strip().lower()
+    if text.startswith("windows"):
+        return "Windows"
+    if text in ("macos", "mac os", "macos x", "osx", "mac") or text.startswith("mac"):
+        return "macOS"
+    return None
+
+
+def overview() -> dict:
+    """Counts for the Assets landing page.
+
+    Serial-tracked kit is counted per machine; counted kit is counted in units
+    handed to people, because "3 monitors" means three monitors and not three
+    rows or three people.
+    """
+    from . import pooled
+
+    def serial_count(category: str) -> dict:
+        row = db.q1(
+            """SELECT COUNT(*) AS total,
+                      SUM(CASE WHEN TRIM(COALESCE(assigned_upn,'')) != ''
+                               THEN 1 ELSE 0 END) AS assigned
+               FROM assets WHERE category = ?""", (category,))
+        return {"total": row["total"] or 0, "assigned": row["assigned"] or 0}
+
+    families = {"Windows": 0, "macOS": 0}
+    for row in db.q("""SELECT d.os, COUNT(*) AS n FROM devices d
+                       JOIN assets a ON a.id = d.asset_id
+                       WHERE d.ignored_reason IS NULL GROUP BY d.os"""):
+        family = _os_family(row["os"])
+        if family:
+            families[family] += row["n"]
+
+    def units(category: str) -> dict:
+        """Units of counted kit in a category, per item name and in total."""
+        rows = db.q(
+            "SELECT s.name, " + pooled.assigned_expr() + " AS assigned, s.spare "
+            "FROM pooled_items s WHERE s.category = ? ORDER BY s.name", (category,))
+        models = [{"name": r["name"], "assigned": r["assigned"]}
+                  for r in rows if r["assigned"]]
+        serial = serial_count(category)
+        return {
+            "handed_out": sum(r["assigned"] for r in rows) + serial["assigned"],
+            "total": sum(r["assigned"] + r["spare"] for r in rows) + serial["total"],
+            "models": models,
+            "serial": serial["total"],
+        }
+
+    return {"laptops": serial_count("Laptop"), "families": families,
+            "monitors": units("Monitor"), "peripherals": units("Peripheral")}

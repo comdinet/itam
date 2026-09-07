@@ -69,9 +69,17 @@ with TestClient(main.app) as client:
                                  if f">{n}</a>" in body),
                 "page": page}
 
-    all_of_it = shown("/assets")
-    check("all four serials listed", all_of_it["serials"], ["SN-1", "SN-2", "SN-3", "SN-4"])
-    check("both counted items listed", all_of_it["pooled"],
+    # The landing page is a summary now, so "everything" is asked for with a
+    # filter that excludes nothing rather than by loading a bare /assets.
+    all_of_it = shown("/assets?state=")
+    check("the landing page lists nothing until asked",
+          shown("/assets")["serials"], [])
+    everything = shown("/assets?q=SN-")
+    check("all four serials listed", everything["serials"],
+          ["SN-1", "SN-2", "SN-3", "SN-4"])
+    counted = shown("/assets?priced=unpriced")["pooled"] + \
+        shown("/assets?priced=priced")["pooled"]
+    check("both counted items listed", sorted(counted),
           ["Keychron K3", "Logitech MX Master 3S"])
 
     unpriced = shown("/assets?priced=unpriced")
@@ -87,6 +95,8 @@ with TestClient(main.app) as client:
     check("the count is offered before you filter",
           "3</strong>\n  record(s) have no cost set" in all_of_it["page"]
           or "<strong>3</strong>" in all_of_it["page"], True)
+    check("and the summary still offers it, with no list on screen",
+          "Show just those" in shown("/assets")["page"], True)
     check("the hint is not shown once you are already filtered",
           "Show just those" in unpriced["page"], False)
 

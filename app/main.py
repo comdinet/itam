@@ -946,9 +946,15 @@ def assets_view(request: Request, category: str | None, q: str, state: str,
     # can offer the whole job rather than what happens to be on screen.
     unpriced = (len(asset_rows("", category or "", "", "unpriced"))
                 + len([i for i in pooled.listing(category) if not i["unit_cost_cents"]]))
+    # The landing page is a summary, not a 118-row table nobody scrolls. The
+    # lists come back the moment a filter is applied, so "show me everything
+    # with no cost set" still lands somewhere useful.
+    filtered = bool(q or state or priced)
     return render(request, "assets.html", assets=rows, items=items, users=users,
                   q=q, category=category, state=state, priced=priced, total=total,
                   unpriced=unpriced, pooled_totals=pooled.totals(category),
+                  overview=devices.overview() if not category else None,
+                  show_lists=bool(category) or filtered, filtered=filtered,
                   currencies=fx.listing(active_only=True))
 
 
@@ -1428,11 +1434,6 @@ def settings_devices(request: Request, q: str = "", os_filter: str = "",
            FROM devices WHERE ignored_reason IS NULL""")
     # One line per OS, in the same widget: a card each would be a wall of cards
     # that grows every time somebody enrols a different kind of thing.
-    by_os = db.q(
-        """SELECT COALESCE(NULLIF(TRIM(os),''),'(not reported)') AS os,
-                  COUNT(*) AS n
-           FROM devices WHERE ignored_reason IS NULL
-           GROUP BY os ORDER BY n DESC, os""")
     unlinked_here = sum(1 for d in rows if not d["asset_id"])
     return render(request, "settings_devices.html", devices=rows, attrs=attrs,
                   oses=oses, q=q, os_filter=os_filter, linked=linked,
@@ -1442,7 +1443,6 @@ def settings_devices(request: Request, q: str = "", os_filter: str = "",
                   ignored=devices.ignored_listing(), ignore_counts=devices.counts(),
                   entra_groups=devices.groups_listing(),
                   unlinked_here=unlinked_here, last=last, counts=counts,
-                  by_os=by_os,
                   scope_groups=db.q(
                       """SELECT e.*, e.scope_devices AS ticked,
                                 (SELECT COUNT(*) FROM device_group_members m
