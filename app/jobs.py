@@ -49,6 +49,7 @@ JOBS = {
     "licences": ("Entra ID licences", lambda: entra.sync_licenses()),
     "devices": ("Intune devices", _sync_devices),
     "attributes": ("Intune custom attributes (macOS)", lambda: entra.sync_custom_attributes()),
+    "memory": ("Intune total RAM", lambda: entra.sync_physical_memory()),
     "hardware": ("Intune hardware inventory (Windows)",
                  lambda: entra.sync_hardware_inventory()),
     "holders": ("Asset holders from Intune", _fill_holders),
@@ -57,7 +58,16 @@ JOBS = {
 # Users first: groups, licences and devices all reference them. Holders last:
 # it needs both the people and the devices to be current.
 ORDER = ["users", "groups", "device_groups", "licences", "devices", "attributes",
-         "hardware", "holders"]
+         "memory", "holders"]
+
+# Jobs kept out of the nightly run on purpose, with the reason. Anything else
+# missing from ORDER is an oversight, and a test says so.
+MANUAL_ONLY = {
+    "hardware": "Intune's Device inventory is an undocumented beta endpoint that "
+                "refuses an application token on at least some tenants. A job "
+                "that fails every night at 03:00 teaches you to ignore the log, "
+                "so this one runs only when asked: ./sync.sh hardware",
+}
 
 
 def _stamp() -> str:

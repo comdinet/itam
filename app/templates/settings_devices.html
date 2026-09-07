@@ -23,19 +23,26 @@
     <button type="submit" {% if not cfg.configured %}disabled{% endif %}>Sync devices from Intune</button></form>
   <form method="post" action="/settings/devices/sync-attributes">
     <button type="submit" {% if not cfg.configured %}disabled{% endif %}>Sync macOS custom attributes</button></form>
+  <form method="post" action="/settings/devices/sync-memory">
+    <button type="submit" {% if not cfg.configured %}disabled{% endif %}>Sync total RAM</button></form>
   <form method="post" action="/settings/devices/sync-hardware">
-    <button type="submit" {% if not cfg.configured %}disabled{% endif %}>Sync Windows hardware inventory</button></form>
+    <button class="light" type="submit" {% if not cfg.configured %}disabled{% endif %}>Try Windows hardware inventory</button></form>
 </div>
-<p class="hint">Windows reports CPU, memory and disks through Intune's
-   <strong>Device inventory</strong>, not through custom attributes &mdash; those
-   are macOS shell scripts. Both land in the same place, so a spec collected
-   either way shows on the person's card and can be used in a
-   <a href="/settings/pricing">pricing group</a>.
-   <br>Device inventory is a <em>beta, undocumented</em> Graph endpoint: the
-   categories are read back from your tenant rather than assumed, and the result
-   lists what it found. It is a call per device, so
-   <span class="mono">INTUNE_ATTRIBUTE_FILTER</span> applies &mdash; set it to
-   <span class="mono">CPU, Memory*, Disk*</span> to fetch only those.</p>
+<p class="hint">Where a spec comes from, per platform:
+   <br><strong>Disk</strong> &mdash; already synced for every managed device, and
+   shown on the person's card without anything else being switched on.
+   <br><strong>Total RAM</strong> &mdash; <span class="mono">Sync total RAM</span>
+   above. One call for the whole fleet, on the endpoint the device sync already
+   uses. Intune reports 0 for some platforms; the result says how many gave a
+   real number.
+   <br><strong>CPU model</strong> &mdash; macOS through a custom attribute
+   script. On Windows there is no field for it on
+   <span class="mono">managedDevices</span> at all; it only exists in Intune's
+   <strong>Device inventory</strong>, which is a <em>beta and undocumented</em>
+   endpoint that <strong>refuses an application token on at least some
+   tenants</strong>. The button is there to try it, it is not in the nightly
+   run, and a refusal is reported as a failure rather than as an empty
+   inventory.</p>
 <p class="meta">Custom attributes synced:
   {% if attr_filter %}only <span class="mono">{{ attr_filter }}</span>
   {% else %}all of them{% endif %}

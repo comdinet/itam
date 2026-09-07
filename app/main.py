@@ -1578,6 +1578,20 @@ def settings_devices_ignore_unlink():
                 f"untouched - delete them on the Assets page if that is what you meant.")
 
 
+@app.post("/settings/devices/sync-memory")
+def settings_devices_sync_memory():
+    if not entra.is_configured():
+        return back("/settings/devices", "Entra ID is not configured yet")
+    try:
+        r = run_job("memory")
+    except Exception as exc:
+        return back("/settings/devices", f"Reading total RAM failed: {why(exc)}"[:300])
+    msg = f"Read {r['devices']} device(s), stored RAM for {r['stored']}"
+    if r["reported_zero"]:
+        msg += f"; {r['reported_zero']} reported 0, which Intune does for some platforms"
+    return back("/settings/devices", msg)
+
+
 @app.post("/settings/devices/sync-hardware")
 def settings_devices_sync_hardware():
     if not entra.is_configured():
@@ -1587,9 +1601,6 @@ def settings_devices_sync_hardware():
     except Exception as exc:
         return back("/settings/devices",
                     f"Hardware inventory failed: {why(exc)}"[:300])
-    if r["unavailable"]:
-        return back("/settings/devices",
-                    f"Intune did not serve the inventory: {r['unavailable']}"[:300])
     if not r["devices"]:
         return back("/settings/devices",
                     "No device returned any inventory. Device inventory has to be "

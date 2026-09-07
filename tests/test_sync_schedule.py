@@ -19,7 +19,14 @@ def check(label, got, want):
     if not ok: fails.append(label)
 
 print("--- every job is in the running order, and holders comes last ---")
-check("nothing is defined but unscheduled", sorted(jobs.JOBS), sorted(jobs.ORDER))
+check("the order only names real jobs",
+      sorted(set(jobs.ORDER) - set(jobs.JOBS)), [])
+# A job may be left out of the nightly run, but only on purpose and with the
+# reason written down - otherwise a new job silently never runs.
+check("anything unscheduled is unscheduled deliberately",
+      sorted(set(jobs.JOBS) - set(jobs.ORDER) - set(jobs.MANUAL_ONLY)), [])
+check("and the reason is recorded",
+      all(len(v) > 40 for v in jobs.MANUAL_ONLY.values()), True)
 check("users first", jobs.ORDER[0], "users")
 check("holders last, needing both people and devices", jobs.ORDER[-1], "holders")
 

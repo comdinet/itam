@@ -919,53 +919,46 @@ four ways so you can tell a fixable case from a real one:
 
 ### Where a spec comes from
 
-The CPU, memory and disk shown against an asset come from Intune, by two
-different routes depending on the platform. Both land in the same place, so
-everything downstream — the person's card, the device list, pricing criteria —
-works the same either way.
-
-| Platform | Route | Needs |
-|---|---|---|
-| macOS | **Custom attributes** — shell scripts whose stdout Intune stores | `DeviceManagementScripts.Read.All` |
-| Windows | **Device inventory** — CPU, Memory Info, Disk Drive and the rest | switched on in Intune |
-
-`Sync Windows hardware inventory` on **Settings → Devices** reads it. Attributes
-are stored named for where they came from, so nothing collides — a category
-reporting one thing is unnumbered, two disks become `Disk Drive 1` and
-`Disk Drive 2`:
-
-```
-CPU / Name                                Intel(R) Core(TM) Ultra 7 165U
-CPU / Number of cores                     12
-Memory Info / Total physical memory (GB)  32
-Disk Drive 1 / Size (GB)                  512
-```
-
-The person's card shows **three** of them and nothing else:
+The person's card shows three facts against each asset, and nothing else:
 
 ```
 CPU  Intel(R) Core(TM) Ultra 7 165U    SSD  512GB    RAM  32GB
 ```
 
-Matched by shape rather than exact key, since the names differ by platform — so
-a macOS script reporting `Processor` / `Total RAM` lands in the same three
-slots. **The values are shown as Intune reports them.** Memory and disk get a
-`GB` because the number arrives without one, and bytes are converted because
-they are unreadable; the processor string is never rewritten.
+Values are shown **as Intune reports them**. Memory and disk get a `GB` because
+the number arrives without a unit, and bytes are converted because they are
+unreadable; the processor string is never rewritten.
 
-Disk falls back to the total storage Intune reports for **every** managed
-device, so it shows even where the inventory is not switched on.
+They come from three different places, in order of how reliably they work:
 
-Two caveats worth knowing:
+| | Where from | Notes |
+|---|---|---|
+| **SSD** | `totalStorageSpaceInBytes`, already synced with every device | Works now, nothing to switch on |
+| **RAM** | `physicalMemoryInBytes` — **Sync total RAM** on Settings → Devices | One paged call for the whole fleet, on the endpoint the device sync already uses. Intune reports `0` for some platforms; the result says how many gave a real number |
+| **CPU model** | macOS: a custom attribute script. Windows: Intune **Device inventory** | See below |
 
-- Device inventory is a **beta Graph endpoint and undocumented** — Microsoft
-  ships the categories in the portal without publishing the resource. So
-  nothing is hardcoded: the categories are read back from your tenant and
-  whatever properties come with them are stored. The result lists what it found,
-  and a tenant that does not serve it is told so in Graph's own words rather
-  than reported as an empty inventory.
-- It is **one call per device**, so `INTUNE_ATTRIBUTE_FILTER` applies here too.
-  Set it to `CPU, Memory*, Disk*` to fetch only those categories.
+**There is no CPU model field on `managedDevices` at all.** On Windows it exists
+only in Intune's Device inventory, which is a **beta and undocumented** Graph
+endpoint — and it **refuses an application (client-credentials) token on at
+least some tenants**, with a 403 from the Intune service rather than from Graph's
+permission layer. Nobody publicly documents a permission that makes it work
+app-only.
+
+So **Try Windows hardware inventory** is a button, not a scheduled job:
+
+- It is **not** in the nightly run. A job that fails every night at 03:00
+  teaches you to ignore the log. `./sync.sh hardware` runs it on demand.
+- A refusal is reported as a **failure** with a non-zero exit, not as a job that
+  succeeded and happened to store nothing.
+- The 403 message **names no permission**, because this endpoint's is not known.
+  Inventing one sent somebody to add `DeviceManagementManagedDevices.Read.All`
+  that they already had and whose device sync was working fine.
+- Nothing about the response shape is assumed: the categories are read back from
+  the tenant and whatever properties come with them are stored, named
+  `Category / Property` — `CPU / Name`, `Disk Drive 1 / Size (GB)`.
+
+If you need the CPU model on Windows today, a **remediation script** writing it
+into an extension attribute is the route that works with an app registration.
 
 ## Pricing by specification
 

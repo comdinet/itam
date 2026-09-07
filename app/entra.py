@@ -88,14 +88,31 @@ PERMISSION_FOR = [
     ("/users", "User.Read.All"),
 ]
 
+# Paths whose permission is genuinely not known. Naming one here would be
+# worse than naming none: a 403 on deviceInventories reported
+# "DeviceManagementManagedDevices.Read.All is missing" at somebody who already
+# had it and whose device sync was working, because the prefix match ran on
+# past the resource and onto a sub-resource of it.
+PERMISSION_UNKNOWN = ("deviceInventories",)
+
 
 class GraphError(Exception):
     """A Graph failure with the reason Graph actually gave."""
 
 
 def _permission_for(path: str) -> str:
+    """The permission a path needs, or a hedge when it is not known.
+
+    Matched at a path boundary. Plain startswith let
+    /deviceManagement/managedDevices('id')/deviceInventories inherit the
+    permission of managedDevices, which is a different resource with a
+    different answer.
+    """
+    if any(part in path for part in PERMISSION_UNKNOWN):
+        return ""
     for prefix, permission in PERMISSION_FOR:
-        if path.startswith(prefix):
+        if path == prefix or path.startswith(prefix + "/") \
+                or path.startswith(prefix + "("):
             return permission
     return "the relevant Graph"
 
@@ -112,6 +129,14 @@ def _explain(resp, path: str) -> str:
 
     permission = _permission_for(path)
     if resp.status_code == 403:
+        if not permission:
+            # Deliberately names nothing. This endpoint's permission is not
+            # documented, and inventing one sends people to add a permission
+            # they already have.
+            return (f"403 Forbidden from Graph ({code or 'no code'}): {message} "
+                    f"-- Graph refused this endpoint. Which permission it wants "
+                    f"is not documented, and it may not accept an application "
+                    f"(client-credentials) token at all.")
         return (f"403 Forbidden from Graph ({code or 'no code'}): {message} "
                 f"-- the app registration is missing the '{permission}' "
                 f"APPLICATION permission, or admin consent has not been granted "
@@ -806,6 +831,47 @@ def refresh_ignore_groups() -> int:
 INVENTORY_BASE = "/deviceManagement/managedDevices"
 
 
+def sync_physical_memory() -> dict:
+    """Total RAM per device, from beta managedDevices.
+
+    physicalMemoryInBytes is not in v1.0, but it is one field on a LIST call -
+    one paged request for the whole fleet, on the endpoint the device sync
+    already has permission for. No Device inventory, no per-device calls.
+
+    It is reported as 0 on some tenants and for some platforms, so the result
+    says how many devices actually gave a number. A 0 is stored as nothing
+    rather than as "0GB".
+    """
+    rows = _get_all("/deviceManagement/managedDevices",
+                    {"$select": "id,physicalMemoryInBytes", "$top": "999"},
+                    base=GRAPH_BETA)
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    stored = zero = unknown = 0
+    for row in rows:
+        did = row.get("id")
+        try:
+            total = int(row.get("physicalMemoryInBytes") or 0)
+        except (TypeError, ValueError):
+            total = 0
+        if not did:
+            continue
+        if not db.q1("SELECT 1 FROM devices WHERE id = ?", (did,)):
+            unknown += 1
+            continue
+        if total <= 0:
+            zero += 1
+            continue
+        db.execute(
+            """INSERT INTO device_attributes (device_id, name, value, collected_at)
+               VALUES (?,'Total RAM',?,?)
+               ON CONFLICT(device_id, name) DO UPDATE SET
+                   value = excluded.value, collected_at = excluded.collected_at""",
+            (did, f"{int(round(total / 1_000_000_000))} GB", now))
+        stored += 1
+    return {"devices": len(rows), "stored": stored, "reported_zero": zero,
+            "not_in_itam": unknown}
+
+
 def inventory_categories(device_id: str) -> list[dict]:
     """Which inventory categories Intune holds for this device.
 
@@ -852,16 +918,15 @@ def sync_hardware_inventory(limit: int | None = None) -> dict:
     now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 
     stored = devices_seen = 0
-    unavailable = None
     categories_found: set = set()
     for row in rows:
         try:
             cats = inventory_categories(row["id"])
         except GraphError as exc:
-            # The first refusal is the answer for every device: report it once
-            # rather than making the same failing call ninety-seven times.
-            unavailable = str(exc)
-            break
+            # The first refusal is the answer for every device, so stop rather
+            # than making the same failing call ninety-seven times - and raise,
+            # because a job that fetched nothing did not succeed.
+            raise GraphError(f"Device inventory is not readable: {exc}") from exc
         if not cats:
             continue
         devices_seen += 1
@@ -892,8 +957,7 @@ def sync_hardware_inventory(limit: int | None = None) -> dict:
                     stored += 1
 
     return {"devices": devices_seen, "stored": stored,
-            "categories": sorted(categories_found)[:12],
-            "unavailable": unavailable}
+            "categories": sorted(categories_found)[:12]}
 
 
 # --- macOS custom attributes --------------------------------------------

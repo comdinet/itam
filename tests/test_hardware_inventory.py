@@ -62,7 +62,6 @@ r = entra.sync_hardware_inventory()
 check("one device read (the ignored VM is skipped)", r["devices"], 1)
 check("the categories are reported back, not assumed",
       r["categories"], ["Battery", "CPU", "Disk Drive", "Memory Info"])
-check("nothing was said to be unavailable", r["unavailable"], None)
 
 got = {a["name"]: a["value"] for a in
        db.q("SELECT name, value FROM device_attributes WHERE device_id='w1'")}
@@ -98,19 +97,63 @@ check("CPU among them", any("('Cpu')" in c for c in fetched), True)
 check("and not the battery", any("('Battery')" in c for c in fetched), False)
 settings.set_value("INTUNE_ATTRIBUTE_FILTER", "", "test")
 
-print("\n--- a tenant without Device inventory is told so, once ---")
+print("\n--- a refusal is a FAILURE, not a job that succeeded with nothing ---")
+# It used to return the error in a field, so the nightly log printed
+# "OK  Intune hardware inventory: devices=0, stored=0, unavailable=403..."
+# and cron exited zero on a total failure.
 def refuse(path, params=None, base=None, advanced=False):
     calls.append(path)
-    raise entra.GraphError("404 from Graph (ResourceNotFound): deviceInventories")
+    raise entra.GraphError("403 Forbidden from Graph: refused")
 entra._get_all = refuse
 db.execute("""INSERT INTO devices (id, device_name, os, synced_at)
               VALUES ('w2','WIN-2','Windows','2026-09-06T00:00:00+00:00')""")
 calls.clear()
-r = entra.sync_hardware_inventory()
-check("reported as unavailable", "ResourceNotFound" in (r["unavailable"] or ""), True)
-check("nothing claimed as stored", r["stored"], 0)
-check("and it stopped after the first refusal rather than asking 97 times",
+raised = None
+try:
+    entra.sync_hardware_inventory()
+except entra.GraphError as exc:
+    raised = str(exc)
+check("it raises", raised is not None, True)
+check("saying the inventory is not readable",
+      "not readable" in (raised or ""), True)
+check("and it stopped after the first refusal rather than asking twice",
       len(calls), 1)
+
+entra.is_configured = lambda: True
+from app import jobs                               # noqa: E402
+check("so the job reports FAILED and exits non-zero",
+      jobs.run(["hardware"], source="test"), 1)
+check("and the run is recorded as not ok",
+      db.q1("SELECT ok FROM sync_runs WHERE job='hardware' ORDER BY id DESC LIMIT 1")["ok"], 0)
+
+print("\n--- the 403 hint names nothing it cannot vouch for ---")
+class Refused:
+    status_code = 403
+    def json(self):
+        return {"error": {"code": "Forbidden", "message": "An error has occurred"}}
+
+msg = entra._explain(Refused(), "/deviceManagement/managedDevices('x')/deviceInventories")
+check("it does not send you after a permission you already have",
+      "DeviceManagementManagedDevices.Read.All" in msg, False)
+check("it says the permission is undocumented", "not documented" in msg, True)
+check("and raises the real possibility",
+      "application (client-credentials) token" in msg, True)
+plain = entra._explain(Refused(), "/deviceManagement/managedDevices")
+check("while the resource itself still names its permission",
+      "DeviceManagementManagedDevices.Read.All" in plain, True)
+
+print("\n--- total RAM, without Device inventory at all ---")
+entra._get_all = lambda path, params=None, base=None, advanced=False: [
+    {"id": "w1", "physicalMemoryInBytes": 34359738368},
+    {"id": "w2", "physicalMemoryInBytes": 0},
+    {"id": "ghost", "physicalMemoryInBytes": 17179869184}]
+r = entra.sync_physical_memory()
+check("stored for the one that reported", r["stored"], 1)
+check("a 0 is not stored as 0GB", r["reported_zero"], 1)
+check("a device ITAM does not have is counted, not invented", r["not_in_itam"], 1)
+check("and it lands where the card reads it",
+      db.q1("SELECT value FROM device_attributes WHERE device_id='w1' "
+            "AND name='Total RAM'")["value"], "34 GB")
 
 print("\n--- the person's card links the asset and shows its spec ---")
 db.execute("INSERT INTO users (upn, display_name, source) VALUES ('yael@x.com','Yael','entra')")
