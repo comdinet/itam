@@ -32,6 +32,79 @@
 </form>
 <p class="hint">Checking writes nothing. You see exactly what would happen first.</p>
 
+<h3>{{ specs_spec.label }}</h3>
+<p class="meta">{{ specs_spec.blurb }}</p>
+<table>
+  <thead><tr><th>Column</th><th>Required</th><th>What goes in it</th></tr></thead>
+  <tbody>
+  {% for name, required, help in specs_spec.columns %}
+    <tr><td class="mono">{{ name }}</td>
+        <td>{% if required %}<strong>yes</strong>{% else %}optional{% endif %}</td>
+        <td class="meta">{{ help }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="hint">Intune will not give up a Windows CPU model or total memory to an
+   app registration &mdash; there is no field for either on
+   <span class="mono">managedDevices</span>, and Device inventory refuses an
+   application token. Its own page has an <strong>Export</strong> button though.
+   Export CPU, Memory Info and Disk Drive, put the serial and the values into
+   these columns, and upload. Whatever you import shows against the asset
+   exactly as any synced attribute does.</p>
+<form class="inline-form" method="post"
+      action="/settings/import/device-specs/preview" enctype="multipart/form-data">
+  <a class="btn light" href="/settings/import/{{ specs_spec.id }}/template.csv">Download the template</a>
+  <input type="file" name="file" accept=".csv,text/csv" required>
+  <button type="submit">Check the file</button>
+</form>
+
+{% if specs_plan %}
+<h2>What this would do{% if specs_filename %} &mdash; <span class="mono">{{ specs_filename }}</span>{% endif %}</h2>
+<div class="cards">
+  <div class="card"><span class="label">Rows read</span>
+    <span class="big">{{ specs_plan.rows }}</span></div>
+  <div class="card"><span class="label">Devices to update</span>
+    <span class="big">{{ specs_plan.updates|length }}</span></div>
+  <div class="card"><span class="label">Rows skipped</span>
+    <span class="big">{{ specs_plan.skipped|length }}</span>
+    <span class="sub">{{ specs_plan.no_values }} had no values</span></div>
+</div>
+<table>
+  <thead><tr><th>Serial</th><th>Device</th><th>Values</th></tr></thead>
+  <tbody>
+  {% for u in specs_plan.updates %}
+    <tr><td class="mono">{{ u.serial }}</td><td>{{ u.device_name }}</td>
+        <td>{% for label, value in u.values %}
+              <span class="attr"><span class="attr-k">{{ label }}</span>{{ value }}</span>
+            {% endfor %}</td></tr>
+  {% else %}
+    <tr><td colspan="3" class="empty">Nothing in that file matches a device here.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% if specs_plan.skipped %}
+<h3>Skipped <span class="count">{{ specs_plan.skipped|length }}</span></h3>
+<p class="meta">A device arrives from Intune, never from a spreadsheet, so a
+  serial ITAM does not know is reported rather than created.</p>
+<table>
+  <thead><tr><th class="num">Line</th><th>Row</th><th>Why</th></tr></thead>
+  <tbody>
+  {% for sk in specs_plan.skipped %}
+    <tr><td class="num">{{ sk.line }}</td><td class="mono">{{ sk.what }}</td>
+        <td class="meta">{{ sk.why }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% if specs_plan.updates %}
+<form method="post" action="/settings/import/device-specs/apply"
+      onsubmit="return confirm('Store specs on {{ specs_plan.updates|length }} device(s)?')">
+  <input type="hidden" name="csv_text" value="{{ specs_csv }}">
+  <button type="submit">Import specs for {{ specs_plan.updates|length }} device(s)</button>
+</form>
+{% endif %}
+{% endif %}
+
 {% if plan %}
 <h2>What this would do{% if filename %} &mdash; <span class="mono">{{ filename }}</span>{% endif %}</h2>
 <div class="cards">

@@ -2061,7 +2061,8 @@ def settings_import(request: Request):
     return render(request, "settings_import.html",
                   templates_=list(imports.TEMPLATES.values()),
                   spec=imports.SUBSCRIPTION_SEATS, plan=None, csv_text="",
-                  filename="", section="import")
+                  filename="", specs_plan=None, specs_csv="", specs_filename="",
+                  specs_spec=imports.DEVICE_SPECS, section="import")
 
 
 @app.get("/settings/import/{template_id}/template.csv")
@@ -2102,7 +2103,62 @@ async def import_preview(request: Request):
     return render(request, "settings_import.html",
                   templates_=list(imports.TEMPLATES.values()),
                   spec=imports.SUBSCRIPTION_SEATS, plan=plan, csv_text=text,
-                  filename=filename, section="import")
+                  filename=filename, specs_spec=imports.DEVICE_SPECS,
+                  specs_plan=None, specs_csv="", specs_filename="",
+                  section="import")
+
+
+async def _read_upload(form) -> tuple[str, str, str | None]:
+    """(text, filename, complaint) from an uploaded file or a carried-over body."""
+    upload = form.get("file")
+    text = str(form.get("csv_text") or "")
+    filename = str(form.get("filename") or "")
+    if upload is not None and getattr(upload, "filename", ""):
+        raw = await upload.read()
+        if len(raw) > MAX_IMPORT_BYTES:
+            return "", "", (f"That file is {len(raw) // 1024} KB. The limit is "
+                            f"{MAX_IMPORT_BYTES // 1024} KB - split it up.")
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            return "", "", "That file is not UTF-8 text. Re-save it as CSV UTF-8."
+        filename = upload.filename
+    if not text.strip():
+        return "", "", "Choose a CSV file first"
+    return text, filename, None
+
+
+@app.post("/settings/import/device-specs/preview", response_class=HTMLResponse)
+async def import_specs_preview(request: Request):
+    form = await request.form()
+    text, filename, problem = await _read_upload(form)
+    if problem:
+        return back("/settings/import", problem)
+    try:
+        plan = imports.plan_device_specs(text)
+    except imports.ImportError_ as exc:
+        return back("/settings/import", str(exc))
+    return render(request, "settings_import.html",
+                  templates_=list(imports.TEMPLATES.values()),
+                  spec=imports.SUBSCRIPTION_SEATS, plan=None, csv_text="",
+                  filename="", specs_spec=imports.DEVICE_SPECS,
+                  specs_plan=plan, specs_csv=text, specs_filename=filename,
+                  section="import")
+
+
+@app.post("/settings/import/device-specs/apply")
+async def import_specs_apply(request: Request):
+    form = await request.form()
+    text = str(form.get("csv_text") or "")
+    if not text.strip():
+        return back("/settings/import", "Nothing to import")
+    try:
+        result = imports.apply_device_specs(text)
+    except imports.ImportError_ as exc:
+        return back("/settings/import", str(exc))
+    return back("/settings/import",
+                f"Stored {result['stored']} value(s) on {result['devices']} "
+                f"device(s); {result['skipped']} row(s) skipped")
 
 
 @app.post("/settings/import/subscription-seats/apply")

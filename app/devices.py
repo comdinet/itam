@@ -306,32 +306,19 @@ GROUP_STATES = [
 ]
 
 
-# --- the three facts worth showing ---------------------------------------
+# --- what a device reports about itself ----------------------------------
 #
-# A device carries a dozen inventory properties and nobody reads them. What is
-# actually asked of an asset is "what processor, how much memory, how big is the
-# disk", so that is what gets shown: three short values, cleaned up.
+# Whatever Intune has collected for a device is shown against its asset, under
+# the names it was collected under. On a Mac that is the custom attributes you
+# wrote the scripts for; on Windows it is whatever Device inventory yielded.
 #
-# Intune reports these under different names on different platforms - Windows
-# through Device inventory, macOS through whatever a custom attribute script
-# prints - so they are matched by shape rather than by an exact key.
-#
-# The values themselves are passed through untouched. Memory and disk get a GB
-# unit because the number arrives without one, and bytes are converted because
-# they are unreadable; nothing else is rewritten.
+# An earlier version tried to sort them into CPU/RAM/disk slots by matching the
+# attribute NAME. That silently dropped every attribute whose name did not
+# happen to contain "cpu" or "memory" - which is most of them, because you named
+# them, not Microsoft. Guessing at somebody else's naming is the same mistake as
+# guessing at their strings.
 
 import re as _re
-
-def _gb(value: str) -> int | None:
-    """A number of GB from a value that may or may not say so."""
-    match = _re.search(r"(\d+(?:[.,]\d+)?)", str(value or "").replace(",", ""))
-    if not match:
-        return None
-    try:
-        number = float(match.group(1))
-    except ValueError:
-        return None
-    return int(round(number)) if number else None
 
 
 def _bytes_to_gb(raw) -> int | None:
@@ -343,64 +330,26 @@ def _bytes_to_gb(raw) -> int | None:
     return int(round(total / 1_000_000_000)) if total else None
 
 
-def spec(attrs, storage_total=None) -> dict:
-    """CPU, RAM and disk from a device's attributes. Missing ones come back None.
-
-    `attrs` is any iterable of rows or (name, value) pairs.
-    """
-    pairs = []
-    for item in attrs or []:
-        if isinstance(item, (tuple, list)):
-            pairs.append((str(item[0] or ""), str(item[1] or "")))
-        else:
-            pairs.append((str(item["name"] or ""), str(item["value"] or "")))
-
-    cpu = ram = disk = None
-    for name, value in pairs:
-        key = name.lower()
-        if cpu is None and ("cpu" in key or "processor" in key) \
-                and not _re.search(r"cores?|speed|architect|count|logical", key):
-            # Verbatim. Whatever Intune says the processor is, is what it is.
-            if value.strip():
-                cpu = value.strip()
-        if ram is None and ("memory" in key or "ram" in key) \
-                and not _re.search(r"free|available|used|speed|slot|form", key):
-            found = _gb(value)
-            # A value in bytes rather than GB - some sources report either.
-            if found and found > 4096:
-                found = _bytes_to_gb(value)
-            if found:
-                ram = f"{found}GB"
-        if disk is None and _re.search(r"disk|drive|storage|ssd", key) \
-                and _re.search(r"size|capac|total", key):
-            found = _gb(value)
-            if found and found > 100_000:
-                found = _bytes_to_gb(value)
-            if found:
-                disk = f"{found}GB"
-
-    # Intune reports total storage for every managed device, whatever the
-    # platform, so the disk never depends on the inventory being switched on.
-    if disk is None:
-        found = _bytes_to_gb(storage_total)
-        if found:
-            disk = f"{found}GB"
-
-    return {"cpu": cpu, "ram": ram, "disk": disk}
-
-
 def specs_for(upn: str) -> dict:
-    """asset id -> spec, for the assets one person holds."""
+    """asset id -> {"attrs": [(name, value)...], "disk": "512GB"}.
+
+    The attributes are passed through in the order Intune reports them. Disk is
+    derived from the total storage Intune carries for every managed device, so
+    it is there whether or not any inventory has been collected - it is the one
+    fact that needs no script and no beta endpoint.
+    """
     rows = db.q(
         """SELECT d.asset_id, d.storage_total, da.name, da.value
            FROM devices d
            LEFT JOIN device_attributes da ON da.device_id = d.id
            WHERE d.asset_id IN (SELECT id FROM assets WHERE assigned_upn = ?)
            ORDER BY da.name""", (upn,))
-    grouped: dict = {}
+    out: dict = {}
     for row in rows:
-        entry = grouped.setdefault(row["asset_id"],
-                                   {"storage": row["storage_total"], "attrs": []})
+        entry = out.setdefault(row["asset_id"], {"attrs": [], "disk": None})
+        if entry["disk"] is None:
+            gb = _bytes_to_gb(row["storage_total"])
+            entry["disk"] = f"{gb}GB" if gb else None
         if row["name"]:
             entry["attrs"].append((row["name"], row["value"]))
-    return {aid: spec(e["attrs"], e["storage"]) for aid, e in grouped.items()}
+    return out

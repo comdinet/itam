@@ -44,7 +44,28 @@ SUBSCRIPTION_SEATS = {
     ],
 }
 
-TEMPLATES = {SUBSCRIPTION_SEATS["id"]: SUBSCRIPTION_SEATS}
+DEVICE_SPECS = {
+    "id": "device-specs",
+    "label": "Device specs",
+    "filename": "itam-device-specs.csv",
+    "blurb": ("What a machine is made of, keyed on its serial. For the Windows "
+              "facts Graph will not give up: Intune's Device inventory page has "
+              "an Export button, and this takes what comes out of it."),
+    "columns": [
+        ("Serial", True, "The serial number, as Intune reports it. This is what "
+                         "matches the device already in ITAM."),
+        ("CPU", False, "Processor model, e.g. Intel(R) Core(TM) Ultra 5 125U."),
+        ("RAM", False, "Total memory, e.g. 32GB or 32."),
+        ("Disk", False, "Disk size, e.g. 512GB or 512."),
+    ],
+    "example": [
+        ["4CN8RQ3", "Intel(R) Core(TM) Ultra 5 125U", "16GB", "512GB"],
+        ["2CH2N64", "Intel(R) Core(TM) Ultra 7 165U", "32GB", "1TB"],
+    ],
+}
+
+TEMPLATES = {SUBSCRIPTION_SEATS["id"]: SUBSCRIPTION_SEATS,
+             DEVICE_SPECS["id"]: DEVICE_SPECS}
 
 
 def template_csv(spec) -> str:
@@ -205,3 +226,64 @@ def apply_subscription_seats(text: str) -> dict:
                 (sub_id, upn, today))
     return {"created": created, "seats": len(plan["seats"]),
             "skipped": len(plan["skipped"]), "already": len(plan["already"])}
+
+
+def plan_device_specs(text: str) -> dict:
+    """What importing specs would do. Nothing is written.
+
+    Matched on serial, because that is the one identifier every export carries
+    and the one ITAM already holds. A serial ITAM does not know is reported, not
+    invented: a device arrives from Intune, never from a spreadsheet.
+    """
+    rows = _rows(text, DEVICE_SPECS)
+    fields = [("cpu", "CPU"), ("ram", "RAM"), ("disk", "Disk")]
+
+    known = {(r["serial_number"] or "").strip().lower(): r for r in
+             db.q("SELECT id, serial_number, device_name FROM devices "
+                  "WHERE TRIM(COALESCE(serial_number,'')) != ''")}
+    updates, skipped, empty = [], [], 0
+    seen = set()
+    for row in rows:
+        line = row["_line"]
+        serial = row.get("serial", "")
+        if not serial:
+            skipped.append({"line": line, "what": "(no serial)",
+                            "why": "no serial given"})
+            continue
+        device = known.get(serial.lower())
+        if not device:
+            skipped.append({"line": line, "what": serial,
+                            "why": "no device in ITAM has that serial"})
+            continue
+        if serial.lower() in seen:
+            skipped.append({"line": line, "what": serial,
+                            "why": "the same serial appears earlier in the file"})
+            continue
+        values = [(label, row.get(key, "").strip())
+                  for key, label in fields if row.get(key, "").strip()]
+        if not values:
+            empty += 1
+            continue
+        seen.add(serial.lower())
+        updates.append({"line": line, "serial": serial, "device_id": device["id"],
+                        "device_name": device["device_name"], "values": values})
+    return {"rows": len(rows), "updates": updates, "skipped": skipped,
+            "no_values": empty}
+
+
+def apply_device_specs(text: str) -> dict:
+    """Store the specs as device attributes, under the column they came from."""
+    plan = plan_device_specs(text)
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    stored = 0
+    for row in plan["updates"]:
+        for label, value in row["values"]:
+            db.execute(
+                """INSERT INTO device_attributes (device_id, name, value, collected_at)
+                   VALUES (?,?,?,?)
+                   ON CONFLICT(device_id, name) DO UPDATE SET
+                       value = excluded.value, collected_at = excluded.collected_at""",
+                (row["device_id"], label, value, now))
+            stored += 1
+    return {"devices": len(plan["updates"]), "stored": stored,
+            "skipped": len(plan["skipped"])}

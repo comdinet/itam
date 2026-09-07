@@ -158,6 +158,7 @@ check("and it lands where the card reads it",
 print("\n--- the person's card links the asset and shows its spec ---")
 db.execute("INSERT INTO users (upn, display_name, source) VALUES ('yael@x.com','Yael','entra')")
 db.execute("UPDATE assets SET assigned_upn='yael@x.com' WHERE id=?", (aid,))
+db.execute("UPDATE devices SET storage_total = 512110190592 WHERE id = 'w1'")
 from fastapi.testclient import TestClient          # noqa: E402
 from app import main                               # noqa: E402
 with TestClient(main.app) as client:
@@ -166,46 +167,40 @@ with TestClient(main.app) as client:
     page = client.get("/users/yael@x.com").text
     check("the asset is a link", f'href="/assets/{aid}"' in page, True)
     row = page.split(f'href="/assets/{aid}"', 1)[1].split("</td>", 1)[0]
-    check("the CPU as Intune reports it, not rewritten",
-          "<b>CPU</b> Intel(R) Core(TM) Ultra 7 165U" in row, True)
-    check("the disk", "<b>SSD</b> 512GB" in row, True)
-    check("the memory", "<b>RAM</b> 64GB" in row, True)
-    check("and nothing else - no raw property names",
-          "Memory Info /" in row or "Number of cores" in row, False)
-    check("only three facts, nothing else",
-          row.count("<span><b>"), 3)
+    # Whatever Intune collected, under the name it collected it under. The card
+    # does not second-guess the names: an earlier version matched them against
+    # "cpu|memory|ram" and silently dropped every attribute a Mac reports.
+    stored = db.q("SELECT name, value FROM device_attributes WHERE device_id='w1' "
+                  "ORDER BY name")
+    missing = [r["name"] for r in stored
+               if f"<b>{r['name']}</b> {r['value']}" not in row]
+    check("every attribute collected is on the card, under its own name",
+          missing, [])
+    check("and the disk, from the storage every device reports",
+          "<b>SSD</b>" in row, True)
 
-print("\n--- the three facts, from whatever names they arrive under ---")
+print("\n--- attributes are shown under the names they were collected under ---")
 from app import devices as dev                      # noqa: E402
-check("Windows, via Device inventory",
-      dev.spec([("CPU / Name", "Intel(R) Core(TM) Ultra 7 165U"),
-                ("CPU / Number of cores", "12"),
-                ("Memory Info / Total physical memory (GB)", "32"),
-                ("Disk Drive 1 / Size (GB)", "512")]),
-      {"cpu": "Intel(R) Core(TM) Ultra 7 165U", "ram": "32GB", "disk": "512GB"})
-check("the processor string is never rewritten",
-      dev.spec([("CPU / Name", "AMD Ryzen 7 PRO 7840U w/ Radeon 780M Graphics")])["cpu"],
-      "AMD Ryzen 7 PRO 7840U w/ Radeon 780M Graphics")
-check("macOS, via a custom attribute script",
-      dev.spec([("Processor", "Apple M4"), ("Total RAM", "16 GB"),
-                ("Disk capacity", "512 GB")]),
-      {"cpu": "Apple M4", "ram": "16GB", "disk": "512GB"})
-check("disk falls back to the storage Intune reports for every device",
-      dev.spec([("CPU / Name", "Apple M4")], storage_total=512110190592),
-      {"cpu": "Apple M4", "ram": None, "disk": "512GB"})
-check("only the unit is added; the number is not re-scaled",
-      dev.spec([("Memory Info / Total physical memory (GB)", "32")])["ram"], "32GB")
-check("bytes are read as bytes, not as a huge number of GB",
-      dev.spec([("Memory / Total", "34359738368")])["ram"], "34GB")
-check("free space is not mistaken for total",
-      dev.spec([("Memory Info / Free physical memory (GB)", "4"),
-                ("Memory Info / Total physical memory (GB)", "32")])["ram"], "32GB")
-check("core count is not mistaken for the model",
-      dev.spec([("CPU / Number of cores", "12")])["cpu"], None)
-check("nothing reported is nothing shown",
-      dev.spec([]), {"cpu": None, "ram": None, "disk": None})
-check("and a zero storage is not 0GB",
-      dev.spec([], storage_total=0)["disk"], None)
+db.execute("DELETE FROM device_attributes")
+db.execute("UPDATE devices SET storage_total = 512110190592 WHERE id = 'w1'")
+# A macOS custom attribute, named by whoever wrote the script - which is the
+# case an earlier version dropped, because the name says neither "cpu" nor
+# "memory" and it was matching on the name.
+for name, value in [("Hardware", "Apple M4 / 16GB"), ("Warranty until", "2027-03-01")]:
+    db.execute("""INSERT INTO device_attributes (device_id, name, value, collected_at)
+                  VALUES ('w1',?,?,'2026-09-07T00:00:00+00:00')""", (name, value))
+out = dev.specs_for("yael@x.com")[aid]
+check("both attributes survive, whatever they are called",
+      out["attrs"], [("Hardware", "Apple M4 / 16GB"), ("Warranty until", "2027-03-01")])
+check("and the disk comes from the storage every device reports",
+      out["disk"], "512GB")
+
+db.execute("DELETE FROM device_attributes")
+check("a device with no attributes still shows its disk",
+      dev.specs_for("yael@x.com")[aid], {"attrs": [], "disk": "512GB"})
+db.execute("UPDATE devices SET storage_total = 0 WHERE id = 'w1'")
+check("and a zero storage is nothing, not 0GB",
+      dev.specs_for("yael@x.com")[aid]["disk"], None)
 
 print()
 print("FAILURES:", ", ".join(fails) if fails else "none")
