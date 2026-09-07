@@ -1590,6 +1590,30 @@ def settings_devices_sync_memory():
     return back("/settings/devices", msg)
 
 
+@app.post("/settings/devices/sync-specs")
+def settings_devices_sync_specs():
+    if not entra.is_configured():
+        return back("/settings/devices", "Entra ID is not configured yet")
+    try:
+        r = run_job("specs")
+    except Exception as exc:
+        return back("/settings/devices",
+                    f"Reading CPU models failed: {why(exc)}"[:300])
+    if not r["devices"]:
+        return back("/settings/devices",
+                    "Endpoint Analytics returned nothing. It has to be enabled "
+                    "in Intune under Reports > Endpoint analytics, and a machine "
+                    "only appears once it has reported.")
+    msg = f"Read {r['devices']} device(s), stored a CPU model for {r['cpu_models']}"
+    if r["ram_filled"]:
+        msg += f", filled RAM for {r['ram_filled']} that had none"
+    if r["reported_no_cpu"]:
+        msg += f"; {r['reported_no_cpu']} reported no processor name"
+    if r["not_in_itam"]:
+        msg += f"; {r['not_in_itam']} are not devices ITAM holds"
+    return back("/settings/devices", msg)
+
+
 @app.post("/settings/devices/sync-hardware")
 def settings_devices_sync_hardware():
     if not entra.is_configured():

@@ -25,24 +25,35 @@
     <button type="submit" {% if not cfg.configured %}disabled{% endif %}>Sync macOS custom attributes</button></form>
   <form method="post" action="/settings/devices/sync-memory">
     <button type="submit" {% if not cfg.configured %}disabled{% endif %}>Sync total RAM</button></form>
+  <form method="post" action="/settings/devices/sync-specs">
+    <button type="submit" {% if not cfg.configured %}disabled{% endif %}>Sync CPU model</button></form>
   <form method="post" action="/settings/devices/sync-hardware">
     <button class="light" type="submit" {% if not cfg.configured %}disabled{% endif %}>Try Windows hardware inventory</button></form>
 </div>
-<p class="hint">Where a spec comes from, per platform:
-   <br><strong>Disk</strong> &mdash; already synced for every managed device, and
-   shown on the person's card without anything else being switched on.
-   <br><strong>Total RAM</strong> &mdash; <span class="mono">Sync total RAM</span>
-   above. One call for the whole fleet, on the endpoint the device sync already
-   uses. Intune reports 0 for some platforms; the result says how many gave a
-   real number.
-   <br><strong>CPU model</strong> &mdash; macOS through a custom attribute
-   script. On Windows there is no field for it on
-   <span class="mono">managedDevices</span> at all; it only exists in Intune's
-   <strong>Device inventory</strong>, which is a <em>beta and undocumented</em>
-   endpoint that <strong>refuses an application token on at least some
-   tenants</strong>. The button is there to try it, it is not in the nightly
-   run, and a refusal is reported as a failure rather than as an empty
-   inventory.</p>
+<p class="hint">A machine that reports its own spec through a custom attribute
+   script is shown exactly as it reported it, and nothing is added beside it -
+   a Mac tag that already reads <span class="mono">512G</span> does not need
+   ITAM's opinion on the disk next to it. Everything below is the fallback for
+   machines with no such script, which in practice means Windows:
+   <br><strong>CPU model</strong> &mdash; <span class="mono">Sync CPU
+   model</span> above, from
+   <span class="mono">userExperienceAnalyticsResourcePerformance</span>. It is
+   beta but documented, and application permission is the same
+   <span class="mono">DeviceManagementManagedDevices.Read.All</span> the device
+   sync uses. Endpoint Analytics has to be switched on and the machine has to
+   have reported, so a device can be legitimately absent; the result says how
+   many were.
+   <br><strong>Total RAM</strong> &mdash; <span class="mono">Sync total
+   RAM</span>, one call for the whole fleet. Intune reports 0 for some
+   platforms; the result says how many gave a real number, and the CPU sync
+   fills in any device this one left empty.
+   <br><strong>Disk</strong> &mdash; already synced for every managed device,
+   with no extra call and nothing to switch on.
+   <br><strong>Device inventory</strong> &mdash; the <em>beta and
+   undocumented</em> endpoint, which refuses an application token on this
+   tenant. It is kept only because it returns more than the three facts above.
+   It is not in the nightly run, and a refusal is reported as a failure rather
+   than as an empty inventory.</p>
 <p class="meta">Custom attributes synced:
   {% if attr_filter %}only <span class="mono">{{ attr_filter }}</span>
   {% else %}all of them{% endif %}

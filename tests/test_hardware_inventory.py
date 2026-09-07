@@ -196,9 +196,9 @@ check("no SSD line beside it - the tag already says 512G",
 print("\n--- a Windows machine, which has no script, shows RAM and disk ---")
 db.execute("DELETE FROM device_attributes")
 check("from the fields Graph carries for every managed device",
-      dev.specs_for("yael@x.com")[aid], [("RAM", "26GB"), ("SSD", "512GB")])
+      dev.specs_for("yael@x.com")[aid], [("SSD", "512GB"), ("RAM", "24GB")])
 check("and the devices list shows the same, not a blank cell",
-      dev.all_specs()["w1"], [("RAM", "26GB"), ("SSD", "512GB")])
+      dev.all_specs()["w1"], [("SSD", "512GB"), ("RAM", "24GB")])
 db.execute("UPDATE devices SET memory_total = NULL WHERE id = 'w1'")
 check("RAM is left out rather than shown as 0GB when Intune reports none",
       dev.specs_for("yael@x.com")[aid], [("SSD", "512GB")])
@@ -211,6 +211,62 @@ for name, value in [("CPU", "Intel(R) Core(TM) Ultra 7 165U"), ("RAM", "32GB"),
 check("all three, verbatim, no arithmetic",
       sorted(dev.specs_for("yael@x.com")[aid]),
       [("CPU", "Intel(R) Core(TM) Ultra 7 165U"), ("Disk", "1TB"), ("RAM", "32GB")])
+
+print("\n--- CPU model, from Endpoint Analytics ---")
+db.execute("DELETE FROM device_attributes")
+db.execute("UPDATE devices SET cpu_model = NULL, memory_total = NULL, "
+           "storage_total = 512110190592")
+db.execute("UPDATE devices SET azure_device_id = 'aad-w2' WHERE id = 'w2'")
+entra._get_all = lambda path, params=None, base=None, advanced=False: [
+    # matched on the Intune device id
+    {"deviceId": "w1", "deviceName": "ARIELPC",
+     "cpuDisplayName": "Intel(R) Core(TM) Ultra 7 165U", "totalRamInMB": 32768.0,
+     "machineType": "physical"},
+    # matched on the Entra device id, because "the id of the device" is not
+    # documented as to which id
+    {"deviceId": "aad-w2", "deviceName": "BOBBYDELL",
+     "cpuDisplayName": "12th Gen Intel(R) Core(TM) i5-1245U", "totalRamInMB": 16384.0},
+    # reported, but not a machine ITAM holds
+    {"deviceId": "nope", "deviceName": "SOMEONE-ELSE",
+     "cpuDisplayName": "AMD Ryzen 7", "totalRamInMB": 8192.0},
+]
+r = entra.sync_resource_performance()
+check("a CPU model per matched device", r["cpu_models"], 2)
+check("RAM filled for the ones that had none", r["ram_filled"], 2)
+check("and a stranger is counted, not invented", r["not_in_itam"], 1)
+check("matched on the Intune id",
+      db.q1("SELECT cpu_model FROM devices WHERE id='w1'")["cpu_model"],
+      "Intel(R) Core(TM) Ultra 7 165U")
+check("matched on the Entra id too",
+      db.q1("SELECT cpu_model FROM devices WHERE id='w2'")["cpu_model"],
+      "12th Gen Intel(R) Core(TM) i5-1245U")
+
+print("\n--- the three facts, in the units they are sold in ---")
+check("CPU verbatim, disk in decimal GB, RAM in binary GB",
+      dev.specs_for("yael@x.com")[aid],
+      [("CPU", "Intel(R) Core(TM) Ultra 7 165U"), ("SSD", "512GB"), ("RAM", "32GB")])
+check("32GB of RAM is not reported as 34GB",
+      dev._ram_gb(34359738368), 32)
+check("while a 512GB disk is 512, not 477",
+      dev._disk_gb(512110190592), 512)
+
+print("\n--- a real RAM figure is not overwritten by the analytics one ---")
+db.execute("UPDATE devices SET memory_total = 34359738368 WHERE id='w1'")
+entra._get_all = lambda path, params=None, base=None, advanced=False: [
+    {"deviceId": "w1", "cpuDisplayName": "Intel(R) Core(TM) Ultra 7 165U",
+     "totalRamInMB": 8192.0}]
+r = entra.sync_resource_performance()
+check("left alone, because managedDevices already answered", r["ram_filled"], 0)
+check("still 32GB",
+      dev.specs_for("yael@x.com")[aid][2], ("RAM", "32GB"))
+
+print("\n--- and a Mac's own tag still wins over all three ---")
+db.execute("""INSERT INTO device_attributes (device_id, name, value, collected_at)
+              VALUES ('w1','Mac HW TAG','MBA-13.6\"-M5/24/512G-10CPU-10GPU',
+                      '2026-09-07T00:00:00+00:00')""")
+check("the tag alone, no CPU/SSD/RAM beside it",
+      dev.specs_for("yael@x.com")[aid],
+      [("Mac HW TAG", 'MBA-13.6"-M5/24/512G-10CPU-10GPU')])
 
 print()
 print("FAILURES:", ", ".join(fails) if fails else "none")

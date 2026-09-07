@@ -50,6 +50,8 @@ JOBS = {
     "devices": ("Intune devices", _sync_devices),
     "attributes": ("Intune custom attributes (macOS)", lambda: entra.sync_custom_attributes()),
     "memory": ("Intune total RAM", lambda: entra.sync_physical_memory()),
+    "specs": ("CPU model from Endpoint Analytics",
+              lambda: entra.sync_resource_performance()),
     "hardware": ("Intune hardware inventory (Windows)",
                  lambda: entra.sync_hardware_inventory()),
     "holders": ("Asset holders from Intune", _fill_holders),
@@ -58,7 +60,7 @@ JOBS = {
 # Users first: groups, licences and devices all reference them. Holders last:
 # it needs both the people and the devices to be current.
 ORDER = ["users", "groups", "device_groups", "licences", "devices", "attributes",
-         "memory", "holders"]
+         "memory", "specs", "holders"]
 
 # Jobs kept out of the nightly run on purpose, with the reason. Anything else
 # missing from ORDER is an oversight, and a test says so.

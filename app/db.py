@@ -170,6 +170,7 @@ CREATE TABLE IF NOT EXISTS devices (
     storage_total    INTEGER,
     storage_free     INTEGER,
     memory_total     INTEGER,           -- physicalMemoryInBytes, from beta
+    cpu_model        TEXT,              -- cpuDisplayName, from Endpoint Analytics
     azure_device_id  TEXT,               -- Entra device object id (azureADDeviceId)
     ignored_reason   TEXT,               -- which rule hid it, recomputed on sync
     synced_at        TEXT,
@@ -516,6 +517,8 @@ def init_db():
         # device_attributes. The attribute table is what a script on the
         # machine said; these two are Graph's own fields, and mixing them
         # meant a Mac's own spec tag arrived next to ITAM's arithmetic.
+        if "cpu_model" not in dcols:
+            conn.execute("ALTER TABLE devices ADD COLUMN cpu_model TEXT")
         if "memory_total" not in dcols:
             conn.execute("ALTER TABLE devices ADD COLUMN memory_total INTEGER")
             conn.execute("DELETE FROM device_attributes WHERE name = 'Total RAM'")

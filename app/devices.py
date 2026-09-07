@@ -321,8 +321,8 @@ GROUP_STATES = [
 import re as _re
 
 
-def _bytes_to_gb(raw) -> int | None:
-    """Decimal GB, which is the number on the box: 512110190592 -> 512."""
+def _disk_gb(raw) -> int | None:
+    """Decimal GB, which is the number on a disk: 512110190592 -> 512."""
     try:
         total = int(raw or 0)
     except (TypeError, ValueError):
@@ -330,7 +330,22 @@ def _bytes_to_gb(raw) -> int | None:
     return int(round(total / 1_000_000_000)) if total else None
 
 
-def spec_of(attrs, memory_total=None, storage_total=None) -> list[tuple[str, str]]:
+def _ram_gb(raw) -> int | None:
+    """Binary GB, which is the number on a memory module.
+
+    RAM is sold and fitted in powers of two, so 34359738368 bytes is a 32GB
+    machine. Dividing by a billion gives 34, which is not a size anybody has
+    ever bought, and it makes the app look like it cannot count.
+    """
+    try:
+        total = int(raw or 0)
+    except (TypeError, ValueError):
+        return None
+    return int(round(total / (1024 ** 3))) if total else None
+
+
+def spec_of(attrs, cpu_model=None, memory_total=None,
+            storage_total=None) -> list[tuple[str, str]]:
     """What to show about one machine, as (label, value) pairs.
 
     Two sources, and they are never mixed. A custom attribute is a script on
@@ -339,21 +354,23 @@ def spec_of(attrs, memory_total=None, storage_total=None) -> list[tuple[str, str
     nothing is appended - a second opinion on the disk size beside it is noise,
     and when the two disagree it reads as a bug.
 
-    Only when no script reported anything does this fall back to the two
-    hardware fields Graph carries for every managed device. That is the Windows
-    case: there is no custom attribute mechanism for Windows, so RAM and disk
-    come from managedDevices itself. A CPU model arrives here as an attribute
-    or not at all - Graph has no field for it.
+    Only when no script reported anything does this fall back to the three
+    fields Graph carries: the processor name from Endpoint Analytics, and the
+    memory and storage from managedDevices. That is the Windows case, where
+    there is no custom attribute mechanism.
     """
     if attrs:
         return list(attrs)
     out = []
-    ram = _bytes_to_gb(memory_total)
-    if ram:
-        out.append(("RAM", f"{ram}GB"))
-    disk = _bytes_to_gb(storage_total)
+    cpu = (cpu_model or "").strip()
+    if cpu:
+        out.append(("CPU", cpu))
+    disk = _disk_gb(storage_total)
     if disk:
         out.append(("SSD", f"{disk}GB"))
+    ram = _ram_gb(memory_total)
+    if ram:
+        out.append(("RAM", f"{ram}GB"))
     return out
 
 
@@ -362,16 +379,17 @@ def _collect(rows, key: str) -> dict:
     seen: dict = {}
     for row in rows:
         entry = seen.setdefault(row[key], {
-            "attrs": [], "memory_total": row["memory_total"],
+            "attrs": [], "cpu_model": row["cpu_model"],
+            "memory_total": row["memory_total"],
             "storage_total": row["storage_total"]})
         if row["name"]:
             entry["attrs"].append((row["name"], row["value"]))
-    return {k: spec_of(v["attrs"], v["memory_total"], v["storage_total"])
-            for k, v in seen.items()}
+    return {k: spec_of(v["attrs"], v["cpu_model"], v["memory_total"],
+                       v["storage_total"]) for k, v in seen.items()}
 
 
 SPEC_SELECT = """SELECT d.id AS device_id, d.asset_id, d.storage_total,
-                        d.memory_total, da.name, da.value
+                        d.memory_total, d.cpu_model, da.name, da.value
                  FROM devices d
                  LEFT JOIN device_attributes da ON da.device_id = d.id"""
 

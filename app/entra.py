@@ -871,6 +871,65 @@ def sync_physical_memory() -> dict:
             "not_in_itam": unknown}
 
 
+def sync_resource_performance() -> dict:
+    """CPU model and total RAM, from Endpoint Analytics.
+
+    userExperienceAnalyticsResourcePerformance is where the processor name
+    lives: cpuDisplayName, documented, on beta, and readable with an
+    application token under DeviceManagementManagedDevices.Read.All - the
+    permission the device sync already uses. One paged list call for the whole
+    fleet, no per-device requests and no Device inventory.
+
+    It carries totalRamInMB as well, which is a second opinion on memory, so it
+    only fills a device that has none. Endpoint Analytics has to be switched on
+    and a machine has to have reported, so a device can legitimately be absent;
+    the result says how many, rather than looking like a failure.
+
+    Windows only, in practice - which is exactly the gap, since Macs report
+    their own spec through a custom attribute script.
+    """
+    rows = _get_all("/deviceManagement/userExperienceAnalyticsResourcePerformance",
+                    {"$top": "200"}, base=GRAPH_BETA)
+    cpus = rams = unmatched = no_cpu = 0
+    for row in rows:
+        # deviceId is documented only as "the id of the device", so which id is
+        # not stated. Every candidate is tried and the misses are counted: a
+        # bare 0 that could mean four different things is how the group sync
+        # wasted a day.
+        did = (row.get("deviceId") or "").strip()
+        name = (row.get("deviceName") or "").strip()
+        device = None
+        for sql, value in (("SELECT id FROM devices WHERE id = ?", did),
+                           ("SELECT id FROM devices WHERE azure_device_id = ?", did),
+                           ("SELECT id FROM devices WHERE device_name = ?", name)):
+            if value:
+                device = db.q1(sql, (value,))
+                if device:
+                    break
+        if not device:
+            unmatched += 1
+            continue
+        cpu = (row.get("cpuDisplayName") or "").strip()
+        if cpu:
+            db.execute("UPDATE devices SET cpu_model = ? WHERE id = ?",
+                       (cpu, device["id"]))
+            cpus += 1
+        else:
+            no_cpu += 1
+        try:
+            megabytes = float(row.get("totalRamInMB") or 0)
+        except (TypeError, ValueError):
+            megabytes = 0
+        if megabytes > 0 and not db.q1(
+                "SELECT 1 FROM devices WHERE id = ? AND COALESCE(memory_total,0) > 0",
+                (device["id"],)):
+            db.execute("UPDATE devices SET memory_total = ? WHERE id = ?",
+                       (int(megabytes * 1024 * 1024), device["id"]))
+            rams += 1
+    return {"devices": len(rows), "cpu_models": cpus, "ram_filled": rams,
+            "reported_no_cpu": no_cpu, "not_in_itam": unmatched}
+
+
 def inventory_categories(device_id: str) -> list[dict]:
     """Which inventory categories Intune holds for this device.
 
