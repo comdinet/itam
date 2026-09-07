@@ -447,7 +447,10 @@ Sync behaviour:
   Israel gets two monitors" is one pass. Serial-tracked machines are not
   offered: each is one specific piece of hardware.
 - **Person detail** — assign or return assets, grant or revoke licences, and a
-  first-year total cost (assets + 12 months of licences).
+  first-year total cost (assets + 12 months of licences). Each asset **links to
+  itself** and carries the spec Intune reports for it — CPU, memory, disk —
+  because "what has this person got" is usually really "how much RAM have they
+  got".
 - Filters and panels **stay where you put them**. Adding something from a
   filtered view comes back to that filtered view, not the whole list, and a
   panel you collapsed stays collapsed — remembered per browser, so it is your
@@ -915,6 +918,43 @@ four ways so you can tell a fixable case from a real one:
 | **Unknown person** | Intune names somebody ITAM has never seen: a guest, a disabled account, or someone outside your user filter. Nothing is invented. |
 | **Nobody** | Intune has no primary user either — a shared machine, or nobody has signed in. Genuinely unassigned. |
 
+### Where a spec comes from
+
+The CPU, memory and disk shown against an asset come from Intune, by two
+different routes depending on the platform. Both land in the same place, so
+everything downstream — the person's card, the device list, pricing criteria —
+works the same either way.
+
+| Platform | Route | Needs |
+|---|---|---|
+| macOS | **Custom attributes** — shell scripts whose stdout Intune stores | `DeviceManagementScripts.Read.All` |
+| Windows | **Device inventory** — CPU, Memory Info, Disk Drive and the rest | switched on in Intune |
+
+`Sync Windows hardware inventory` on **Settings → Devices** reads it. Attributes
+arrive named for where they came from, so nothing collides:
+
+```
+CPU / Name                                Intel(R) Core(TM) Ultra 7 165U
+CPU / Number of cores                     12
+Memory Info / Total physical memory (GB)  32
+Disk Drive 1 / Size (GB)                  512
+Disk Drive 2 / Size (GB)                  1024
+```
+
+A category reporting one thing is unnumbered; two disks become `Disk Drive 1`
+and `Disk Drive 2`.
+
+Two caveats worth knowing:
+
+- Device inventory is a **beta Graph endpoint and undocumented** — Microsoft
+  ships the categories in the portal without publishing the resource. So
+  nothing is hardcoded: the categories are read back from your tenant and
+  whatever properties come with them are stored. The result lists what it found,
+  and a tenant that does not serve it is told so in Graph's own words rather
+  than reported as an empty inventory.
+- It is **one call per device**, so `INTUNE_ATTRIBUTE_FILTER` applies here too.
+  Set it to `CPU, Memory*, Disk*` to fetch only those categories.
+
 ## Pricing by specification
 
 **Settings → Pricing** prices a fleet by spec instead of one machine at a time.
@@ -1344,7 +1384,7 @@ your backups as secrets either way.
 ./tests/run_all.sh
 ```
 
-Thirty suites covering money parsing, currencies and frozen rates, the
+Thirty-one suites covering money parsing, currencies and frozen rates, the
 dashboard's country filter, bulk assignment, CSV import, the Entra
 user/group/licence syncs, device groups, Intune devices, ignored devices and people,
 macOS custom attributes, OData filters and the dynamic-group syntax they get

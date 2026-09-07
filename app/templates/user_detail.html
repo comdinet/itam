@@ -38,10 +38,16 @@
     <th class="num">Cost</th><th></th></tr></thead>
   <tbody>
   {% for a in assets %}
-    <tr><td>{{ a.name }}</td><td>{{ a.category }}</td>
+    <tr><td><a href="/assets/{{ a.id }}">{{ a.name }}</a>
+          {% if a.device_name %}<div class="meta">{{ a.device_name }}</div>{% endif %}
+          {% for at in asset_attrs.get(a.id, []) %}
+            <span class="attr"><span class="attr-k">{{ at.name }}</span>{{ at.value }}</span>
+          {% endfor %}</td>
+        <td>{{ a.category }}</td>
         <td class="mono">{{ a.serial or '' }}</td><td>{{ a.assigned_on or '' }}</td>
-        <td class="num">{{ a.cost_cents|money }}
-          <span class="chip">{{ a.currency or currency }}</span></td>
+        <td class="num">{% if a.cost_cents %}{{ a.cost_cents|money }}
+            <span class="chip">{{ a.currency or currency }}</span>
+          {% else %}<span class="tag">no cost set</span>{% endif %}</td>
         <td class="row-actions">
           <form method="post" action="/assets/{{ a.id }}/unassign">
             <input type="hidden" name="redirect" value="{{ here_url }}">

@@ -48,14 +48,16 @@ JOBS = {
     "device_groups": ("Entra device groups", lambda: entra.sync_device_groups()),
     "licences": ("Entra ID licences", lambda: entra.sync_licenses()),
     "devices": ("Intune devices", _sync_devices),
-    "attributes": ("Intune custom attributes", lambda: entra.sync_custom_attributes()),
+    "attributes": ("Intune custom attributes (macOS)", lambda: entra.sync_custom_attributes()),
+    "hardware": ("Intune hardware inventory (Windows)",
+                 lambda: entra.sync_hardware_inventory()),
     "holders": ("Asset holders from Intune", _fill_holders),
 }
 
 # Users first: groups, licences and devices all reference them. Holders last:
 # it needs both the people and the devices to be current.
 ORDER = ["users", "groups", "device_groups", "licences", "devices", "attributes",
-         "holders"]
+         "hardware", "holders"]
 
 
 def _stamp() -> str:

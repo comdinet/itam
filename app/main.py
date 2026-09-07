@@ -846,7 +846,20 @@ def user_detail(request: Request, upn: str):
     user = db.q1(USER_COSTS + " WHERE u.upn = ?", (upn,))
     if not user:
         return HTMLResponse("<h1>404</h1><p>No such user.</p>", status_code=404)
-    assets = db.q("SELECT * FROM assets WHERE assigned_upn = ? ORDER BY category, name", (upn,))
+    assets = db.q(
+        """SELECT a.*, d.id AS device_id, d.device_name, d.model AS device_model
+           FROM assets a
+           LEFT JOIN devices d ON d.asset_id = a.id
+           WHERE a.assigned_upn = ? ORDER BY a.category, a.name""", (upn,))
+    # The spec Intune reports, per asset. Shown on the person's card because
+    # "what has Yael got" is usually really "how much RAM has Yael got".
+    asset_attrs: dict = {}
+    for row in db.q(
+            """SELECT d.asset_id, da.name, da.value
+               FROM device_attributes da JOIN devices d ON d.id = da.device_id
+               WHERE d.asset_id IN (SELECT id FROM assets WHERE assigned_upn = ?)
+               ORDER BY da.name""", (upn,)):
+        asset_attrs.setdefault(row["asset_id"], []).append(row)
     subs = db.q(
         """SELECT sub.*, ss.assigned_on FROM subscription_seats ss
            JOIN subscriptions sub ON sub.id = ss.subscription_id
@@ -867,7 +880,8 @@ def user_detail(request: Request, upn: str):
            FROM pooled_items p ORDER BY p.category, p.name""")
     return render(request, "user_detail.html", u=user, assets=assets, subs=subs,
                   spare=spare, avail_subs=avail_subs, entra_licences=entra_licences,
-                  pooled_held=pooled_held, pooled_available=pooled_available)
+                  pooled_held=pooled_held, pooled_available=pooled_available,
+                  asset_attrs=asset_attrs)
 
 
 @app.post("/users/{upn}/assign-asset")
@@ -1568,6 +1582,28 @@ def settings_devices_ignore_unlink():
     return back("/settings/devices",
                 f"Unlinked {n} ignored device(s). The assets themselves are "
                 f"untouched - delete them on the Assets page if that is what you meant.")
+
+
+@app.post("/settings/devices/sync-hardware")
+def settings_devices_sync_hardware():
+    if not entra.is_configured():
+        return back("/settings/devices", "Entra ID is not configured yet")
+    try:
+        r = run_job("hardware")
+    except Exception as exc:
+        return back("/settings/devices",
+                    f"Hardware inventory failed: {why(exc)}"[:300])
+    if r["unavailable"]:
+        return back("/settings/devices",
+                    f"Intune did not serve the inventory: {r['unavailable']}"[:300])
+    if not r["devices"]:
+        return back("/settings/devices",
+                    "No device returned any inventory. Device inventory has to be "
+                    "switched on in Intune, and only reports for Windows.")
+    msg = f"Read {r['devices']} device(s), stored {r['stored']} value(s)"
+    if r["categories"]:
+        msg += ". Categories seen: " + ", ".join(r["categories"])
+    return back("/settings/devices", msg[:400])
 
 
 @app.post("/settings/devices/fill-holders")

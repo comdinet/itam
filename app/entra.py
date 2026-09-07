@@ -796,6 +796,106 @@ def refresh_ignore_groups() -> int:
     return len(wanted)
 
 
+# --- Windows hardware inventory -----------------------------------------
+
+# Intune's Device inventory. Beta, and undocumented at the time of writing:
+# Microsoft ships the categories in the portal without publishing the resource.
+# So nothing here assumes a category id or a property name - the categories are
+# read back from the tenant and whatever properties come with them are stored.
+# Guessing at the shape is how the last three Graph details went wrong.
+INVENTORY_BASE = "/deviceManagement/managedDevices"
+
+
+def inventory_categories(device_id: str) -> list[dict]:
+    """Which inventory categories Intune holds for this device.
+
+    One call. Raises GraphError with Graph's own words if the endpoint is not
+    available on the tenant, rather than reporting an empty inventory.
+    """
+    return _get_all(f"{INVENTORY_BASE}('{device_id}')/deviceInventories",
+                    {}, base=GRAPH_BETA)
+
+
+def _flatten(instance: dict, prefix: str) -> dict:
+    """Property name -> value, from one inventory instance.
+
+    The shape is nested and undocumented, so this walks whatever comes back
+    rather than reaching for known keys. A single-instance category (the CPU)
+    yields "CPU / Name"; a multi-instance one (three disks) yields
+    "Disk Drive 1 / Size".
+    """
+    out = {}
+    for prop in instance.get("properties") or []:
+        name = str(prop.get("displayName") or prop.get("name") or "").strip()
+        value = prop.get("value")
+        if isinstance(value, dict):
+            value = value.get("value", value)
+        if name and value not in (None, "", []):
+            out[f"{prefix} / {name}"] = str(value)
+    return out
+
+
+def sync_hardware_inventory(limit: int | None = None) -> dict:
+    """Store Intune's hardware inventory as device attributes.
+
+    macOS reports CPU and RAM through a custom attribute script; Windows
+    reports it through Device inventory instead, so this lands the same facts in
+    the same place - device_attributes - and everything downstream (the person's
+    card, pricing criteria, the device list) works with no further change.
+
+    It is a call per device, so INTUNE_ATTRIBUTE_FILTER applies here too: only
+    the categories you want are fetched, and only their properties are kept.
+    """
+    wanted = attribute_patterns()
+    rows = db.q("SELECT id, device_name FROM devices WHERE ignored_reason IS NULL "
+                "ORDER BY device_name" + (f" LIMIT {int(limit)}" if limit else ""))
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+
+    stored = devices_seen = 0
+    unavailable = None
+    categories_found: set = set()
+    for row in rows:
+        try:
+            cats = inventory_categories(row["id"])
+        except GraphError as exc:
+            # The first refusal is the answer for every device: report it once
+            # rather than making the same failing call ninety-seven times.
+            unavailable = str(exc)
+            break
+        if not cats:
+            continue
+        devices_seen += 1
+        for cat in cats:
+            label = str(cat.get("displayName") or cat.get("id") or "").strip()
+            if not label:
+                continue
+            categories_found.add(label)
+            if wanted and not attribute_wanted(label, wanted):
+                continue
+            try:
+                full = _get_one(
+                    f"{INVENTORY_BASE}('{row['id']}')/deviceInventories('{cat.get('id')}')",
+                    {"$expand": "instances($expand=properties)"}, base=GRAPH_BETA)
+            except GraphError:
+                continue
+            instances = full.get("instances") or []
+            for n, inst in enumerate(instances, start=1):
+                prefix = label if len(instances) == 1 else f"{label} {n}"
+                for name, value in _flatten(inst, prefix).items():
+                    db.execute(
+                        """INSERT INTO device_attributes (device_id, name, value, collected_at)
+                           VALUES (?,?,?,?)
+                           ON CONFLICT(device_id, name) DO UPDATE SET
+                               value = excluded.value,
+                               collected_at = excluded.collected_at""",
+                        (row["id"], name, value, now))
+                    stored += 1
+
+    return {"devices": devices_seen, "stored": stored,
+            "categories": sorted(categories_found)[:12],
+            "unavailable": unavailable}
+
+
 # --- macOS custom attributes --------------------------------------------
 
 def attribute_patterns() -> list[str]:
