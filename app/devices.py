@@ -406,6 +406,49 @@ def all_specs() -> dict:
     return _collect(db.q(SPEC_SELECT), "device_id")
 
 
+# An asset made from a device that is now ignored is not kit anybody has. The
+# rule hides the device, but the asset created before the rule existed stays,
+# and counting it makes the estate look bigger than it is - four VMware rows
+# under Laptops, with nothing in the Windows or macOS breakdown to match.
+#
+# One predicate, used everywhere assets are counted or listed, because two
+# copies of this would drift and the page would disagree with itself. It takes
+# the alias so a caller's query can keep its own.
+def not_ignored(alias: str = "a") -> str:
+    return (f"{alias}.id NOT IN (SELECT asset_id FROM devices "
+            "WHERE ignored_reason IS NOT NULL AND asset_id IS NOT NULL)")
+
+
+NOT_IGNORED = not_ignored()
+
+
+def assets_from_ignored() -> list[dict]:
+    """The asset records left behind by devices that are now ignored.
+
+    Reported rather than removed: a cost or a holder on one of these means
+    somebody decided it was real, and an automatic cleanup that throws that
+    away is worse than the miscount it fixes.
+    """
+    return db.q(
+        """SELECT a.id, a.name, a.category, a.cost_cents, a.assigned_upn,
+                  d.device_name, d.ignored_reason
+           FROM assets a JOIN devices d ON d.asset_id = a.id
+           WHERE d.ignored_reason IS NOT NULL
+           ORDER BY a.category, a.name""")
+
+
+def delete_assets_from_ignored() -> dict:
+    """Delete those records, except any that were priced or handed to somebody."""
+    deleted = kept = 0
+    for row in assets_from_ignored():
+        if row["cost_cents"] or row["assigned_upn"]:
+            kept += 1
+            continue
+        db.execute("DELETE FROM assets WHERE id = ?", (row["id"],))
+        deleted += 1
+    return {"deleted": deleted, "kept": kept}
+
+
 # --- the Assets overview --------------------------------------------------
 
 def _os_family(raw: str | None) -> str | None:
@@ -441,7 +484,8 @@ def overview() -> list[dict]:
             """SELECT COUNT(*) AS total,
                       SUM(CASE WHEN TRIM(COALESCE(assigned_upn,'')) != ''
                                THEN 1 ELSE 0 END) AS assigned
-               FROM assets WHERE category = ?""", (category,))
+               FROM assets a WHERE a.category = ? AND """
+               + NOT_IGNORED, (category,))
         return {"total": row["total"] or 0, "assigned": row["assigned"] or 0}
 
     def by_os(category: str) -> list[dict]:

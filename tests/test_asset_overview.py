@@ -56,7 +56,10 @@ def breakdown(label):
     return {b["name"]: b["count"] for b in widget(label)["breakdown"]}
 
 
-check("laptops counted per machine", widget("Laptops")["total"], 5)
+# Five Laptop rows exist, but one was made from a device the rules ignore, so
+# four is the number of laptops anybody has.
+check("laptops counted per machine, minus the ignored VM",
+      widget("Laptops")["total"], 4)
 check("and how many are handed out", widget("Laptops")["assigned"], 3)
 check("the families are a breakdown inside the Laptops widget, not their own cards",
       breakdown("Laptops"), {"macOS": 2, "Windows": 2})
@@ -129,6 +132,60 @@ with TestClient(main.app) as client:
     page = client.get("/assets/c/Laptop").text
     check("the laptops are listed", "Machine 0" in page, True)
     check("with the old cards, not the overview", "Tracked by serial" in page, True)
+
+print("\n--- a device the rules ignore is not kit, and neither is its asset ---")
+# The screenshot that started this: four VMware20,1 rows under Laptops, with
+# nothing in the Windows breakdown to match them. The rule hid the devices; the
+# assets made before the rule existed stayed, and got counted.
+vm_ids = []
+for i in range(4):
+    vid = db.execute("""INSERT INTO assets (name, category, cost_cents)
+                        VALUES ('VMware20,1','Laptop',0)""")
+    vm_ids.append(vid)
+    db.execute("""INSERT INTO devices (id, device_name, model, os, asset_id,
+                                       ignored_reason)
+                  VALUES (?,?,'VMware20,1','Windows',?,'Model contains "vmware"')""",
+               (f"vm{i}", f"WIN10VM{i}", vid))
+
+real = db.q1("""SELECT COUNT(*) c FROM assets a WHERE a.category='Laptop'
+                 AND a.id NOT IN (SELECT asset_id FROM devices
+                                  WHERE ignored_reason IS NOT NULL
+                                    AND asset_id IS NOT NULL)""")["c"]
+check("the Laptops total counts only real machines",
+      widget("Laptops")["total"], real)
+check("which is four fewer than the asset rows",
+      db.q1("SELECT COUNT(*) c FROM assets WHERE category='Laptop'")["c"] - real, 5)
+check("and the breakdown still adds up to real machines",
+      sum(breakdown("Laptops").values()), 4)
+
+with TestClient(main.app) as client:
+    client.post("/login", data={"username": "admin", "password": "Overview!2345"},
+                follow_redirects=False)
+    check("they are not listed under Laptop either",
+          "VMware20,1" in client.get("/assets/c/Laptop").text, False)
+    check("nor found by a search that names them",
+          "VMware20,1" in client.get("/assets?q=VMware").text, False)
+    check("the dashboard does not name them", "VMware" in client.get("/").text, False)
+    check("and the settings count agrees with the Assets page",
+          f'{real + db.q1("SELECT COUNT(*) c FROM assets a WHERE a.category != \'Laptop\' AND a.id NOT IN (SELECT asset_id FROM devices WHERE ignored_reason IS NOT NULL AND asset_id IS NOT NULL)")["c"]}'
+          in client.get("/settings").text, True)
+
+    print("\n--- but the records are still reachable, and removable ---")
+    page = client.get("/settings/devices").text
+    check("the devices page names them", "Assets made from ignored devices" in page, True)
+    stranded = db.q1("""SELECT COUNT(*) c FROM assets a JOIN devices d ON d.asset_id = a.id
+                        WHERE d.ignored_reason IS NOT NULL""")["c"]
+    check("every one of them", f"Delete {stranded} asset(s) made from ignored devices"
+          in page, True)
+
+    # One of them was priced by hand: somebody decided it was real.
+    db.execute("UPDATE assets SET cost_cents = 50000 WHERE id = ?", (vm_ids[0],))
+    client.post("/settings/devices/ignore/delete-assets", follow_redirects=False)
+    left = db.q("SELECT id FROM assets WHERE name = 'VMware20,1'")
+    check("the three worthless ones are gone", len(left), 1)
+    check("the priced one is kept, not silently destroyed",
+          left[0]["id"], vm_ids[0])
+
 
 print()
 print("FAILURES:", ", ".join(fails) if fails else "none")

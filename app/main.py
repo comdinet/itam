@@ -682,12 +682,14 @@ def dashboard(request: Request, country: str = ""):
     totals = db.q1(
         """SELECT (SELECT COUNT(*) FROM users)                                       AS users,
                   (SELECT COUNT(*) FROM users WHERE account_enabled = 0)             AS users_disabled,
-                  (SELECT COUNT(*) FROM assets)                                      AS assets,
-                  (SELECT COALESCE(SUM(((cost_cents * COALESCE(rate_micro,1000000) + 500000) / 1000000)),0)
-                     FROM assets)                                                   AS asset_value,
-                  (SELECT COUNT(*) FROM assets WHERE assigned_upn IS NULL)           AS spare,
-                  (SELECT COALESCE(SUM(((cost_cents * COALESCE(rate_micro,1000000) + 500000) / 1000000)),0)
-                     FROM assets WHERE assigned_upn IS NULL)                        AS spare_value,
+                  (SELECT COUNT(*) FROM assets a WHERE """ + devices.NOT_IGNORED + """)   AS assets,
+                  (SELECT COALESCE(SUM(((a.cost_cents * COALESCE(a.rate_micro,1000000) + 500000) / 1000000)),0)
+                     FROM assets a WHERE """ + devices.NOT_IGNORED + """)  AS asset_value,
+                  (SELECT COUNT(*) FROM assets a WHERE a.assigned_upn IS NULL
+                     AND """ + devices.NOT_IGNORED + """)               AS spare,
+                  (SELECT COALESCE(SUM(((a.cost_cents * COALESCE(a.rate_micro,1000000) + 500000) / 1000000)),0)
+                     FROM assets a WHERE a.assigned_upn IS NULL
+                     AND """ + devices.NOT_IGNORED + """)               AS spare_value,
                   (SELECT COALESCE(SUM(spare),0) FROM pooled_items)                  AS shelf_units,
                   (SELECT COUNT(*) FROM subscriptions)                               AS subs,
                   (SELECT COALESCE(SUM(((sub.monthly_cost_cents * COALESCE(sub.rate_micro,1000000) + 500000) / 1000000)),0)
@@ -921,8 +923,11 @@ def asset_rows(q: str = "", category: str = "", state: str = "", priced: str = "
         where.append("COALESCE(a.cost_cents,0) = 0")
     elif priced == "priced":
         where.append("COALESCE(a.cost_cents,0) > 0")
-    if where:
-        sql += " WHERE " + " AND ".join(where)
+    # A device the ignore rules hide is not kit, so neither is the asset that
+    # was made from it before the rule existed. Those records are still there
+    # to be deleted - under Settings > Devices, where the rule lives.
+    where.append(devices.NOT_IGNORED)
+    sql += " WHERE " + " AND ".join(where)
     return db.q(sql + " ORDER BY a.category, a.name", params)
 
 
@@ -1435,7 +1440,9 @@ def settings_devices(request: Request, q: str = "", os_filter: str = "",
     # One line per OS, in the same widget: a card each would be a wall of cards
     # that grows every time somebody enrols a different kind of thing.
     unlinked_here = sum(1 for d in rows if not d["asset_id"])
+    stranded = devices.assets_from_ignored()
     return render(request, "settings_devices.html", devices=rows, attrs=attrs,
+                  stranded=stranded,
                   oses=oses, q=q, os_filter=os_filter, linked=linked,
                   show_ignored=show_ignored,
                   ignore_rules=devices.rules(), ignore_fields=devices.FIELDS,
@@ -1574,6 +1581,17 @@ def settings_devices_ignore_unlink():
     return back("/settings/devices",
                 f"Unlinked {n} ignored device(s). The assets themselves are "
                 f"untouched - delete them on the Assets page if that is what you meant.")
+
+
+@app.post("/settings/devices/ignore/delete-assets")
+def settings_devices_ignore_delete_assets():
+    r = devices.delete_assets_from_ignored()
+    msg = f"Deleted {r['deleted']} asset(s) made from ignored devices."
+    if r["kept"]:
+        msg += (f" Kept {r['kept']} that carry a cost or are assigned to "
+                "somebody - those were decided by hand, so they are yours to "
+                "delete on the Assets page.")
+    return back("/settings/devices", msg)
 
 
 @app.post("/settings/devices/sync-memory")
@@ -2342,7 +2360,7 @@ def rule_detail(request: Request, rule_id: int):
 def settings_general(request: Request):
     counts = db.q1(
         """SELECT (SELECT COUNT(*) FROM users)         AS people,
-                  (SELECT COUNT(*) FROM assets)        AS assets,
+                  (SELECT COUNT(*) FROM assets a WHERE """ + devices.NOT_IGNORED + """) AS assets,
                   (SELECT COUNT(*) FROM subscriptions) AS subs,
                   (SELECT COUNT(*) FROM auth_users)    AS logins,
                   (SELECT COUNT(*) FROM api_keys WHERE active = 1) AS api_keys,

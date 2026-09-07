@@ -216,6 +216,32 @@
   </form>
   {% endif %}
 
+  {% if stranded %}
+  <h3>Assets made from ignored devices <span class="count">{{ stranded|length }}</span></h3>
+  <p>These are counted nowhere &mdash; the Assets page and every total already
+     leave out an asset whose device is ignored, which is why a VMware row no
+     longer appears under Laptops. What is left is the records themselves.</p>
+  <form method="post" action="/settings/devices/ignore/delete-assets" class="inline-form"
+        onsubmit="return confirm('Delete {{ stranded|length }} asset record(s) made from ignored devices?')">
+    <button class="danger" type="submit">Delete {{ stranded|length }} asset(s) made from ignored devices</button>
+    <span class="hint">Any that carry a cost or are assigned to somebody are
+      kept &mdash; somebody decided those were real, so they stay yours to
+      delete by hand.</span>
+  </form>
+  <table>
+    <thead><tr><th>Asset</th><th>Category</th><th>From device</th><th>Because</th></tr></thead>
+    <tbody>
+    {% for a in stranded %}
+      <tr><td><a href="/assets/{{ a.id }}">{{ a.name }}</a>
+            {% if a.cost_cents or a.assigned_upn %}<span class="tag">kept</span>{% endif %}</td>
+          <td>{{ a.category }}</td>
+          <td>{{ a.device_name or '' }}</td>
+          <td class="meta">{{ a.ignored_reason }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
   {% if ignored %}
   <h3>Currently hidden <span class="count">{{ ignored|length }}</span></h3>
   <table>
