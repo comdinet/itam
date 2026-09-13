@@ -139,11 +139,11 @@
   <tbody>
   {% for a in assets %}
     <tr>
-      <td>{{ a.name }}{% if a.status %} <span class="tag">{{ a.status }}</span>{% endif %}</td>
+      <td>{{ a.name }}{% if a.status %} <span class="pill warn">{{ a.status }}</span>{% endif %}</td>
       {% if not category %}<td>{{ a.category }}</td>{% endif %}
       <td class="mono">{{ a.serial or '' }}</td>
       <td>{% if a.assigned_upn %}<a href="/users/{{ a.assigned_upn }}">{{ a.display_name }}</a>
-          {% else %}<span class="tag spare">spare</span>{% endif %}</td>
+          {% else %}<span class="pill flat">spare</span>{% endif %}</td>
       <td class="num">{% if a.cost_cents %}{{ a.cost_cents|money }}
           <span class="chip">{{ a.currency or currency }}</span>
         {% else %}<span class="tag">no cost set</span>{% endif %}</td>

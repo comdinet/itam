@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% from "_history.html" import timeline %}
+{% block title %}Activity &middot; ITAM{% endblock %}
+{% block body %}
+<h1>Activity</h1>
+<p class="meta">Every change to every asset, newest first &mdash; what happened,
+  when, and who did it. A sync, a pricing rule and an API key are named the same
+  way a person is.{% if upn %} Filtered to changes that handed kit to, or took it
+  from, <span class="mono">{{ upn }}</span>.
+  <a href="/activity">Show everything</a>.{% endif %}</p>
+{{ timeline(history, show_asset=True) }}
+{% endblock %}

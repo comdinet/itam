@@ -17,7 +17,7 @@ or reassigns anything.
 """
 import datetime
 
-from . import db
+from . import db, events
 
 # field -> (label, SQL expression). Whitelisted: the field name reaches SQL.
 FIELDS = {
@@ -228,11 +228,14 @@ def apply(group) -> dict:
                 or (asset["currency"] or "") != (group["currency"] or "")):
             # The price carries its currency and frozen rate with it, or the
             # asset would inherit a number with no idea what it is in.
+            before = db.q1("SELECT * FROM assets WHERE id = ?", (asset["id"],))
             db.execute(
                 """UPDATE assets SET cost_cents = ?, currency = ?, rate_micro = ?
                    WHERE id = ?""",
                 (group["price_cents"], group["currency"], group["rate_micro"],
                  asset["id"]))
+            events.changed(asset["id"], before, "rule",
+                           f"pricing group \u201c{group['name']}\u201d")
             changed += 1
     return {"changed": changed}
 

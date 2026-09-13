@@ -1,30 +1,61 @@
+/* Remedio's brand primitives. The tokens below are derived from these and
+   nothing else picks a colour of its own - one place to change, and light and
+   dark cannot drift apart.
+
+   Deliberately not the RevOps gradient-and-glass canvas: that system is for
+   dashboard artifacts, and a translucent tile over a gradient is the wrong
+   surface for a table of 118 machines. Solid surfaces, brand colour. */
 :root {
-  --bg: #f6f7f9; --panel: #fff; --ink: #14181f; --muted: #667085;
-  --line: #e3e6eb; --accent: #2563eb; --accent-ink: #fff;
-  --warn-bg: #fff8e6; --warn-line: #f0c674; --ok: #067647; --danger: #b42318;
+  --navy: #0e1c37;      --navy-tint: #1a3255;
+  --blue: #2c6af9;      --blue-tint: #8fb1ff;
+  --cyan: #06e6ff;      --cyan-tint: #6cedff;
+  --purple: #8247cc;    --purple-tint: #d7afff;
+  --green: #2cc675;     --green-tint: #82eec0;
+  --red: #ff5b61;       --red-tint: #fcadd0;
+  --amber: #ffb648;
+  --soft-grey: #eaf0fe;
+}
+
+:root {
+  --bg: var(--soft-grey); --panel: #fff; --ink: var(--navy); --muted: #5a6a85;
+  --line: #d7e0f4; --accent: var(--blue); --accent-ink: #fff;
+  --accent-soft: #e3ebff;
+  --warn-bg: #fff6e6; --warn-line: var(--amber); --ok: #1d9c5c; --danger: #d33a41;
+  --rail: var(--navy); --rail-ink: rgba(255,255,255,.72); --rail-on: var(--cyan);
+  --rail-line: rgba(255,255,255,.12); --rail-soft: rgba(255,255,255,.09);
+  --shadow: 0 1px 2px rgba(14,28,55,.06), 0 10px 28px -18px rgba(14,28,55,.35);
 }
 @media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #12151a; --panel: #1a1f27; --ink: #e8ebf0; --muted: #98a2b3;
-    --line: #2b323c; --accent: #5b8df6; --accent-ink: #0d1117;
-    --warn-bg: #2a2415; --warn-line: #6b5518; --ok: #4ade80; --danger: #f97066;
+  :root:not([data-theme="light"]) {
+    --bg: #080f1f; --panel: #101a2e; --ink: #eaf0fe; --muted: #93a3bd;
+    --line: #1e2c47; --accent: var(--blue-tint); --accent-ink: var(--navy);
+    --accent-soft: rgba(44,106,249,.18);
+    --warn-bg: #2a2415; --warn-line: var(--amber); --ok: var(--green);
+    --danger: var(--red);
+    --rail: #0b1426; --rail-ink: rgba(234,240,254,.66); --rail-on: var(--cyan);
+    --rail-line: rgba(255,255,255,.09); --rail-soft: rgba(255,255,255,.07);
+    --shadow: 0 1px 2px rgba(0,0,0,.35), 0 10px 28px -16px rgba(0,0,0,.6);
   }
+}
+:root[data-theme="dark"] {
+  --bg: #080f1f; --panel: #101a2e; --ink: #eaf0fe; --muted: #93a3bd;
+  --line: #1e2c47; --accent: var(--blue-tint); --accent-ink: var(--navy);
+  --accent-soft: rgba(44,106,249,.18);
+  --warn-bg: #2a2415; --warn-line: var(--amber); --ok: var(--green);
+  --danger: var(--red);
+  --rail: #0b1426; --rail-ink: rgba(234,240,254,.66); --rail-on: var(--cyan);
+  --rail-line: rgba(255,255,255,.09); --rail-soft: rgba(255,255,255,.07);
+  --shadow: 0 1px 2px rgba(0,0,0,.35), 0 10px 28px -16px rgba(0,0,0,.6);
 }
 * { box-sizing: border-box; }
 body {
   margin: 0; background: var(--bg); color: var(--ink);
-  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font: 500 14.5px/1.55 "Figtree", "Inter", -apple-system, BlinkMacSystemFont,
+        "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
-header {
-  display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
-  padding: 14px 28px; background: var(--panel); border-bottom: 1px solid var(--line);
-}
-.brand { font-weight: 700; letter-spacing: .04em; text-decoration: none; color: var(--ink); }
-nav { display: flex; gap: 18px; flex-wrap: wrap; }
-nav a { color: var(--muted); text-decoration: none; font-weight: 500; }
-nav a:hover { color: var(--accent); }
-main { max-width: 1120px; margin: 0 auto; padding: 28px; }
-footer { max-width: 1120px; margin: 0 auto; padding: 8px 28px 40px; color: var(--muted); font-size: 13px; }
+footer { padding: 28px 0 8px; margin-top: 32px; border-top: 1px solid var(--line);
+    color: var(--muted); font-size: 13px; }
 h1 { font-size: 24px; margin: 0 0 4px; }
 h2 { font-size: 17px; margin: 32px 0 10px; }
 a { color: var(--accent); }
@@ -63,10 +94,24 @@ a.card .big { color: var(--ink); }
     padding: 1px 0; }
 .card .breakdown strong { color: var(--ink); font-weight: 600; }
 
+/* A table is one line per row and scrolls inside its own box. A country
+   called "United Kingdom of Great Britain and Northern Ireland" used to wrap
+   over five lines and shove the rest of the columns off the page; now it is
+   one line, clipped, and the box scrolls rather than the window. */
+.table-scroll { overflow-x: auto; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); }
+.table-scroll table { border: 0; border-radius: 0; box-shadow: none;
+    min-width: max-content; }
 table { width: 100%; border-collapse: collapse; background: var(--panel);
         border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
-th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; }
+th, td { text-align: left; padding: 10px 13px; border-bottom: 1px solid var(--line);
+    vertical-align: middle; white-space: nowrap; max-width: 320px;
+    overflow: hidden; text-overflow: ellipsis; }
+td.wrap, th.wrap { white-space: normal; max-width: 420px; }
+tbody tr:hover td { background: var(--accent-soft); }
+th { font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+    color: var(--muted); font-weight: 600; position: sticky; top: 0;
+    background: var(--panel); z-index: 1; }
 tbody tr:last-child td { border-bottom: 0; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 tr.disabled { opacity: .62; }
@@ -185,3 +230,182 @@ textarea.wide-input { font-family: ui-monospace, SFMono-Regular, Menlo, monospac
    sets display:flex, which outranks the browser's own [hidden] rule, so a
    field marked hidden would otherwise still be visible. */
 [hidden] { display: none !important; }
+
+
+/* --- history -------------------------------------------------------------
+   A rail with a dot per event. The point is scanning: when, who, and what
+   moved from what to what, without reading a sentence. */
+.timeline { list-style: none; margin: 12px 0 0; padding: 0 0 0 18px;
+    border-left: 2px solid var(--line); }
+.timeline .event { position: relative; padding: 0 0 18px 16px; }
+.timeline .event::before { content: ""; position: absolute; left: -25px; top: 5px;
+    width: 10px; height: 10px; border-radius: 50%; background: var(--line);
+    box-shadow: 0 0 0 3px var(--bg); }
+.timeline .event.created::before { background: var(--ok); }
+.timeline .event.deleted::before { background: var(--danger); }
+.timeline .when { color: var(--muted); font-size: 12px;
+    font-variant-numeric: tabular-nums; }
+.timeline .when .utc { margin-left: 5px; opacity: .6; }
+.timeline .who { font-weight: 600; }
+.timeline .via { color: var(--muted); font-size: 12px; }
+.timeline .gone { text-decoration: line-through; color: var(--muted); }
+.timeline .changes { list-style: none; margin: 5px 0 0; padding: 0; font-size: 13px; }
+.timeline .changes li { padding: 1px 0; }
+.timeline .field { display: inline-block; min-width: 92px; color: var(--muted); }
+.timeline .old { text-decoration: line-through; color: var(--muted); }
+.timeline .arrow { color: var(--muted); margin: 0 3px; }
+.timeline .new { font-weight: 600; }
+.timeline .cleared { color: var(--muted); font-style: italic; }
+.timeline .empty { color: var(--muted); padding-left: 16px; }
+
+
+/* --- the shell -----------------------------------------------------------
+   A rail on the left, the way every tool this is compared against is laid
+   out: the sections stay visible and named while you work, instead of being
+   a row of words you re-read at the top of every page. */
+.shell { display: flex; min-height: 100vh; }
+.skip { position: absolute; left: -9999px; }
+.skip:focus { left: 8px; top: 8px; z-index: 9; background: var(--panel);
+    padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line); }
+
+.side { width: 228px; flex: 0 0 228px; background: var(--rail);
+    border-right: 1px solid var(--line); display: flex; flex-direction: column;
+    position: sticky; top: 0; height: 100vh; transition: width .14s ease, flex-basis .14s ease; }
+.side-top { display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 14px 12px 18px; }
+.brand { font-weight: 700; letter-spacing: .06em; text-decoration: none;
+    color: var(--ink); font-size: 15px; }
+.rail-toggle, .rail-open, .theme { background: none; border: 0; cursor: pointer;
+    color: var(--muted); padding: 6px; border-radius: 8px; display: inline-flex; }
+.rail-toggle:hover, .rail-open:hover, .theme:hover { background: var(--accent-soft);
+    color: var(--accent); }
+.rail-toggle svg, .rail-open svg, .theme svg { width: 18px; height: 18px; }
+
+.side nav { display: flex; flex-direction: column; gap: 2px; padding: 4px 10px; }
+.side nav a { display: flex; align-items: center; gap: 11px; padding: 8px 10px;
+    border-radius: 8px; color: var(--muted); text-decoration: none;
+    font-weight: 500; font-size: 14px; white-space: nowrap; }
+.side nav a svg { width: 18px; height: 18px; flex: 0 0 18px; }
+.side nav a:hover { background: var(--accent-soft); color: var(--ink); }
+.side nav a.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.side-sep { height: 1px; background: var(--line); margin: 8px 10px; }
+.side-foot { margin-top: auto; padding: 12px 14px 16px; display: flex;
+    align-items: center; justify-content: space-between; gap: 8px;
+    border-top: 1px solid var(--line); }
+.side-foot .me { display: flex; align-items: center; gap: 8px; font-size: 13px;
+    color: var(--ink); text-decoration: none; min-width: 0; }
+.side-foot .me span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.avatar { width: 26px; height: 26px; flex: 0 0 26px; border-radius: 50%;
+    background: var(--accent); color: var(--accent-ink); font-size: 11px;
+    font-weight: 700; display: grid; place-items: center; }
+.side-foot .link { font-size: 12px; }
+
+/* Collapsed: icons only, the labels and the footer name fold away. */
+.shell.rail .side { width: 62px; flex-basis: 62px; }
+.shell.rail .side nav a span, .shell.rail .brand,
+.shell.rail .side-foot .me span:last-child, .shell.rail .side-foot form { display: none; }
+.shell.rail .side-top { justify-content: center; padding-left: 14px; }
+.shell.rail .rail-toggle svg { transform: rotate(180deg); }
+.shell.rail .side nav a { justify-content: center; padding-left: 8px; padding-right: 8px; }
+.shell.rail .side-foot { justify-content: center; }
+
+.content { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.topbar { display: flex; align-items: center; gap: 8px; padding: 12px 28px 4px; }
+.omni { flex: 1 1 auto; max-width: 520px; margin: 0 auto 0 0; position: relative;
+    display: flex; align-items: center; }
+.omni svg { width: 16px; height: 16px; position: absolute; left: 11px;
+    color: var(--muted); pointer-events: none; }
+.omni input { width: 100%; padding: 8px 12px 8px 34px; border-radius: 9px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+    font: inherit; font-size: 13.5px; }
+.omni input:focus { outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft); }
+.rail-open { display: none; }
+.theme .moon { display: none; }
+:root[data-theme="dark"] .theme .sun { display: none; }
+:root[data-theme="dark"] .theme .moon { display: inline; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .theme .sun { display: none; }
+  :root:not([data-theme="light"]) .theme .moon { display: inline; }
+}
+main { max-width: 1180px; width: 100%; margin: 0 auto; padding: 4px 28px 28px; }
+
+@media (max-width: 860px) {
+  .side { position: fixed; z-index: 8; transform: translateX(-100%);
+      transition: transform .16s ease; }
+  .shell.open .side { transform: none; }
+  .rail-open { display: inline-flex; }
+  .topbar { justify-content: space-between; }
+}
+
+
+/* --- status pills ---------------------------------------------------------
+   Colour means one thing everywhere: green is fine, amber is attention, red
+   is wrong, and neutral is simply a fact. Never decorative. */
+.pill { display: inline-flex; align-items: center; gap: 5px; font-size: 12px;
+    font-weight: 600; padding: 2px 9px; border-radius: 999px; white-space: nowrap;
+    background: var(--accent-soft); color: var(--accent); }
+.pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%;
+    background: currentColor; }
+.pill.good { background: rgba(44,198,117,.16); color: var(--ok); }
+.pill.warn { background: rgba(255,182,72,.18); color: #a9741a; }
+.pill.bad { background: rgba(255,91,97,.16); color: var(--danger); }
+.pill.flat { background: var(--line); color: var(--muted); }
+:root[data-theme="dark"] .pill.warn { color: var(--amber); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .pill.warn { color: var(--amber); }
+}
+
+/* The rail is the one dark surface in light mode, the way every tool this is
+   measured against is laid out. */
+.side { background: var(--rail); border-right-color: var(--rail-line); }
+.side .brand { color: #fff; }
+.side nav a { color: var(--rail-ink); }
+.side nav a:hover { background: var(--rail-soft); color: #fff; }
+.side nav a.on { background: var(--rail-soft); color: var(--rail-on); }
+.side-sep { background: var(--rail-line); }
+.side-foot { border-top-color: var(--rail-line); }
+.side-foot .me { color: var(--rail-ink); }
+.side-foot .me:hover { color: #fff; }
+.side-foot .link { color: var(--rail-ink); }
+.rail-toggle { color: var(--rail-ink); }
+.rail-toggle:hover { background: var(--rail-soft); color: #fff; }
+.avatar { background: var(--cyan); color: var(--navy); }
+
+.card { box-shadow: var(--shadow); }
+
+
+/* --- record header and tabs ----------------------------------------------
+   The shape every tool in this category uses for a single record: the name,
+   then the four facts you came to check as chips beside it, then tabs for
+   everything else. You should not have to scroll to learn who has it. */
+.record-head { display: flex; flex-wrap: wrap; gap: 16px 28px; align-items: flex-end;
+    justify-content: space-between; margin: 0 0 4px; }
+.record-title h1 { margin: 0; }
+.record-title .meta { margin: 2px 0 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 10px; }
+.chip { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 7px 13px; min-width: 116px; box-shadow: var(--shadow); }
+.chip-k { display: block; font-size: 10.5px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--muted); }
+.chip-v { display: block; margin-top: 3px; font-size: 13.5px; font-weight: 600; }
+
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 20px 0 0;
+    border-bottom: 1px solid var(--line); }
+.tabs button { background: none; border: 0; border-bottom: 2px solid transparent;
+    padding: 9px 13px; margin-bottom: -1px; cursor: pointer; color: var(--muted);
+    font: inherit; font-size: 13.5px; font-weight: 600; }
+.tabs button:hover { color: var(--ink); }
+.tabs button.on { color: var(--accent); border-bottom-color: var(--accent); }
+.tabs .count { font-size: 12px; }
+section[data-pane] { padding-top: 16px; }
+
+
+/* A <select> sizes itself to its longest option, and one of the countries is
+   "United Kingdom of Great Britain and Northern Ireland" - 401px of it, which
+   pushed the whole page sideways on a phone. Nothing may be wider than what
+   contains it. */
+input, select, textarea, button { max-width: 100%; }
+.filters, .inline-form, .grid-form { min-width: 0; }
+.filters select, .filters input { min-width: 0; flex: 0 1 auto;
+    text-overflow: ellipsis; }

@@ -100,6 +100,26 @@ with TestClient(main.app) as client:
     check("private-mode writes cannot throw the page over",
           page.count("catch (e)") >= 2, True)
 
+print("\n--- the rail lights the section you are in, and only that one ---")
+with TestClient(main.app) as client:
+    client.post("/login", data={"username": "admin", "password": "UiTest!2345"},
+                follow_redirects=False)
+
+    def lit(path):
+        page = client.get(path).text
+        rail = page.split('<nav>', 1)[1].split('</nav>', 1)[0]
+        return [chunk.split('>')[-1] for chunk in rail.split('class="on"')[:-1]] \
+            and [seg.split("<span>")[1].split("</span>")[0]
+                 for seg in rail.split('class="on"')[1:]]
+
+    check("Assets, from a category page", lit("/assets/c/Laptop"), ["Assets"])
+    check("Assets, from one asset", lit("/assets/1"), ["Assets"])
+    check("Settings, from a page deep inside it", lit("/settings/devices"), ["Settings"])
+    check("Dashboard, on the dashboard", lit("/"), ["Dashboard"])
+    # "/" is a prefix of every path. Treating it as one lit Dashboard on every
+    # page that matched nothing else, which is worse than lighting nothing.
+    check("and nothing at all on a page under no section", lit("/search?q=x"), [])
+
 print()
 print("FAILURES:", ", ".join(fails) if fails else "none")
 sys.exit(1 if fails else 0)

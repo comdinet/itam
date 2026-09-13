@@ -14,8 +14,8 @@ from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse,
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import (api, auth, db, devices, entra, fx, imports, jobs, people, pooled,
-               pricing, rules, saml, settings)
+from . import (api, auth, db, devices, entra, events, fx, imports, jobs, people,
+               pooled, pricing, rules, saml, settings)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -145,6 +145,12 @@ def here(request: Request) -> str:
     return request.url.path + (f"?{query}" if query else "")
 
 
+def actor(request: Request) -> str | None:
+    """Whose name goes on a history entry."""
+    me = getattr(request.state, "user", None)
+    return me["username"] if me else None
+
+
 def render(request: Request, name: str, **ctx):
     ctx.setdefault("flash", request.query_params.get("msg"))
     # Every template can send a form back to exactly where the user was.
@@ -153,6 +159,22 @@ def render(request: Request, name: str, **ctx):
     # and a Jinja global holding the function would render the function itself.
     ctx.setdefault("currency", settings.currency())
     ctx.setdefault("me", getattr(request.state, "user", None))
+    # Which rail item is lit. The dashboard is only itself: "/" is a prefix of
+    # every path, so treating it as one lit Dashboard on every page that
+    # matched nothing else. A page under no section lights nothing.
+    path = request.url.path
+    section = ""
+    if path == "/":
+        section = "/"
+    else:
+        for candidate in ("/users", "/assets", "/subscriptions", "/activity",
+                          "/settings"):
+            if path == candidate or path.startswith(candidate + "/"):
+                section = candidate
+                break
+    ctx.setdefault("nav_here", section)
+    ctx.setdefault("q_global", request.query_params.get("q", "")
+                   if path == "/search" else "")
     return templates.TemplateResponse(request, name, ctx)
 
 
@@ -961,8 +983,10 @@ def user_detail(request: Request, upn: str):
 
 
 @app.post("/users/{upn}/assign-asset")
-def assign_asset(upn: str, asset_id: int = Form(...)):
+def assign_asset(request: Request, upn: str, asset_id: int = Form(...)):
+    before = db.q1("SELECT * FROM assets WHERE id = ?", (asset_id,))
     db.execute("UPDATE assets SET assigned_upn = ?, assigned_on = ? WHERE id = ?", (upn, today(), asset_id))
+    events.changed(asset_id, before, "ui", actor(request))
     return back(f"/users/{upn}", "Asset assigned")
 
 
@@ -1068,27 +1092,30 @@ def assets_category(request: Request, category: str, q: str = "", state: str = "
 
 
 @app.post("/assets/new")
-def asset_new(name: str = Form(...), category: str = Form("Other"), cost: str = Form("0"),
+def asset_new(request: Request, name: str = Form(...),
+              category: str = Form("Other"), cost: str = Form("0"),
               currency: str = Form(""), serial: str = Form(""),
               purchased_on: str = Form(""), notes: str = Form(""),
               assigned_upn: str = Form(""), redirect: str = Form("/assets")):
     code, rate, problem = pick_currency(currency)
     if problem:
         return back(redirect, problem)
-    db.execute(
+    asset_id = db.execute(
         """INSERT INTO assets (name, category, cost_cents, currency, rate_micro, serial,
                                purchased_on, notes, assigned_upn, assigned_on)
            VALUES (?,?,?,?,?,?,?,?,?,?)""",
         (name.strip(), category, db.to_cents(cost), code, rate, serial.strip() or None,
          purchased_on or None, notes.strip() or None, assigned_upn or None,
          today() if assigned_upn else None))
+    events.created(asset_id, "ui", actor(request))
     return back(redirect, f"{category} added")
 
 
 # --- pooled assets (counted, no serials) ---------------------------------
 
 @app.post("/assets/pooled/new")
-def pooled_new(name: str = Form(...), category: str = Form("Peripheral"),
+def pooled_new(request: Request, name: str = Form(...),
+               category: str = Form("Peripheral"),
                unit_cost: str = Form("0"), currency: str = Form(""),
                vendor: str = Form(""), notes: str = Form(""), serial: str = Form(""),
                redirect: str = Form("/assets")):
@@ -1101,12 +1128,13 @@ def pooled_new(name: str = Form(...), category: str = Form("Peripheral"),
     # interchangeable. Rather than refuse the form, record what was described:
     # one record for that one unit.
     if serial.strip():
-        db.execute(
+        asset_id = db.execute(
             """INSERT INTO assets (name, category, cost_cents, currency, rate_micro,
                                    serial, notes)
                VALUES (?,?,?,?,?,?,?)""",
             (name.strip(), category, db.to_cents(unit_cost), code, rate,
              serial.strip(), notes.strip() or None))
+        events.created(asset_id, "ui", actor(request))
         return back(redirect, f"{category} added, tracked by its serial")
     item_id = pooled.create(name, category, db.to_cents(unit_cost), vendor, notes,
                             currency=code, rate_micro=rate)
@@ -1185,18 +1213,29 @@ def asset_page(request: Request, asset_id: int):
     if not a:
         return HTMLResponse("<h1>404</h1><p>No such asset.</p>", status_code=404)
     users = db.q("SELECT upn, display_name FROM users ORDER BY display_name")
-    return render(request, "asset_edit.html", a=a, users=users,
-                  statuses=db.ASSET_STATUSES,
+    device = db.q1("SELECT * FROM devices WHERE asset_id = ?", (asset_id,))
+    holder = db.q1("SELECT display_name FROM users WHERE upn = ?",
+                   (a["assigned_upn"],)) if a["assigned_upn"] else None
+    return render(request, "asset_edit.html", a=a, users=users, device=device,
+                  holder=holder["display_name"] if holder else None,
+                  spec=devices.spec_of(
+                      [(r["name"], r["value"]) for r in db.q(
+                          "SELECT name, value FROM device_attributes WHERE device_id = ?",
+                          (device["id"],))] if device else [],
+                      device["cpu_model"] if device else None,
+                      device["memory_total"] if device else None,
+                      device["storage_total"] if device else None),
+                  statuses=db.ASSET_STATUSES, history=events.for_asset(asset_id),
                   currencies=fx.listing(active_only=True))
 
 
 @app.post("/assets/{asset_id}/edit")
-def asset_edit(asset_id: int, name: str = Form(...), category: str = Form("Other"),
+def asset_edit(request: Request, asset_id: int, name: str = Form(...),
+               category: str = Form("Other"),
                cost: str = Form("0"), currency: str = Form(""), serial: str = Form(""),
                purchased_on: str = Form(""), notes: str = Form(""),
                assigned_upn: str = Form(""), status: str = Form("")):
-    prev = db.q1("SELECT assigned_upn, currency, rate_micro FROM assets WHERE id = ?",
-                 (asset_id,))
+    prev = db.q1("SELECT * FROM assets WHERE id = ?", (asset_id,))
     if not prev:
         return back("/assets", "No such asset")
     code, rate, problem = pick_currency(currency)
@@ -1216,19 +1255,84 @@ def asset_edit(asset_id: int, name: str = Form(...), category: str = Form("Other
          purchased_on or None, notes.strip() or None, assigned_upn or None,
          status.strip() or None,
          1 if changed else 0, today() if assigned_upn else None, asset_id))
+    events.changed(asset_id, prev, "ui", actor(request))
     return back("/assets", "Asset updated")
 
 
 @app.post("/assets/{asset_id}/unassign")
-def asset_unassign(asset_id: int, redirect: str = Form("/assets")):
+def asset_unassign(request: Request, asset_id: int, redirect: str = Form("/assets")):
+    before = db.q1("SELECT * FROM assets WHERE id = ?", (asset_id,))
     db.execute("UPDATE assets SET assigned_upn = NULL, assigned_on = NULL WHERE id = ?", (asset_id,))
+    events.changed(asset_id, before, "ui", actor(request))
     return back(redirect, "Asset returned to spares")
 
 
 @app.post("/assets/{asset_id}/delete")
-def asset_delete(asset_id: int, redirect: str = Form("/assets")):
+def asset_delete(request: Request, asset_id: int, redirect: str = Form("/assets")):
+    events.deleted(asset_id, "ui", actor(request))
     db.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
     return back(redirect, "Asset deleted")
+
+
+@app.get("/search", response_class=HTMLResponse)
+def search(request: Request, q: str = ""):
+    """One box for the thing you have in your hand.
+
+    A serial, a hostname, a name, a UPN, an item. Whatever you were about to
+    open three pages to find. Matching is a plain substring on the fields
+    somebody would actually read off a label or an email.
+    """
+    needle = q.strip()
+    if not needle:
+        return render(request, "search.html", q="", groups=[])
+    like = f"%{needle}%"
+    groups = []
+
+    assets = db.q(
+        """SELECT a.id, a.name, a.category, a.serial, a.status, a.assigned_upn,
+                  u.display_name
+           FROM assets a LEFT JOIN users u ON u.upn = a.assigned_upn
+           WHERE (a.name LIKE ? OR COALESCE(a.serial,'') LIKE ?
+                  OR COALESCE(a.assigned_upn,'') LIKE ?)
+             AND """ + devices.NOT_IGNORED + """
+           ORDER BY a.category, a.name LIMIT 25""", (like, like, like))
+    if assets:
+        groups.append({"label": "Assets", "kind": "asset", "rows": assets})
+
+    users = db.q(
+        """SELECT upn, display_name, department, country FROM users
+           WHERE (display_name LIKE ? OR upn LIKE ?) AND ignored_reason IS NULL
+           ORDER BY display_name LIMIT 25""", (like, like))
+    if users:
+        groups.append({"label": "People", "kind": "person", "rows": users})
+
+    items = db.q(
+        """SELECT id, name, category, vendor FROM pooled_items
+           WHERE name LIKE ? ORDER BY category, name LIMIT 25""", (like,))
+    if items:
+        groups.append({"label": "Counted items", "kind": "item", "rows": items})
+
+    machines = db.q(
+        """SELECT id, device_name, model, serial_number, os, asset_id FROM devices
+           WHERE (device_name LIKE ? OR COALESCE(serial_number,'') LIKE ?
+                  OR COALESCE(model,'') LIKE ?)
+             AND ignored_reason IS NULL
+           ORDER BY device_name LIMIT 25""", (like, like, like))
+    if machines:
+        groups.append({"label": "Intune devices", "kind": "device", "rows": machines})
+
+    subs = db.q("SELECT id, name, vendor FROM subscriptions WHERE name LIKE ? "
+                "ORDER BY name LIMIT 25", (like,))
+    if subs:
+        groups.append({"label": "Subscriptions", "kind": "sub", "rows": subs})
+
+    return render(request, "search.html", q=needle, groups=groups)
+
+
+@app.get("/activity", response_class=HTMLResponse)
+def activity(request: Request, upn: str = ""):
+    """Everything that has happened, newest first."""
+    return render(request, "activity.html", history=events.recent(200, upn), upn=upn)
 
 
 # --- subscriptions -------------------------------------------------------
@@ -1793,6 +1897,9 @@ def _asset_from_device(d) -> tuple[int, int | None]:
         db.execute(
             "UPDATE assets SET cost_cents = ?, currency = ?, rate_micro = ? WHERE id = ?",
             (hit["price_cents"], hit["currency"], hit["rate_micro"], asset_id))
+    # After pricing, so the opening entry shows what it was actually created
+    # with rather than a zero that was corrected a line later.
+    events.created(asset_id, "sync")
     return asset_id, hit
 
 

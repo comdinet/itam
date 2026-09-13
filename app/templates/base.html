@@ -5,28 +5,79 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}ITAM{% endblock %}</title>
 <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}">
+<script>
+  // Before the stylesheet paints, or a dark-mode user gets a white flash on
+  // every page load. Both of these are per-browser preferences, not shared
+  // state, so localStorage rather than the database.
+  (function () {
+    try {
+      var t = localStorage.getItem('itam.theme');
+      if (t) document.documentElement.setAttribute('data-theme', t);
+    } catch (e) { /* private mode */ }
+  })();
+</script>
 </head>
 <body>
-<header>
-  <a class="brand" href="/">ITAM</a>
+<a class="skip" href="#content">Skip to content</a>
+<div class="shell" id="shell">
+<aside class="side" id="side">
+  <div class="side-top">
+    <a class="brand" href="/">ITAM</a>
+    <button class="rail-toggle" type="button" aria-label="Collapse navigation">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M15 6l-6 6 6 6"/></svg>
+    </button>
+  </div>
   <nav>
-    <a href="/">Dashboard</a>
-    <a href="/users">People</a>
-    <a href="/assets">Assets</a>
-    <a href="/subscriptions">Subscriptions</a>
-    <a href="/settings">Settings</a>
+    <a href="/" class="{{ 'on' if nav_here == '/' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg><span>Dashboard</span></a>
+    <a href="/users" class="{{ 'on' if nav_here == '/users' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/><path d="M16 5.2a3.2 3.2 0 0 1 0 6"/><path d="M17.5 15.2c2 .6 3.2 2.3 3.2 4.8"/></svg><span>People</span></a>
+    <a href="/assets" class="{{ 'on' if nav_here == '/assets' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="5" width="19" height="12" rx="2"/><path d="M8 20h8"/><path d="M12 17v3"/></svg><span>Assets</span></a>
+    <a href="/subscriptions" class="{{ 'on' if nav_here == '/subscriptions' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9h18"/><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 14h4"/></svg><span>Subscriptions</span></a>
+    <a href="/activity" class="{{ 'on' if nav_here == '/activity' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l2.5-7 4 14 2.5-7H21"/></svg><span>Activity</span></a>
+    <div class="side-sep"></div>
+    <a href="/settings" class="{{ 'on' if nav_here == '/settings' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1v.2a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 7 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H1.2a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 2.9 7a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H7a1.6 1.6 0 0 0 1-1.5V1a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V7a1.6 1.6 0 0 0 1.5 1h.2a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg><span>Settings</span></a>
   </nav>
   {% if me %}
-  <div class="who">
-    <a href="/account">{{ me.username }}</a>
+  <div class="side-foot">
+    <a class="me" href="/account">
+      <span class="avatar">{{ me.username[:2]|upper }}</span><span>{{ me.username }}</span></a>
     <form method="post" action="/logout"><button class="link">Sign out</button></form>
   </div>
   {% endif %}
-</header>
-<main>
-  {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
-  {% block body %}{% endblock %}
-</main>
+</aside>
+<div class="content">
+  <div class="topbar">
+    <button class="rail-open" type="button" aria-label="Show navigation">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" aria-hidden="true">
+        <path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+    <form class="omni" method="get" action="/search" role="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input name="q" value="{{ q_global|default('') }}" autocomplete="off"
+             placeholder="Find a serial, a person, a machine&hellip;" aria-label="Search">
+    </form>
+    <button class="theme" type="button" aria-label="Switch light or dark">
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="4.2"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2
+        M4.9 4.9l1.5 1.5M17.6 17.6l1.5 1.5M19.1 4.9l-1.5 1.5M6.4 17.6l-1.5 1.5"/></svg>
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></svg>
+    </button>
+  </div>
+  <main id="content">
+    {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+    {% block body %}{% endblock %}
+    <footer>Costs in {{ currency }}. Assets are one-off cost; subscriptions are
+      per-seat per-month.</footer>
+  </main>
+</div>
+</div>
 <script>
   // Remember which panels you collapsed. A panel is per-browser preference,
   // not shared state, so it lives in localStorage rather than the database.
@@ -34,6 +85,86 @@
   // The key is an explicit data-panel, not the summary text: several summaries
   // carry a count ("Ignored devices 7 of 14"), and a panel keyed on that would
   // forget itself the moment the number moved.
+  (function () {
+    // Every table scrolls inside its own box rather than pushing the window
+    // sideways. Done here rather than in twenty-five templates: the rule is
+    // "no table, ever" and a rule enforced in one place cannot be forgotten
+    // by the next template somebody writes.
+    document.querySelectorAll('table').forEach(function (t) {
+      if (t.closest('.table-scroll')) return;
+      var box = document.createElement('div');
+      box.className = 'table-scroll';
+      t.parentNode.insertBefore(box, t);
+      box.appendChild(t);
+    });
+  })();
+
+  (function () {
+    // Tabs on a record. Server-rendered panes, shown and hidden - no fetch, so
+    // switching tabs cannot fail or wait. The hash is set so a reload, or a
+    // link you send somebody, lands on the tab you were looking at.
+    var tabs = document.querySelector('[data-tabs]');
+    if (tabs) {
+      var buttons = tabs.querySelectorAll('button[data-tab]');
+      function show(name) {
+        var found = false;
+        buttons.forEach(function (b) {
+          var on = b.getAttribute('data-tab') === name;
+          b.classList.toggle('on', on);
+          if (on) found = true;
+        });
+        document.querySelectorAll('section[data-pane]').forEach(function (p) {
+          p.hidden = p.getAttribute('data-pane') !== name;
+        });
+        return found;
+      }
+      buttons.forEach(function (b) {
+        b.addEventListener('click', function () {
+          var name = b.getAttribute('data-tab');
+          show(name);
+          history.replaceState(null, '', '#' + name);
+        });
+      });
+      // An unknown or missing hash leaves the server's own choice alone.
+      if (location.hash) show(location.hash.slice(1));
+    }
+  })();
+
+  (function () {
+    // The rail's width, and light or dark. Same reasoning as the panels below.
+    var shell = document.getElementById('shell');
+    try {
+      if (localStorage.getItem('itam.rail') === '1') shell.classList.add('rail');
+    } catch (e) { /* private mode */ }
+
+    function store(key, value) {
+      try { localStorage.setItem(key, value); } catch (e) { /* private mode */ }
+    }
+
+    var toggle = document.querySelector('.rail-toggle');
+    if (toggle) toggle.addEventListener('click', function () {
+      var railed = shell.classList.toggle('rail');
+      store('itam.rail', railed ? '1' : '0');
+    });
+
+    var open = document.querySelector('.rail-open');
+    if (open) open.addEventListener('click', function () {
+      shell.classList.toggle('open');
+    });
+
+    var theme = document.querySelector('.theme');
+    if (theme) theme.addEventListener('click', function () {
+      var root = document.documentElement;
+      // With nothing set, the OS is deciding - so flip away from whatever it
+      // currently shows rather than from an attribute that is not there.
+      var now = root.getAttribute('data-theme')
+        || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      var next = now === 'dark' ? 'light' : 'dark';
+      root.setAttribute('data-theme', next);
+      store('itam.theme', next);
+    });
+  })();
+
   (function () {
     var KEY = 'itam.panels';
     var saved = {};
@@ -55,6 +186,5 @@
     });
   })();
 </script>
-<footer>Costs in {{ currency }}. Assets are one-off cost; subscriptions are per-seat per-month.</footer>
 </body>
 </html>

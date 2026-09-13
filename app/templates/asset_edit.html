@@ -1,12 +1,52 @@
 {% extends "base.html" %}
+{% from "_history.html" import timeline %}
 {% from "_currency.html" import currency_select %}
 {% block title %}{{ a.name }} &middot; ITAM{% endblock %}
 {% block body %}
 <p class="crumb"><a href="/assets">&larr; Assets</a></p>
-<h1>Edit asset</h1>
-<p class="meta">{{ a.category }}{% if a.serial %} &middot; <span class="mono">{{ a.serial }}</span>{% endif %}
-  {%- if a.status %} &middot; <span class="tag">{{ a.status }}</span>{% endif %}</p>
 
+<div class="record-head">
+  <div class="record-title">
+    <h1>{{ a.name }}</h1>
+    <p class="meta">{{ a.category }}{% if a.serial %} &middot;
+      <span class="mono">{{ a.serial }}</span>{% endif %}</p>
+  </div>
+  <div class="chips">
+    <div class="chip">
+      <span class="chip-k">Status</span>
+      <span class="chip-v">{% if a.status %}<span class="pill warn">{{ a.status }}</span>
+        {% else %}<span class="pill good">In service</span>{% endif %}</span>
+    </div>
+    <div class="chip">
+      <span class="chip-k">Assigned to</span>
+      <span class="chip-v">{% if a.assigned_upn %}<a href="/users/{{ a.assigned_upn }}">{{ holder or a.assigned_upn }}</a>
+        {% else %}<span class="pill flat">spare</span>{% endif %}</span>
+    </div>
+    <div class="chip">
+      <span class="chip-k">Cost</span>
+      <span class="chip-v">{% if a.cost_cents %}{{ a.currency or currency }}
+        {{ a.cost_cents|money }}{% else %}<span class="pill warn">no cost set</span>{% endif %}</span>
+    </div>
+    {% if device %}
+    <div class="chip">
+      <span class="chip-k">Intune</span>
+      <span class="chip-v">{% if device.compliance_state == 'compliant' %}
+        <span class="pill good">compliant</span>
+        {% elif device.compliance_state %}<span class="pill bad">{{ device.compliance_state }}</span>
+        {% else %}<span class="pill flat">unknown</span>{% endif %}</span>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="tabs" data-tabs>
+  <button type="button" class="on" data-tab="details">Details</button>
+  {% if device %}<button type="button" data-tab="hardware">Hardware</button>{% endif %}
+  <button type="button" data-tab="history">History
+    <span class="count">{{ history|length }}</span></button>
+</div>
+
+<section data-pane="details">
 <div class="panel">
   <form class="grid-form" method="post" action="/assets/{{ a.id }}/edit">
     <label>Name<input name="name" value="{{ a.name }}" required></label>
@@ -38,4 +78,29 @@
   <p class="hint">Deleting removes the asset and its cost from all totals. To hand it back to
      the spares instead, set &ldquo;Assigned to&rdquo; to &mdash; spare &mdash;.</p>
 </div>
+</section>
+
+{% if device %}
+<section data-pane="hardware" hidden>
+<table>
+  <tbody>
+    <tr><th>Device</th><td>{{ device.device_name or '' }}</td></tr>
+    <tr><th>Model</th><td>{{ device.model or '' }}</td></tr>
+    <tr><th>Operating system</th><td>{{ device.os or '' }} {{ device.os_version or '' }}</td></tr>
+    <tr><th>Serial</th><td class="mono">{{ device.serial_number or '' }}</td></tr>
+    {% for name, value in spec %}
+      <tr><th>{{ name }}</th><td>{{ value }}</td></tr>
+    {% endfor %}
+    <tr><th>Last seen</th><td>{{ (device.last_contact or '')[:16].replace('T', ' ') }}</td></tr>
+  </tbody>
+</table>
+<p class="hint">Straight from Intune. A machine reporting its own spec through a
+   custom attribute script is shown exactly as it reported it; everything else
+   is what Graph carries for every managed device.</p>
+</section>
+{% endif %}
+
+<section data-pane="history" hidden>
+{{ timeline(history) }}
+</section>
 {% endblock %}

@@ -120,6 +120,31 @@ CREATE TABLE IF NOT EXISTS assets (
 );
 CREATE INDEX IF NOT EXISTS idx_assets_upn ON assets(assigned_upn);
 
+-- Everything that has ever happened to an asset: one row per field that
+-- changed, so a timeline reads "Cost 0.00 -> 950.00" rather than a blob of
+-- JSON nobody can scan. Written from one place, by comparing the row before
+-- against the row after, because a hand-written list of what to log is a list
+-- somebody forgets to update.
+--
+-- The asset id is nulled rather than cascaded when an asset is deleted, and
+-- the name is kept alongside: "who deleted that VMware record, and when" is
+-- exactly the question a history is for, and cascading erases the answer.
+CREATE TABLE IF NOT EXISTS asset_events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset_id   INTEGER REFERENCES assets(id) ON DELETE SET NULL,
+    asset_name TEXT NOT NULL,           -- as it was at the time
+    at         TEXT NOT NULL,
+    actor      TEXT,                    -- a sign-in name, an API key, or a job
+    source     TEXT NOT NULL,           -- ui | api | sync | import | rule
+    action     TEXT NOT NULL,           -- created | changed | deleted
+    batch      TEXT NOT NULL,           -- one write, however many fields moved
+    field      TEXT,                    -- which one, for a change
+    old_value  TEXT,
+    new_value  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_events_asset ON asset_events(asset_id, id);
+CREATE INDEX IF NOT EXISTS idx_events_at ON asset_events(at);
+
 -- Licences the tenant owns, straight from Entra. Keyed on the SKU id the
 -- tenant reports; the string id (skuPartNumber) is what names are matched on,
 -- because published GUID lists disagree with each other.

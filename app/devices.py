@@ -12,7 +12,7 @@ is recomputed from the rules every time.
 """
 import datetime
 
-from . import db
+from . import db, events
 
 # field -> (label, SQL expression over `devices d`). Whitelisted: the field name
 # reaches SQL, the value never does except as a bound parameter.
@@ -215,9 +215,11 @@ def fill_holders_from_intune() -> int:
     gap = holder_gap()
     today = datetime.date.today().isoformat()
     for row in gap["fillable"]:
+        before = db.q1("SELECT * FROM assets WHERE id = ?", (row["asset_id"],))
         db.execute(
             "UPDATE assets SET assigned_upn = ?, assigned_on = ? WHERE id = ?",
             (row["primary_upn"], today, row["asset_id"]))
+        events.changed(row["asset_id"], before, "sync")
     return len(gap["fillable"])
 
 
@@ -444,6 +446,7 @@ def delete_assets_from_ignored() -> dict:
         if row["cost_cents"] or row["assigned_upn"]:
             kept += 1
             continue
+        events.deleted(row["id"], "ui")
         db.execute("DELETE FROM assets WHERE id = ?", (row["id"],))
         deleted += 1
     return {"deleted": deleted, "kept": kept}

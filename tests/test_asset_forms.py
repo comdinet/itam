@@ -86,8 +86,8 @@ with TestClient(main.app) as client:     # lifespan runs: bootstrap the admin
           db.q1("SELECT status FROM assets WHERE id = ?", (aid,))["status"],
           "Sold to employee")
     page = client.get("/assets/c/Laptop").text
-    check("shown as a tag beside the name", "<span class=\"tag\">Sold to employee</span>" in page,
-          True)
+    check("shown as a pill beside the name",
+          '<span class="pill warn">Sold to employee</span>' in page, True)
     check("the filter finds it",
           "6898QV3" in client.get("/assets?status=Sold+to+employee").text, True)
     check("and 'No status' excludes it",

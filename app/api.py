@@ -13,7 +13,7 @@ import hmac
 import json
 import secrets
 
-from . import db, settings
+from . import db, events, settings
 
 TOKEN_PREFIX = "itam_"
 LOG_KEEP = 200
@@ -166,6 +166,7 @@ def create_asset(key, payload: dict) -> dict:
          str(mapped.get("purchased_on", "")).strip() or None,
          str(mapped.get("notes", "")).strip() or None,
          upn, today if upn else None, external_id))
+    events.created(asset_id, "api", key["name"])
 
     return {"status": "created", "asset_id": asset_id, "name": name,
             "category": category, "assigned_upn": upn,
@@ -299,6 +300,7 @@ def update_assets(key, payload: dict) -> dict:
                 params.append(today if fields["assigned_upn"] else None)
             params.append(row["id"])
             db.execute(f"UPDATE assets SET {sets} WHERE id = ?", params)
+            events.changed(row["id"], row, "api", key["name"])
         after = db.q1("SELECT * FROM assets WHERE id = ?", (row["id"],))
         updated.append(_asset_json(after))
     return {"status": "would_update" if dry_run else "updated",

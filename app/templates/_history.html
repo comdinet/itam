@@ -1,0 +1,35 @@
+{% macro timeline(history, show_asset=False) %}
+<ol class="timeline">
+  {% for e in history %}
+  <li class="event {{ e.action }}">
+    <div class="when">{{ e.at[:16].replace('T', ' ') }}<span class="utc">UTC</span></div>
+    <div class="what">
+      <span class="who">{{ e.actor or e.source }}</span>
+      {%- if e.actor and e.source != 'ui' %} <span class="via">via {{ e.source }}</span>{% endif %}
+      {% if e.action == 'created' %}created
+        {%- if show_asset %} <a href="/assets/{{ e.asset_id }}">{{ e.asset_name }}</a>
+        {%- else %} this asset{% endif %}
+      {% elif e.action == 'deleted' %}deleted
+        <span class="gone">{{ e.asset_name }}</span>
+      {% elif show_asset and e.asset_id %}changed
+        <a href="/assets/{{ e.asset_id }}">{{ e.asset_name }}</a>
+      {% elif show_asset %}changed <span class="gone">{{ e.asset_name }}</span>
+      {% else %}changed{% endif %}
+      {% if e.changes %}
+      <ul class="changes">
+        {% for c in e.changes %}
+        <li><span class="field">{{ c.label }}</span>
+          {% if c.old %}<span class="old">{{ c.old }}</span>
+            <span class="arrow">&rarr;</span>{% endif %}
+          {% if c.new %}<span class="new">{{ c.new }}</span>
+          {% else %}<span class="cleared">cleared</span>{% endif %}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+  </li>
+  {% else %}
+  <li class="empty">Nothing recorded yet. History starts when something changes.</li>
+  {% endfor %}
+</ol>
+{% endmacro %}

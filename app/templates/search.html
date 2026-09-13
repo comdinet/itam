@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}{% if q %}{{ q }} &middot; {% endif %}Search &middot; ITAM{% endblock %}
+{% block body %}
+<h1>{% if q %}&ldquo;{{ q }}&rdquo;{% else %}Search{% endif %}</h1>
+{% if not q %}
+  <p class="meta">A serial, a hostname, a person, an item &mdash; whatever you
+    have in front of you. Type it in the box above.</p>
+{% elif not groups %}
+  <p class="meta">Nothing matches <strong>{{ q }}</strong>. Serials and UPNs are
+    matched anywhere in the value, so a partial one is fine; an ignored device,
+    and the asset made from it, are left out on purpose.</p>
+{% endif %}
+
+{% for g in groups %}
+<h2>{{ g.label }} <span class="count">{{ g.rows|length }}</span></h2>
+<table>
+  <tbody>
+  {% for r in g.rows %}
+    {% if g.kind == 'asset' %}
+      <tr><td><a href="/assets/{{ r.id }}">{{ r.name }}</a></td>
+          <td class="meta">{{ r.category }}</td>
+          <td class="mono">{{ r.serial or '' }}</td>
+          <td>{% if r.assigned_upn %}<a href="/users/{{ r.assigned_upn }}">{{ r.display_name or r.assigned_upn }}</a>
+              {% else %}<span class="pill flat">spare</span>{% endif %}</td>
+          <td>{% if r.status %}<span class="pill warn">{{ r.status }}</span>{% endif %}</td></tr>
+    {% elif g.kind == 'person' %}
+      <tr><td><a href="/users/{{ r.upn }}">{{ r.display_name }}</a></td>
+          <td class="mono">{{ r.upn }}</td>
+          <td class="meta">{{ r.department or '' }}</td>
+          <td class="meta">{{ r.country or '' }}</td></tr>
+    {% elif g.kind == 'item' %}
+      <tr><td><a href="/assets/pooled/{{ r.id }}">{{ r.name }}</a></td>
+          <td class="meta">{{ r.category }}</td>
+          <td class="meta">{{ r.vendor or '' }}</td></tr>
+    {% elif g.kind == 'device' %}
+      <tr><td>{{ r.device_name }}</td>
+          <td class="meta">{{ r.model or '' }}</td>
+          <td class="mono">{{ r.serial_number or '' }}</td>
+          <td class="meta">{{ r.os or '' }}</td>
+          <td>{% if r.asset_id %}<a href="/assets/{{ r.asset_id }}">the asset</a>
+              {% else %}<span class="pill flat">no asset</span>{% endif %}</td></tr>
+    {% else %}
+      <tr><td><a href="/subscriptions/{{ r.id }}">{{ r.name }}</a></td>
+          <td class="meta">{{ r.vendor or '' }}</td></tr>
+    {% endif %}
+  {% endfor %}
+  </tbody>
+</table>
+{% endfor %}
+{% endblock %}

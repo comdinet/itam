@@ -15,3 +15,6 @@ certs/
 *.crt
 *.pem
 docker-compose.override.yml
+
+# Local dev launch config, not part of a deploy.
+.claude/
