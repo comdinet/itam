@@ -13,7 +13,7 @@ import re
 
 import httpx
 
-from . import db, settings
+from . import db, people, settings
 from . import devices as devices_mod
 
 GRAPH = "https://graph.microsoft.com/v1.0"
@@ -374,7 +374,7 @@ def sync() -> dict:
                     u.get("department"),
                     u.get("id"),
                     1 if u.get("accountEnabled", True) else 0,
-                    u.get("country"),
+                    people.tidy_country(u.get("country")),
                     u.get("usageLocation"),
                     now,
                 ),
@@ -391,7 +391,6 @@ def sync() -> dict:
     # leaves the first holding their laptop and licences under a name nobody
     # uses. Entra keeps the object id across a rename, which is what makes the
     # two recognisable as one.
-    from . import people
     renamed = 0
     for u in users:
         upn = (u.get("userPrincipalName") or "").strip().lower()
@@ -1176,13 +1175,13 @@ def sync_licenses() -> dict:
     user_filter = settings.get("ENTRA_USER_FILTER")
     if user_filter:
         params["$filter"] = user_filter
-    people = _get_all("/users", params, advanced=bool(user_filter))
+    licensed = _get_all("/users", params, advanced=bool(user_filter))
 
     assigned = unknown_user = unknown_sku = 0
     known_skus = {r["sku_id"] for r in db.q("SELECT sku_id FROM licenses")}
     with db.cursor() as conn:
         conn.execute("DELETE FROM user_licenses")
-        for person in people:
+        for person in licensed:
             upn = (person.get("userPrincipalName") or "").strip().lower()
             if not upn:
                 continue

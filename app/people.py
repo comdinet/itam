@@ -73,6 +73,21 @@ def _clause(rule) -> tuple[str, list]:
     return (sql, [] if rule["op"] == "blank" else [rule["value"]])
 
 
+def tidy_country(raw: str | None) -> str | None:
+    """Entra's country, without the ISO 3166 tail.
+
+    The standard's official names read "United Kingdom of Great Britain and
+    Northern Ireland (the)" and "United States of America (the)". Entra stores
+    whichever form the directory was populated with, so the same country
+    arrives under two spellings and the dashboard filter lists both - picking
+    one silently halves the answer.
+    """
+    text = (raw or "").strip()
+    if text.lower().endswith("(the)"):
+        text = text[:-len("(the)")].strip()
+    return text or None
+
+
 def recompute() -> int:
     """Stamp each person with the rule hiding them, or clear it."""
     db.execute("UPDATE users SET ignored_reason = NULL")

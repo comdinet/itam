@@ -115,6 +115,51 @@ Content-Type: application/json
   &ldquo;Overhead headphones&rdquo; asset named ULT900 assigned to Grace.
   Test a token first with <span class="mono">GET /api/v1/ping</span>.</p>
 
+<h2>Changing kit that already exists</h2>
+<p class="meta">Two ways to say which assets you mean, because those are the two
+  things anybody knows offhand: the serial printed on the machine, or the person
+  holding it. Give one or the other, never both &mdash; if both were allowed,
+  you could not tell which one matched.</p>
+<pre>PATCH https://{{ site }}/api/v1/assets
+Authorization: Bearer itam_...
+Content-Type: application/json
+
+{
+  "where": { "serial": ["C49KKVM4TF", "6898QV3"] },
+  "set":   { "status": "Sold to employee" },
+  "dry_run": true
+}</pre>
+<p class="hint"><span class="mono">dry_run</span> reports exactly what a real
+   run would touch, having written nothing &mdash; the answer to &ldquo;how many
+   is this about to hit&rdquo;. Settable:
+   {% for f in updatable %}<span class="mono">{{ f }}</span>{% if not loop.last %}, {% endif %}{% endfor %}.
+   Statuses: {% for st in statuses %}<span class="mono">{{ st }}</span>{% if not loop.last %}, {% endif %}{% endfor %},
+   or <span class="mono">""</span> for none. Reading takes the same selectors as
+   a query string:
+   <span class="mono">GET /api/v1/assets?serial=C49KKVM4TF</span> or
+   <span class="mono">?upn=someone@yourcompany.com</span>.</p>
+
+<h2>Handing something to a lot of people at once</h2>
+<p class="meta">Counted kit only &mdash; monitors, peripherals, licences bought
+  in bulk. One machine goes to one person, so a serial-tracked laptop is
+  assigned with the PATCH above and not here.</p>
+<pre>POST https://{{ site }}/api/v1/assign
+Authorization: Bearer itam_...
+Content-Type: application/json
+
+{
+  "item": "Dell U2725QE",
+  "to": { "group": "Israel Staff" },
+  "quantity": 1,
+  "dry_run": true
+}</pre>
+<p class="hint">Or name them yourself with
+   <span class="mono">"to": {"upns": ["a@yourcompany.com", "b@yourcompany.com"]}</span>.
+   A group is matched on its Entra display name and followed through ITAM's own
+   membership, so sync groups first. A UPN nobody has is reported back rather
+   than skipped quietly, which is the whole point in a call that touches forty
+   people.</p>
+
 <h2>Recent API calls <span class="count">{{ log|length }}</span></h2>
 <table>
   <thead><tr><th>When</th><th>Key</th><th>Endpoint</th><th>Status</th><th>Result</th></tr></thead>

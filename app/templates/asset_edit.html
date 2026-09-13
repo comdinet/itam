@@ -4,7 +4,8 @@
 {% block body %}
 <p class="crumb"><a href="/assets">&larr; Assets</a></p>
 <h1>Edit asset</h1>
-<p class="meta">{{ a.category }}{% if a.serial %} &middot; <span class="mono">{{ a.serial }}</span>{% endif %}</p>
+<p class="meta">{{ a.category }}{% if a.serial %} &middot; <span class="mono">{{ a.serial }}</span>{% endif %}
+  {%- if a.status %} &middot; <span class="tag">{{ a.status }}</span>{% endif %}</p>
 
 <div class="panel">
   <form class="grid-form" method="post" action="/assets/{{ a.id }}/edit">
@@ -18,6 +19,10 @@
     <label>Purchased<input type="date" name="purchased_on" value="{{ a.purchased_on or '' }}"></label>
     <label>Assigned to<select name="assigned_upn"><option value="">&mdash; spare &mdash;</option>
       {% for u in users %}<option value="{{ u.upn }}" {% if u.upn == a.assigned_upn %}selected{% endif %}>{{ u.display_name }}</option>{% endfor %}
+    </select></label>
+    <label>Status<select name="status">
+      <option value="">&mdash; none &mdash;</option>
+      {% for st in statuses %}<option value="{{ st }}" {% if st == a.status %}selected{% endif %}>{{ st }}</option>{% endfor %}
     </select></label>
     <label class="wide">Notes<input name="notes" value="{{ a.notes or '' }}"></label>
     <button type="submit">Save changes</button>

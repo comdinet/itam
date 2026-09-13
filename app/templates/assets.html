@@ -54,6 +54,10 @@
     <option value="unpriced" {% if priced=='unpriced' %}selected{% endif %}>No cost set</option>
     <option value="priced" {% if priced=='priced' %}selected{% endif %}>Has a cost</option>
   </select>
+  <select name="status"><option value="">Any status</option>
+    <option value="none" {% if status=='none' %}selected{% endif %}>No status</option>
+    {% for st in statuses %}<option value="{{ st }}" {% if status==st %}selected{% endif %}>{{ st }}</option>{% endfor %}
+  </select>
   <button type="submit">Filter</button>
   <a class="btn light" href="{{ here }}">Reset</a>
 </form>
@@ -70,6 +74,7 @@
   specification.</p>
 {% endif %}
 
+{% if serial_form %}
 <details class="panel" data-panel="add-serial" {% if not assets and not items %}open{% endif %}>
   <summary>Add {{ 'a ' ~ what if category else 'an asset' }} &mdash; tracked by its serial</summary>
   <form class="grid-form" method="post" action="/assets/new">
@@ -92,9 +97,11 @@
     <button type="submit">Add {{ what if category else 'asset' }}</button>
   </form>
 </details>
+{% endif %}
 
-<details class="panel" data-panel="add-counted">
-  <summary>Add {{ what if category else 'an item' }} &mdash; counted, no serial</summary>
+{% if counted_form %}
+<details class="panel" data-panel="add-counted" {% if not serial_form and not assets and not items %}open{% endif %}>
+  <summary>Add {{ what if category else 'an item' }} &mdash; counted</summary>
   <form class="grid-form" method="post" action="/assets/pooled/new">
     <input type="hidden" name="redirect" value="{{ here_url }}">
     <label>Name<input name="name" required placeholder="Logitech MX Master 3S"></label>
@@ -108,18 +115,21 @@
     <label>Price each<input name="unit_cost" inputmode="decimal" placeholder="109.00"></label>
     <label>Paid in{{ currency_select(currencies) }}</label>
     <label>Vendor<input name="vendor" placeholder="optional"></label>
+    <label>Serial<input name="serial" placeholder="optional"></label>
     <label class="wide">Notes<input name="notes" placeholder="purchase order, warranty&hellip;"></label>
     <button type="submit">Add {{ what if category else 'item' }}</button>
   </form>
-  <p class="hint">Use this when the units are interchangeable and have no serial
-     &mdash; monitors, mice, keyboards, headsets, licences bought as a batch.
-     You are not asked how many you own: a unit exists once you hand it to
-     somebody, and cost follows the units, so two of a {{ currency }} 25.00
-     item means that person carries {{ currency }} 50.00. Take one back and it
-     goes on the shelf, ready to re-issue at no further cost.
-     For a recurring monthly charge per person, use
+  <p class="hint">Units are interchangeable and counted: you are not asked how
+     many you own, because a unit exists once you hand it to somebody, and cost
+     follows the units &mdash; two of a {{ currency }} 25.00 item means that
+     person carries {{ currency }} 50.00. Take one back and it goes on the
+     shelf, ready to re-issue at no further cost.
+     <br>Give a serial and this becomes one record for that one unit instead,
+     which is what you want for the single docking station that has a service
+     tag on it. For a recurring monthly charge per person, use
      <a href="/subscriptions">Subscriptions</a> instead.</p>
 </details>
+{% endif %}
 
 {% if show_lists %}
 <h2>Tracked by serial <span class="count">{{ assets|length }}</span></h2>
@@ -129,7 +139,7 @@
   <tbody>
   {% for a in assets %}
     <tr>
-      <td>{{ a.name }}</td>
+      <td>{{ a.name }}{% if a.status %} <span class="tag">{{ a.status }}</span>{% endif %}</td>
       {% if not category %}<td>{{ a.category }}</td>{% endif %}
       <td class="mono">{{ a.serial or '' }}</td>
       <td>{% if a.assigned_upn %}<a href="/users/{{ a.assigned_upn }}">{{ a.display_name }}</a>

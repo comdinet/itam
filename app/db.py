@@ -10,6 +10,16 @@ DB_PATH = os.environ.get("ITAM_DB") or os.path.join(
 
 DEFAULT_CATEGORIES = ["Laptop", "Desktop", "Monitor", "Peripheral", "Software", "Other"]
 
+# Categories where every unit is a specific machine with a serial, so one row
+# per unit is the only shape that makes sense. Everything else is counted, and
+# a serial there is optional - give one and that unit becomes its own record.
+SERIAL_CATEGORIES = {"Laptop", "Desktop"}
+
+# What can be true of an asset besides who holds it. Blank is the ordinary
+# case: the company owns it and somebody has it or it is spare. Adding one
+# here is all it takes for it to appear in the forms, the filters and the API.
+ASSET_STATUSES = ["Sold to employee"]
+
 # Fields an incoming webhook payload is allowed to populate.
 ASSET_FIELDS = ["name", "category", "cost", "serial", "purchased_on", "notes",
                 "assigned_upn", "external_id"]
@@ -105,7 +115,8 @@ CREATE TABLE IF NOT EXISTS assets (
     assigned_on  TEXT,
     external_id  TEXT,
     currency     TEXT,
-    rate_micro   INTEGER          -- rate at entry: what was paid stays what was paid
+    rate_micro   INTEGER,         -- rate at entry: what was paid stays what was paid
+    status       TEXT             -- blank is the ordinary case; see ASSET_STATUSES
 );
 CREATE INDEX IF NOT EXISTS idx_assets_upn ON assets(assigned_upn);
 
@@ -501,6 +512,16 @@ def init_db():
         cols = [r["name"] for r in conn.execute("PRAGMA table_info(assets)")]
         if "external_id" not in cols:
             conn.execute("ALTER TABLE assets ADD COLUMN external_id TEXT")
+        if "status" not in cols:
+            conn.execute("ALTER TABLE assets ADD COLUMN status TEXT")
+
+        # Migration: ISO 3166 official country names end in " (the)" for a
+        # handful of countries, and Entra hands back whichever form the
+        # directory holds. Both spellings in the filter meant picking one
+        # silently halved the answer.
+        conn.execute(
+            """UPDATE users SET country = TRIM(SUBSTR(country, 1, LENGTH(country) - 5))
+               WHERE country LIKE '%(the)'""")
 
         # Migration: a rule can name a specific item, not just a category.
         rcols = [r["name"] for r in conn.execute("PRAGMA table_info(rules)")]

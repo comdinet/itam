@@ -675,6 +675,86 @@ async def api_create_asset(request: Request):
     return JSONResponse(result, status_code=status)
 
 
+async def _api_json(request: Request, endpoint: str):
+    """Authenticate and parse, or hand back the response that says why not."""
+    key = _api_key(request)
+    if not key:
+        api.log(None, endpoint, 401, "Missing or invalid token")
+        return None, None, JSONResponse(
+            {"error": "Invalid or missing API token."}, status_code=401)
+    try:
+        payload = await request.json()
+    except Exception:
+        api.log(key["name"], endpoint, 400, "Body was not valid JSON")
+        return key, None, JSONResponse({"error": "Request body must be JSON."},
+                                       status_code=400)
+    if not isinstance(payload, dict):
+        api.log(key["name"], endpoint, 400, "Body was not a JSON object")
+        return key, None, JSONResponse({"error": "Request body must be a JSON object."},
+                                       status_code=400)
+    return key, payload, None
+
+
+def _api_run(key, endpoint: str, fn, payload: dict, summary):
+    """Run one API action, turning any failure into the response it deserves."""
+    try:
+        result = fn(key, payload)
+    except api.ApiError as exc:
+        api.log(key["name"], endpoint, exc.status, exc.message, payload)
+        return JSONResponse({"error": exc.message}, status_code=exc.status)
+    except Exception as exc:
+        api.log(key["name"], endpoint, 500, f"{type(exc).__name__}: {exc}", payload)
+        return JSONResponse({"error": "Internal error."}, status_code=500)
+    api.log(key["name"], endpoint, 200, summary(result), payload)
+    return JSONResponse(result, status_code=200)
+
+
+@app.get("/api/v1/assets")
+async def api_read_assets(request: Request, serial: str = "", upn: str = ""):
+    """Look up assets by serial or by who holds them."""
+    endpoint = "GET /api/v1/assets"
+    key = _api_key(request)
+    if not key:
+        api.log(None, endpoint, 401, "Missing or invalid token")
+        return JSONResponse({"error": "Invalid or missing API token."}, status_code=401)
+    where = {}
+    if serial:
+        where["serial"] = [s for s in serial.split(",") if s.strip()]
+    if upn:
+        where["assigned_upn"] = [u for u in upn.split(",") if u.strip()]
+    try:
+        rows = api.select_assets(where)
+    except api.ApiError as exc:
+        api.log(key["name"], endpoint, exc.status, exc.message)
+        return JSONResponse({"error": exc.message}, status_code=exc.status)
+    api.log(key["name"], endpoint, 200, f"matched {len(rows)}")
+    return JSONResponse({"matched": len(rows),
+                         "assets": [api._asset_json(r) for r in rows]})
+
+
+@app.patch("/api/v1/assets")
+async def api_update_assets(request: Request):
+    """Change fields on every asset a selector matches. dry_run to rehearse."""
+    endpoint = "PATCH /api/v1/assets"
+    key, payload, refusal = await _api_json(request, endpoint)
+    if refusal:
+        return refusal
+    return _api_run(key, endpoint, api.update_assets, payload,
+                    lambda r: f"{r['status']}: {r['matched']} asset(s)")
+
+
+@app.post("/api/v1/assign")
+async def api_assign(request: Request):
+    """Hand a counted item to a whole group, or to a list of people."""
+    endpoint = "POST /api/v1/assign"
+    key, payload, refusal = await _api_json(request, endpoint)
+    if refusal:
+        return refusal
+    return _api_run(key, endpoint, api.assign_to_people, payload,
+                    lambda r: (f"{r['status']}: {r['units']} x {r['item']} "
+                               f"to {r['people']} person(s)"))
+
+
 # --- dashboard -----------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
@@ -902,7 +982,8 @@ def assign_sub(upn: str, subscription_id: int = Form(...)):
 # count. Both are assets, both live under the same categories, and each
 # category has its own page listing both kinds.
 
-def asset_rows(q: str = "", category: str = "", state: str = "", priced: str = ""):
+def asset_rows(q: str = "", category: str = "", state: str = "", priced: str = "",
+               status: str = ""):
     sql = """SELECT a.*, u.display_name FROM assets a
              LEFT JOIN users u ON u.upn = a.assigned_upn"""
     where, params = [], []
@@ -923,6 +1004,11 @@ def asset_rows(q: str = "", category: str = "", state: str = "", priced: str = "
         where.append("COALESCE(a.cost_cents,0) = 0")
     elif priced == "priced":
         where.append("COALESCE(a.cost_cents,0) > 0")
+    if status == "none":
+        where.append("TRIM(COALESCE(a.status,'')) = ''")
+    elif status:
+        where.append("a.status = ?")
+        params.append(status)
     # A device the ignore rules hide is not kit, so neither is the asset that
     # was made from it before the rule existed. Those records are still there
     # to be deleted - under Settings > Devices, where the rule lives.
@@ -932,8 +1018,8 @@ def asset_rows(q: str = "", category: str = "", state: str = "", priced: str = "
 
 
 def assets_view(request: Request, category: str | None, q: str, state: str,
-                priced: str = ""):
-    rows = asset_rows(q, category or "", state, priced)
+                priced: str = "", status: str = ""):
+    rows = asset_rows(q, category or "", state, priced, status)
     items = pooled.listing(category)
     if q:
         needle = q.lower()
@@ -954,18 +1040,22 @@ def assets_view(request: Request, category: str | None, q: str, state: str,
     # The landing page is a summary, not a 118-row table nobody scrolls. The
     # lists come back the moment a filter is applied, so "show me everything
     # with no cost set" still lands somewhere useful.
-    filtered = bool(q or state or priced)
+    filtered = bool(q or state or priced or status)
     return render(request, "assets.html", assets=rows, items=items, users=users,
                   q=q, category=category, state=state, priced=priced, total=total,
+                  status=status, statuses=db.ASSET_STATUSES,
                   unpriced=unpriced, pooled_totals=pooled.totals(category),
                   overview=devices.overview() if not category else None,
+                  serial_form=(not category) or category in db.SERIAL_CATEGORIES,
+                  counted_form=(not category) or category not in db.SERIAL_CATEGORIES,
                   show_lists=bool(category) or filtered, filtered=filtered,
                   currencies=fx.listing(active_only=True))
 
 
 @app.get("/assets", response_class=HTMLResponse)
-def assets_list(request: Request, q: str = "", state: str = "", priced: str = ""):
-    return assets_view(request, None, q, state, priced)
+def assets_list(request: Request, q: str = "", state: str = "", priced: str = "",
+                status: str = ""):
+    return assets_view(request, None, q, state, priced, status)
 
 
 # Declared before /assets/{asset_id}: that path takes an int, so "c" and
@@ -973,8 +1063,8 @@ def assets_list(request: Request, q: str = "", state: str = "", priced: str = ""
 # change of type cannot silently swallow these.
 @app.get("/assets/c/{category}", response_class=HTMLResponse)
 def assets_category(request: Request, category: str, q: str = "", state: str = "",
-                    priced: str = ""):
-    return assets_view(request, category, q, state, priced)
+                    priced: str = "", status: str = ""):
+    return assets_view(request, category, q, state, priced, status)
 
 
 @app.post("/assets/new")
@@ -1000,13 +1090,24 @@ def asset_new(name: str = Form(...), category: str = Form("Other"), cost: str = 
 @app.post("/assets/pooled/new")
 def pooled_new(name: str = Form(...), category: str = Form("Peripheral"),
                unit_cost: str = Form("0"), currency: str = Form(""),
-               vendor: str = Form(""), notes: str = Form(""),
+               vendor: str = Form(""), notes: str = Form(""), serial: str = Form(""),
                redirect: str = Form("/assets")):
     if not name.strip():
         return back(redirect, "Give the item a name")
     code, rate, problem = pick_currency(currency)
     if problem:
         return back(redirect, problem)
+    # A serial identifies one particular unit, which is the opposite of
+    # interchangeable. Rather than refuse the form, record what was described:
+    # one record for that one unit.
+    if serial.strip():
+        db.execute(
+            """INSERT INTO assets (name, category, cost_cents, currency, rate_micro,
+                                   serial, notes)
+               VALUES (?,?,?,?,?,?,?)""",
+            (name.strip(), category, db.to_cents(unit_cost), code, rate,
+             serial.strip(), notes.strip() or None))
+        return back(redirect, f"{category} added, tracked by its serial")
     item_id = pooled.create(name, category, db.to_cents(unit_cost), vendor, notes,
                             currency=code, rate_micro=rate)
     return back(f"/assets/pooled/{item_id}", f"{category} added")
@@ -1085,6 +1186,7 @@ def asset_page(request: Request, asset_id: int):
         return HTMLResponse("<h1>404</h1><p>No such asset.</p>", status_code=404)
     users = db.q("SELECT upn, display_name FROM users ORDER BY display_name")
     return render(request, "asset_edit.html", a=a, users=users,
+                  statuses=db.ASSET_STATUSES,
                   currencies=fx.listing(active_only=True))
 
 
@@ -1092,7 +1194,7 @@ def asset_page(request: Request, asset_id: int):
 def asset_edit(asset_id: int, name: str = Form(...), category: str = Form("Other"),
                cost: str = Form("0"), currency: str = Form(""), serial: str = Form(""),
                purchased_on: str = Form(""), notes: str = Form(""),
-               assigned_upn: str = Form("")):
+               assigned_upn: str = Form(""), status: str = Form("")):
     prev = db.q1("SELECT assigned_upn, currency, rate_micro FROM assets WHERE id = ?",
                  (asset_id,))
     if not prev:
@@ -1107,11 +1209,12 @@ def asset_edit(asset_id: int, name: str = Form(...), category: str = Form("Other
     changed = (prev["assigned_upn"] or "") != (assigned_upn or "")
     db.execute(
         """UPDATE assets SET name=?, category=?, cost_cents=?, currency=?, rate_micro=?,
-                             serial=?, purchased_on=?, notes=?, assigned_upn=?,
+                             serial=?, purchased_on=?, notes=?, assigned_upn=?, status=?,
                              assigned_on = CASE WHEN ? THEN ? ELSE assigned_on END
            WHERE id=?""",
         (name.strip(), category, db.to_cents(cost), code, rate, serial.strip() or None,
          purchased_on or None, notes.strip() or None, assigned_upn or None,
+         status.strip() or None,
          1 if changed else 0, today() if assigned_upn else None, asset_id))
     return back("/assets", "Asset updated")
 
@@ -2658,7 +2761,8 @@ def admin_api(request: Request):
     new_token = request.query_params.get("token")
     return render(request, "settings_api.html", keys=api.list_keys(),
                   mapping=db.q("SELECT * FROM api_field_map ORDER BY source_field"),
-                  asset_fields=db.ASSET_FIELDS, log=api.recent_log(),
+                  asset_fields=db.ASSET_FIELDS, log=api.recent_log(25),
+                  updatable=api.UPDATABLE, statuses=db.ASSET_STATUSES,
                   new_token=new_token, site=os.environ.get("ITAM_SITE_ADDRESS") or "your-itam-host",
                   section="api")
 
