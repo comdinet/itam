@@ -1,0 +1,33 @@
+# Overrides that put this behind a Cloudflare tunnel.
+#
+# A tunnel is not the same thing as the DNS-01 certificate overlay next to it.
+# That one proves a name to Let's Encrypt over the Cloudflare API and still
+# expects traffic to arrive at this machine. This one has cloudflared dial
+# *out* to Cloudflare and keep the connection open, so nothing has to be
+# reachable from the internet at all: no inbound ports, no firewall rule, no
+# public IP on this box. Cloudflare terminates TLS at the edge, which is why
+# the tunnel can speak plain HTTP to the app inside the Docker network.
+#
+# Not passed on the command line: COMPOSE_FILE in .env names both files, so
+# `docker compose up -d` and every other documented command keeps working.
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: itam-cloudflared
+    restart: unless-stopped
+    # No ports. That is the entire point of a tunnel.
+    command: tunnel --no-autoupdate run
+    environment:
+      # The connector token from the Cloudflare dashboard. Kept out of the
+      # app's env_file so it is only ever in the process that needs it.
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN in .env}
+    depends_on:
+      itam:
+        # Wait for the app to answer, so the tunnel never advertises a
+        # hostname that 502s for the first few seconds after a deploy.
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

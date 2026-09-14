@@ -91,6 +91,7 @@ sudo ufw allow from 10.0.0.0/8 to any port 80 proto tcp
 Out of the box the stack serves HTTPS with a **self-signed certificate**. No
 ACME, no DNS requirements, nothing to reach the internet for. For a certificate
 browsers trust — which SSO requires — see
+[Behind a Cloudflare tunnel](#behind-a-cloudflare-tunnel)
 [A real certificate, over Cloudflare DNS](#a-real-certificate-over-cloudflare-dns)
 below.
 
@@ -117,6 +118,77 @@ Browsers show a warning the first time, because the certificate signs itself.
 Click through it, or install `certs/itam.crt` as a trusted certificate on the
 machines that use the app to stop the warning. `certs/` is gitignored — the
 private key lives only on the server.
+
+### Behind a Cloudflare tunnel
+
+A tunnel and the certificate section below it solve different problems, and it
+is worth being clear which you want:
+
+| | Reaches this machine from the internet? | TLS terminated by | DNS record |
+|---|---|---|---|
+| Self-signed (default) | yes, you open 443 | Caddy, here | A → your IP |
+| `enable-cloudflare-tls.sh` | yes, you open 443 | Caddy, here | A → your IP |
+| `enable-cloudflare-tunnel.sh` | **no** | Cloudflare, at the edge | CNAME → the tunnel, proxied |
+
+With a tunnel, `cloudflared` dials **out** to Cloudflare and holds the
+connection open. Nothing has to be reachable here: no inbound port, no
+firewall hole, no public IP, and the origin address is never published. It is
+also the only one of the three that works behind NAT or on a machine with no
+public address at all.
+
+**1. Create the tunnel.** [one.dash.cloudflare.com](https://one.dash.cloudflare.com)
+→ Networks → Tunnels → Create a tunnel → **Cloudflared** → name it. Skip the
+install instructions; copy the token out of the command it shows you — the
+long string after `--token`, starting `eyJ`.
+
+**2. Route it.** On the same screen, add a public hostname:
+
+| Field | Value |
+|---|---|
+| Subdomain | `itam` |
+| Domain | `remedio.io` |
+| Type | `HTTP` |
+| URL | `itam:8000` |
+
+`HTTP` and port `8000` are right: the tunnel reaches the app inside this
+machine's Docker network, and Cloudflare does TLS at the edge. That step also
+creates the DNS record for you — a proxied `CNAME`, the orange cloud, pointing
+at the tunnel rather than at this machine.
+
+**3. Turn it on.**
+
+```bash
+sudo ./enable-cloudflare-tunnel.sh
+```
+
+It pastes through the steps above, **runs the real connector with your token
+and waits for it to register a connection before writing anything to `.env`**,
+then starts the tunnel alongside everything else.
+
+Non-interactive:
+
+```bash
+sudo ./enable-cloudflare-tunnel.sh --token eyJhIjoi...
+```
+
+Notes:
+
+- It moves `ITAM_HTTP_PORT` and `ITAM_HTTPS_PORT` to `127.0.0.1:8080` and
+  `127.0.0.1:8443`, so this machine stops answering on 80 and 443 and the only
+  way in is through Cloudflare. `curl -k https://localhost:8443` from the box
+  still works. Pass `--keep-ports` to leave them published.
+- **Close 80 and 443 at the firewall too.** Unpublishing the Docker ports is
+  not a firewall rule.
+- The token goes in `.env` (mode 600) and is passed only to the `cloudflared`
+  container, never to the app.
+- A tunnel makes the Let's Encrypt section below unnecessary for the public
+  name — Cloudflare presents the certificate. Both can be on at once, and
+  turning one off leaves the other alone; `COMPOSE_FILE` names whichever
+  overlays are in use.
+- The app already runs with `--proxy-headers`, so it sees `https` and the real
+  client address through the tunnel rather than the container's.
+- To go back: `sudo ./enable-cloudflare-tunnel.sh --disable`. The token stays
+  in `.env`, and the script reminds you the ports are still on loopback.
 
 ### A real certificate, over Cloudflare DNS
 
