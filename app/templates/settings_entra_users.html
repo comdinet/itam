@@ -4,7 +4,7 @@
 <div class="cards">
   <div class="card"><span class="label">People tracked</span>
     <span class="big">{{ counts.total - counts.ignored }}</span>
-    <span class="sub">{{ last.n }} from Entra ID, last sync
+    <span class="sub">{{ seen_last }} returned by Entra, last sync
       {{ (last.last or 'never')[:16].replace('T',' ') }}</span></div>
   <div class="card"><span class="label">Ignored</span>
     <span class="big">{{ counts.ignored }}</span>
@@ -18,6 +18,48 @@
     flagged here so its assets and licences stay visible for reclaim. The
     <a href="/settings/entra">OData filter</a> decides who Entra sends.</span>
 </form>
+
+{% if stale %}
+<details class="panel" data-panel="stale-users" open>
+  <summary>Entra no longer sends
+    <span class="count">{{ stale|length }}</span></summary>
+  <p>These are in ITAM but were not in the answer the last time Entra was
+     asked. They left, or their account was disabled and the
+     <a href="/settings/entra">filter</a> excludes disabled accounts, or they
+     fell outside it some other way. That is the difference between the
+     <strong>{{ seen_last }}</strong> above and the
+     <strong>{{ stale|length + seen_last }}</strong> rows ITAM holds: the sync
+     upserts and never deletes, on purpose, because somebody who left may still
+     have a laptop.</p>
+  <table>
+    <thead><tr><th>Name</th><th>UPN</th><th>Department</th><th>Last seen</th>
+      <th class="num">Assets</th><th class="num">Counted</th><th class="num">Licences</th>
+      <th></th></tr></thead>
+    <tbody>
+    {% for p in stale %}
+      <tr><td><a href="/users/{{ p.upn }}">{{ p.display_name }}</a>
+            {% if not p.account_enabled %}<span class="pill flat">disabled</span>{% endif %}</td>
+          <td class="mono">{{ p.upn }}</td>
+          <td>{{ p.department or '' }}</td>
+          <td>{{ (p.synced_at or 'never')[:10] }}</td>
+          <td class="num">{{ p.assets }}</td>
+          <td class="num">{{ p.pooled }}</td>
+          <td class="num">{{ p.seats }}</td>
+          <td class="row-actions">
+            <form method="post" action="/settings/entra/users/forget"
+                  onsubmit="return confirm('Stop tracking {{ p.display_name }}?{% if p.assets or p.pooled or p.seats %} This releases {{ p.assets }} asset(s) back to spare, {{ p.pooled }} counted unit(s) and {{ p.seats }} licence seat(s).{% endif %}')">
+              <input type="hidden" name="upn" value="{{ p.upn }}">
+              <button class="link danger">Stop tracking</button></form></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="hint">Check what somebody is holding before you remove them &mdash;
+     their assets come back as spare rather than following them out of the
+     door, and their licence seats are given up. If this is a renamed UPN
+     rather than a leaver, merge the pair below instead: that moves everything
+     across rather than releasing it.</p>
+</details>
+{% endif %}
 
 {% if renamed %}
 <div class="warn">

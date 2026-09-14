@@ -2763,10 +2763,29 @@ def settings_entra_users(request: Request, q: str = "", show_ignored: str = ""):
                   show_ignored=show_ignored, counts=people.counts(),
                   rules=people.rules(), describe_rule=people.describe,
                   hiding=people.hiding(), renamed=people.renamed(),
+                  seen_last=people.seen_last_sync(), stale=people.not_in_entra(),
                   everyone=db.q("SELECT upn, display_name FROM users "
                                 "ORDER BY display_name"),
                   ignore_fields=people.FIELDS, ignore_ops=people.OPS,
                   **_entra_ctx("users"))
+
+
+@app.post("/settings/entra/users/forget")
+def settings_users_forget(request: Request, upn: str = Form(...)):
+    """Stop tracking somebody Entra no longer sends."""
+    r = people.forget(upn.strip().lower())
+    if r.get("error"):
+        return back("/settings/entra/users", r["error"])
+    freed = []
+    if r["assets"]:
+        freed.append(f"{r['assets']} asset(s) back to spare")
+    if r["pooled"]:
+        freed.append(f"{r['pooled']} counted unit(s) released")
+    if r["seats"]:
+        freed.append(f"{r['seats']} licence seat(s) given up")
+    return back("/settings/entra/users",
+                f"{r['name']} is no longer tracked"
+                + (" - " + ", ".join(freed) if freed else ""))
 
 
 @app.post("/settings/entra/users/merge")

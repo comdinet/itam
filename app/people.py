@@ -228,6 +228,72 @@ def merge(from_upn: str, into_upn: str) -> dict | str:
     return {"from": from_upn, "into": into_upn, "moved": moved}
 
 
+def last_sync_stamp() -> str | None:
+    row = db.q1("SELECT MAX(synced_at) AS at FROM users WHERE source = 'entra'")
+    return row["at"] if row else None
+
+
+def seen_last_sync() -> int:
+    """How many people Entra actually returned the last time it was asked.
+
+    Not the same as how many rows carry source='entra': that total only ever
+    grows, because the sync upserts and never deletes. Reporting the total as
+    "from Entra ID" made a tenant of 100 read as 106.
+    """
+    at = last_sync_stamp()
+    if not at:
+        return 0
+    return db.q1("SELECT COUNT(*) c FROM users WHERE source = 'entra' "
+                 "AND synced_at = ?", (at,))["c"]
+
+
+def not_in_entra() -> list[dict]:
+    """People Entra no longer sends, with what they are still holding.
+
+    Every user the sync sees is stamped with that run's timestamp, so anyone
+    carrying an older one was not in the answer: they left, their account was
+    disabled and the filter excludes disabled accounts, or they fell outside
+    the filter some other way. Nothing is removed automatically - they may
+    still be holding a laptop, and a sync quietly releasing kit is worse than
+    a list somebody has to read.
+    """
+    at = last_sync_stamp()
+    if not at:
+        return []
+    return db.q(
+        """SELECT u.upn, u.display_name, u.department, u.account_enabled,
+                  u.synced_at,
+                  (SELECT COUNT(*) FROM assets a WHERE a.assigned_upn = u.upn) AS assets,
+                  COALESCE((SELECT SUM(quantity) FROM pooled_allocations al
+                            WHERE al.upn = u.upn), 0) AS pooled,
+                  (SELECT COUNT(*) FROM subscription_seats s WHERE s.upn = u.upn) AS seats
+           FROM users u
+           WHERE u.source = 'entra' AND COALESCE(u.synced_at,'') < ?
+           ORDER BY u.display_name""", (at,))
+
+
+def forget(upn: str) -> dict:
+    """Remove somebody ITAM should no longer be tracking.
+
+    Says what it released rather than just how many rows went: assets come
+    back as spare (the foreign key nulls the holder), and seats and licence
+    rows go with the person. Counted first, because after the delete there is
+    nothing left to count.
+    """
+    row = db.q1("SELECT display_name FROM users WHERE upn = ?", (upn,))
+    if not row:
+        return {"error": "No such person"}
+    freed = db.q1(
+        """SELECT (SELECT COUNT(*) FROM assets WHERE assigned_upn = ?) AS assets,
+                  COALESCE((SELECT SUM(quantity) FROM pooled_allocations
+                            WHERE upn = ?), 0) AS pooled,
+                  (SELECT COUNT(*) FROM subscription_seats WHERE upn = ?) AS seats""",
+        (upn, upn, upn))
+    db.execute("DELETE FROM users WHERE upn = ?", (upn,))
+    return {"name": row["display_name"], "assets": freed["assets"],
+            "pooled": freed["pooled"], "seats": freed["seats"]}
+
+
 def renamed() -> list[dict]:
     """People whose Entra object id already belongs to somebody else here.
 
