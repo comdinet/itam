@@ -48,6 +48,8 @@ SPEC: dict[str, tuple] = {
                                      "saml", False),
     "ITAM_SAML_ALLOW_IDP_INITIATED": ("bool", "0", "Allow sign-in started at Microsoft",
                                       "saml", False),
+    "ITAM_LOCAL_LOGIN_DISABLED":    ("bool", "0", "Turn off username and password",
+                                     "saml", False),
 }
 
 # Read from the environment only; a database row would have no effect.

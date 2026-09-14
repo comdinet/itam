@@ -3,18 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign in &middot; ITAM</title>
+<title>Sign in</title>
 <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}">
 </head>
 <body class="centered">
 <main class="signin">
-  <h1>ITAM</h1>
-  <p class="meta">IT asset &amp; subscription tracking</p>
+  <h1>Sign in</h1>
   {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
   {% if sso %}
   <a class="btn sso" href="/saml/login?next={{ next|urlencode }}">Sign in with Microsoft</a>
-  <div class="or"><span>or sign in with a local account</span></div>
+  {% if local %}<div class="or"><span>or sign in with a local account</span></div>{% endif %}
   {% endif %}
+  {% if local %}
   <form method="post" action="/login" class="stack">
     <input type="hidden" name="next" value="{{ next }}">
     <label>Username
@@ -23,6 +23,7 @@
       <input type="password" name="password" autocomplete="current-password" required></label>
     <button type="submit">Sign in</button>
   </form>
+  {% endif %}
 </main>
 </body>
 </html>

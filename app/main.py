@@ -376,13 +376,19 @@ def login_page(request: Request, next: str = "/"):
         return RedirectResponse(safe_next(next), status_code=303)
     return templates.TemplateResponse(request, "login.html", {
         "flash": request.query_params.get("msg"), "next": safe_next(next), "me": None,
-        "sso": saml.is_configured()})
+        "sso": saml.is_configured(), "local": auth.local_login_allowed()})
 
 
 @app.post("/login")
 def login_submit(request: Request, username: str = Form(""), password: str = Form(""),
                  next: str = Form("/")):
     target = safe_next(next)
+    if not auth.local_login_allowed():
+        # Refused here, not merely hidden on the page: a form that is not
+        # drawn is still an endpoint anybody can post to.
+        return back(f"/login?next={quote(target, safe='')}",
+                    "Signing in with a username and password is turned off here. "
+                    "Use Sign in with Microsoft.")
     locked = auth.is_locked((username or "").strip().lower())
     if locked:
         return back(f"/login?next={quote(target, safe='')}",
@@ -2789,7 +2795,16 @@ async def settings_sso_save(request: Request):
     if not require_admin(request):
         return back("/settings/sso", "Admin accounts only")
     data = await _read_form(request)
-    return _apply(data, "saml", request.state.user["username"], "/settings/sso")
+    response = _apply(data, "saml", request.state.user["username"], "/settings/sso")
+    # Not refused: the switch cannot lock anybody out, because it stands down
+    # on its own while SSO is unconfigured. Saying so beats a setting that
+    # looks applied and is not.
+    if settings.get_bool("ITAM_LOCAL_LOGIN_DISABLED") and not saml.is_configured():
+        return back("/settings/sso",
+                    "Saved. Username and password stay on until single sign-on "
+                    "is finished - a switch that leaves no way in is a locked "
+                    "door with the key inside.")
+    return response
 
 
 @app.post("/settings/reset")
@@ -3044,7 +3059,10 @@ def accounts_page(request: Request):
 def settings_sso(request: Request):
     if not require_admin(request):
         return HTMLResponse("<h1>403</h1><p>Admin accounts only.</p>", status_code=403)
+    disabled = settings.get_bool("ITAM_LOCAL_LOGIN_DISABLED")
     return render(request, "settings_sso.html", cfg=saml.config_status(),
+                  local_off=disabled and saml.is_configured(),
+                  local_pending=disabled and not saml.is_configured(),
                   fields=settings.group("saml"), section="sso")
 
 

@@ -49,7 +49,27 @@
    '3. Everything else',
    'The three from the metadata are filled in for you; the rest are yours to choose.') }}
 
-<p class="hint">Local accounts keep working alongside single sign-on, which is how
-  you get back in if Entra is unreachable. Keep at least one local admin with a
-  password and two-factor for exactly that.</p>
+<h2>Turning passwords off</h2>
+{% if local_off %}
+  <p class="ok">Username and password are turned off. The sign-in page offers
+    only Microsoft, and posting to the password endpoint is refused.</p>
+{% elif local_pending %}
+  <div class="warn"><strong>Not in effect yet</strong> &mdash; the switch is on,
+    but single sign-on is not finished, so passwords still work. It takes hold
+    by itself once SSO is configured.</div>
+{% else %}
+  <p class="meta">Set <strong>Turn off username and password</strong> above once
+    Microsoft sign-in works. Until then, leave it alone.</p>
+{% endif %}
+<p class="hint">It is a real refusal, not a hidden form: the endpoint says no
+   too. It also stands down on its own if the SAML settings are ever cleared,
+   so clearing them can never leave an installation with no way in.</p>
+<p class="hint"><strong>If Entra is down and you need in</strong>, the way back
+   is on the server, which is the point &mdash; it takes shell access, not a
+   guessable URL:</p>
+<pre class="copyable">cd /opt/itam &amp;&amp; docker compose exec itam \
+  python -c "from app import settings; settings.set_value('ITAM_LOCAL_LOGIN_DISABLED','0','recovery')"</pre>
+<p class="hint">That takes effect immediately &mdash; no restart. Keep at least one
+   local admin with a password and two-factor so there is an account to come
+   back to.</p>
 {% endblock %}

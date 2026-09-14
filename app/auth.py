@@ -135,6 +135,24 @@ def clear_failures(username: str) -> None:
 
 # --- sessions ------------------------------------------------------------
 
+def local_login_allowed() -> bool:
+    """Whether a username and password may be used at all.
+
+    Turned off, the sign-in page offers only Microsoft and the password
+    endpoint refuses - not merely a hidden form, which would leave the
+    endpoint there to be posted to anyway.
+
+    It only applies while SSO is actually configured. If the SAML settings are
+    cleared or never finished, passwords come back on their own: a switch that
+    can leave an installation with no way in at all is not a security control,
+    it is a locked door with the key inside.
+    """
+    from . import saml
+    if not settings.get_bool("ITAM_LOCAL_LOGIN_DISABLED"):
+        return True
+    return not saml.is_configured()
+
+
 def check_credentials(username: str, password: str):
     """Verify the password step only. Returns the user row, or None."""
     username = (username or "").strip().lower()
