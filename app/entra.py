@@ -894,6 +894,25 @@ def _resource_performance_rows() -> tuple[list[dict], str, str]:
     return rows, ("the per-device summary" if rows else "nothing"), ""
 
 
+def endpoint_analytics_reach() -> dict:
+    """How much of the fleet reports to Endpoint Analytics at all.
+
+    Asked only when resource performance came back empty, to tell two very
+    different situations apart: nothing reaches Endpoint Analytics, or plenty
+    does and the Resource performance report alone is empty. The first is a
+    data collection policy that is not assigned; the second is that report
+    being a separate preview feature. Saying "switch Endpoint analytics on"
+    when the score is 87 is how this went wrong twice.
+    """
+    managed = db.q1("SELECT COUNT(*) c FROM devices WHERE ignored_reason IS NULL")["c"]
+    try:
+        rows = _get_all("/deviceManagement/userExperienceAnalyticsDevicePerformance",
+                        {"$top": "200"}, base=GRAPH_BETA)
+    except GraphError as exc:
+        return {"reporting": None, "managed": managed, "error": str(exc)[:200]}
+    return {"reporting": len(rows), "managed": managed, "error": ""}
+
+
 def sync_resource_performance() -> dict:
     """CPU model and total RAM, from Endpoint Analytics.
 
@@ -951,16 +970,39 @@ def sync_resource_performance() -> dict:
     out = {"devices": len(rows), "cpu_models": cpus, "ram_filled": rams,
            "reported_no_cpu": no_cpu, "not_in_itam": unmatched, "read_from": source}
     if not rows:
-        out["note"] = (
-            "Endpoint Analytics returned no devices. The plain collection was "
-            "empty and " + (
-                "the per-device summary refused: " + refused if refused else
-                "so was the per-device summary") + ". If the Endpoint analytics "
-            "report in Intune does show devices, this is an API problem rather "
-            "than a setup one - send that line on. If it does not, switch it on "
-            "under Reports > Endpoint analytics: the guided setup asks 'Collect "
-            "device data from', and All cloud-managed devices assigns the data "
-            "collection policy. Data takes up to 24 hours after a restart.")
+        if refused:
+            out["note"] = ("Resource performance refused: " + refused
+                           + " - that is the permission Graph asked for, not one "
+                             "ITAM will demand on its own.")
+        else:
+            reach = endpoint_analytics_reach()
+            out["reporting_to_endpoint_analytics"] = reach["reporting"]
+            if reach["error"]:
+                out["note"] = ("Resource performance was empty and Endpoint "
+                               "Analytics itself could not be read: " + reach["error"])
+            elif not reach["reporting"]:
+                out["note"] = (
+                    "Nothing reaches Endpoint Analytics at all. Switch it on in "
+                    "Intune under Reports > Endpoint analytics; the guided setup "
+                    "asks 'Collect device data from', and All cloud-managed "
+                    "devices assigns the data collection policy. Data takes up "
+                    "to 24 hours after a restart.")
+            else:
+                out["note"] = (
+                    f"Endpoint Analytics is working - {reach['reporting']} of "
+                    f"{reach['managed']} managed devices report to it - but "
+                    "Resource performance has no rows, and that is the only "
+                    "report carrying a processor name. It is a separate preview "
+                    "report: check Reports > Endpoint analytics > Resource "
+                    "performance in Intune. "
+                    + ("Most of the fleet is not reporting either, so the data "
+                       "collection policy is assigned to too few devices - "
+                       "Devices > Configuration > Intune data collection policy "
+                       "> Assignments."
+                       if reach["reporting"] < reach["managed"] / 2 else
+                       "If that report is empty in the portal too, no API can "
+                       "produce a CPU model and the remaining route is a "
+                       "remediation script."))
     elif cpus == 0 and unmatched == len(rows):
         out["note"] = (
             "Endpoint Analytics answered, but none of its deviceId values "

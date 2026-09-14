@@ -286,7 +286,7 @@ check("the run itself did not fail", code, 0)
 check("the log says NOTHING, not OK", line.split()[2], "NOTHING")
 check("and the line explains itself", "Reports > Endpoint analytics" in line, True)
 check("the reason is in the history too, not just on screen",
-      "Endpoint Analytics returned no devices" in
+      "Endpoint analytics" in
       db.q1("SELECT detail FROM sync_runs WHERE job='specs' "
             "ORDER BY id DESC")["detail"], True)
 check("note is not printed as a counter", "note=" in line, False)
@@ -345,8 +345,52 @@ check("no devices", out["devices"], 0)
 check("the job says nothing was read", out["read_from"], "nothing")
 check("and the note carries the refusal",
       "ReadWrite.All" in out["note"], True)
-check("while still saying what to check in the portal",
-      "Endpoint analytics" in out["note"], True)
+# A refusal is a permission problem, so it says so and stops. Sending
+# somebody to check a portal setting they have already got right is how the
+# last two rounds of this were wasted.
+check("and does not send you to the portal for a permission problem",
+      "Reports > Endpoint analytics" in out["note"], False)
+check("it says whose ask it was",
+      "not one ITAM will demand" in out["note"], True)
+
+print("\n--- empty and empty are two different problems ---")
+# Telling somebody to switch Endpoint Analytics on, when their score is 87 and
+# the portal is full, is how this went wrong twice.
+db.execute("UPDATE devices SET ignored_reason = NULL")
+managed = db.q1("SELECT COUNT(*) c FROM devices WHERE ignored_reason IS NULL")["c"]
+
+
+def reach(device_performance_rows):
+    def fake(path, params=None, base=None, advanced=False):
+        if "DevicePerformance" in path:
+            return [{"deviceName": f"D{i}"} for i in range(device_performance_rows)]
+        return []
+    return fake
+
+
+entra._get_all = reach(0)
+note = entra.sync_resource_performance()["note"]
+check("nothing reporting reads as a setup problem",
+      "Switch it on in Intune" in note, True)
+
+entra._get_all = reach(1)
+out = entra.sync_resource_performance()
+check("some reporting is counted", out["reporting_to_endpoint_analytics"], 1)
+check("and it does not say to switch on what is already on",
+      "Switch it on in Intune" in out["note"], False)
+check("it names the report that is actually empty",
+      "Resource performance has no rows" in out["note"], True)
+check("and says where the processor name lives",
+      "only report carrying a processor name" in out["note"], True)
+check("thin coverage points at the assignment",
+      "data collection policy is assigned to too few" in out["note"], True)
+
+entra._get_all = reach(managed)
+note = entra.sync_resource_performance()["note"]
+check("full coverage points at the report instead",
+      "remediation script" in note, True)
+check("without blaming the assignment",
+      "too few" in note, False)
 
 print()
 print("FAILURES:", ", ".join(fails) if fails else "none")
