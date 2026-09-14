@@ -21,7 +21,7 @@
     <label>Priced in{{ currency_select(currencies) }}</label>
     <label class="wide">Notes<input name="notes" placeholder="quote reference, purchase date…"></label>
 
-    {{ criterion_fields(fields, ops, attribute_names, optional=true) }}
+    {{ criterion_fields(fields, ops, attribute_names, numeric_ops, numeric_fields, optional=true) }}
 
     <label class="wide">Only devices held by members of
       <select name="include" multiple size="3">

@@ -26,12 +26,34 @@ FIELDS = {
     "os":           ("Operating system", "COALESCE(d.os,'')"),
     "category":     ("Category", "COALESCE(a.category,'')"),
     "attribute":    ("Custom attribute", None),      # handled separately
+    "ram_gb":       ("Memory (GB)", None),           # numeric, see NUMERIC
+    "disk_gb":      ("Disk (GB)", None),
+}
+
+# What a machine costs moves with its memory and its disk, and both are
+# already synced for every managed device. Compared as numbers, not as text:
+# "16" sorting before "8" is the kind of thing that prices a fleet wrong and
+# is never noticed.
+#
+# Stored in bytes, asked about in GB. Memory is binary because that is how it
+# is sold - a 32GB machine reports 34,359,738,368 - and a disk is decimal for
+# the same reason.
+NUMERIC = {
+    "ram_gb": ("d.memory_total", 1024 ** 3),
+    "disk_gb": ("d.storage_total", 1000 ** 3),
 }
 
 OPS = {
     "eq":       ("is exactly", "LOWER({expr}) = LOWER(?)"),
     "contains": ("contains", "LOWER({expr}) LIKE '%' || LOWER(?) || '%'"),
     "starts":   ("starts with", "LOWER({expr}) LIKE LOWER(?) || '%'"),
+}
+
+# Only these make sense on a number, and the text operators make none.
+NUMERIC_OPS = {
+    "eq":   ("is exactly", "="),
+    "gte":  ("is at least", ">="),
+    "lte":  ("is at most", "<="),
 }
 
 
@@ -98,10 +120,16 @@ def criteria(group_id: int):
 
 def add_criterion(group_id: int, field: str, op: str, value: str,
                   attr_name: str | None = None) -> None:
-    if field not in FIELDS or op not in OPS:
+    allowed = NUMERIC_OPS if field in NUMERIC else OPS
+    if field not in FIELDS or op not in allowed:
         raise ValueError("unknown field or operator")
     if field == "attribute" and not (attr_name or "").strip():
         raise ValueError("an attribute criterion needs the attribute name")
+    if field in NUMERIC:
+        try:
+            float(value.strip())
+        except ValueError:
+            raise ValueError(f"{FIELDS[field][0]} takes a number of GB")
     db.execute(
         """INSERT INTO price_group_criteria (group_id, field, attr_name, op, value)
            VALUES (?,?,?,?,?)""",
@@ -158,6 +186,9 @@ def describe(criterion) -> str:
     field_label = FIELDS.get(criterion["field"], (criterion["field"], None))[0]
     if criterion["field"] == "attribute":
         field_label = f"Attribute '{criterion['attr_name']}'"
+    if criterion["field"] in NUMERIC:
+        op_label = NUMERIC_OPS.get(criterion["op"], (criterion["op"], None))[0]
+        return f"{field_label} {op_label} {criterion['value']}"
     op_label = OPS.get(criterion["op"], (criterion["op"], None))[0]
     return f"{field_label} {op_label} “{criterion['value']}”"
 
@@ -167,6 +198,21 @@ def _where(rows) -> tuple[str, list]:
     looked up in whitelists, so only the value ever reaches SQL as data."""
     clauses, params = [], []
     for c in rows:
+        if c["field"] in NUMERIC:
+            column, per_gb = NUMERIC[c["field"]]
+            comparison = NUMERIC_OPS.get(c["op"], NUMERIC_OPS["eq"])[1]
+            try:
+                want = float(str(c["value"]).strip() or 0)
+            except ValueError:
+                clauses.append("1=0")     # a criterion nobody can read matches nothing
+                continue
+            # Rounded to whole GB on both sides: a 512GB disk reports
+            # 512,110,190,592, and asking for "exactly 512" should find it.
+            clauses.append(
+                f"(CAST(ROUND(COALESCE({column},0) / {per_gb}.0) AS INTEGER) "
+                f"{comparison} ? AND COALESCE({column},0) > 0)")
+            params.append(int(round(want)))
+            continue
         op_sql = OPS[c["op"]][1]
         if c["field"] == "attribute":
             inner = op_sql.format(expr="da.value")

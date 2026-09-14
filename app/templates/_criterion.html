@@ -5,10 +5,11 @@
    why - so the values a criterion can usefully take are offered rather than
    remembered. #}
 
-{% macro criterion_fields(fields, ops, attribute_names, optional=false) %}
+{% macro criterion_fields(fields, ops, attribute_names, numeric_ops, numeric_fields, optional=false) %}
   <label>Field<select name="field" data-role="field">
     {% if optional %}<option value="">&mdash; add one later &mdash;</option>{% endif %}
     {% for key, spec in fields.items() %}<option value="{{ key }}"
+      {% if key in numeric_fields %}data-numeric="1"{% endif %}
       {% if key == 'model' and optional %}selected{% endif %}>{{ spec[0] }}</option>{% endfor %}
   </select></label>
 
@@ -18,8 +19,11 @@
     {% for a in attribute_names %}<option value="{{ a }}">{% endfor %}
   </datalist>
 
-  <label data-role="op-label">Match<select name="op">
-    {% for key, spec in ops.items() %}<option value="{{ key }}">{{ spec[0] }}</option>{% endfor %}
+  <label data-role="op-label">Match<select name="op" data-role="op">
+    {% for key, spec in ops.items() %}<option value="{{ key }}"
+      data-kind="text">{{ spec[0] }}</option>{% endfor %}
+    {% for key, spec in numeric_ops.items() %}<option value="{{ key }}"
+      data-kind="number" hidden>{{ spec[0] }}</option>{% endfor %}
   </select></label>
 
   <label data-role="value-label">Value<input name="value" list="value-suggestions"
@@ -72,6 +76,25 @@
 
     function sync() {
       var chosen = !!field.value;
+      // Memory and disk are numbers of GB. The text operators mean nothing on
+      // one, and "contains 16" would quietly match 160.
+      var picked = field.options[field.selectedIndex];
+      var numeric = !!(picked && picked.getAttribute('data-numeric'));
+      var op = form.querySelector('[data-role=op]');
+      if (op) {
+        Array.prototype.forEach.call(op.options, function (o) {
+          var fits = (o.getAttribute('data-kind') === 'number') === numeric;
+          o.hidden = !fits;
+          o.disabled = !fits;
+        });
+        if (op.selectedOptions.length && op.selectedOptions[0].disabled) {
+          for (var i = 0; i < op.options.length; i++) {
+            if (!op.options[i].disabled) { op.selectedIndex = i; break; }
+          }
+        }
+      }
+      value.type = numeric ? 'number' : 'text';
+      value.step = numeric ? '1' : '';
       show(attrLabel, field.value === 'attribute');
       show(opLabel, chosen);
       show(valueLabel, chosen);

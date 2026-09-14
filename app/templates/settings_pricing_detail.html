@@ -61,7 +61,7 @@
 
 <form class="grid-form" method="post" action="/settings/pricing/{{ g.id }}/criteria/add"
       data-criterion>
-  {{ criterion_fields(fields, ops, attribute_names) }}
+  {{ criterion_fields(fields, ops, attribute_names, numeric_ops, numeric_fields) }}
   <button type="submit">Add criterion</button>
 </form>
 {{ criterion_script(field_values, attribute_values) }}

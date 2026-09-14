@@ -2329,6 +2329,8 @@ def settings_pricing(request: Request):
                                       for c in s["conditions"]]})
     return render(request, "settings_pricing.html", groups=groups,
                   fields=pricing.FIELDS, ops=pricing.OPS,
+                  numeric_ops=pricing.NUMERIC_OPS,
+                  numeric_fields=sorted(pricing.NUMERIC),
                   attribute_names=pricing.attribute_names(),
                   field_values=pricing.field_values(),
                   attribute_values=pricing.attribute_values(),
@@ -2389,6 +2391,8 @@ def pricing_detail(request: Request, group_id: int):
                   describe=pricing.describe,
                   describe_condition=pricing.describe_condition,
                   fields=pricing.FIELDS, ops=pricing.OPS,
+                  numeric_ops=pricing.NUMERIC_OPS,
+                  numeric_fields=sorted(pricing.NUMERIC),
                   attribute_names=pricing.attribute_names(),
                   field_values=pricing.field_values(),
                   attribute_values=pricing.attribute_values(),
