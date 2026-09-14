@@ -55,32 +55,21 @@
 
 <table>
   <thead><tr><th class="pickcol"><input type="checkbox" id="pickall"
-    title="Select everyone shown"></th><th>Name</th><th>UPN</th><th>Department</th><th>Country</th>
-    <th class="num">Assets</th><th class="num">Asset value</th><th class="num">Pooled</th>
-    <th class="num">Licences</th><th class="num">Monthly</th><th class="num">Annual</th></tr></thead>
+    title="Select everyone shown"></th><th>Name</th><th>UPN</th><th>Department</th>
+    <th>Country</th><th class="num">Assets</th><th>Job title</th></tr></thead>
   <tbody>
   {% for u in users %}
     <tr {% if not u.account_enabled %}class="disabled"{% endif %}>
       <td class="pickcol"><input type="checkbox" class="pick" name="upn" value="{{ u.upn }}"></td>
       <td><a href="/users/{{ u.upn }}">{{ u.display_name }}</a>
-          {% if not u.account_enabled %}<span class="tag">disabled</span>{% endif %}</td>
+          {% if not u.account_enabled %}<span class="pill flat">disabled</span>{% endif %}</td>
       <td class="mono">{{ u.upn }}</td>
       <td>{{ u.department or '' }}</td>
       <td>{{ u.country or '' }}</td>
       <td class="num">{{ u.asset_count }}</td>
-      <td class="num">{{ u.asset_total|money }}</td>
-      <td class="num">{{ u.pooled_total|money }}
-        {% if u.onetime_currencies and ',' in u.onetime_currencies %}
-          {% set codes = u.onetime_currencies.split(',')|reject('equalto','')|unique|sort|list %}
-          {% if codes|length > 1 %}
-            <span class="chip" title="paid in {{ codes|join(', ') }}">{{ codes|join('/') }}</span>
-          {% endif %}
-        {% endif %}</td>
-      <td class="num">{{ u.sub_count }}</td>
-      <td class="num">{{ u.monthly_total|money }}</td>
-      <td class="num">{{ (u.monthly_total * 12)|money }}</td></tr>
+      <td>{{ u.job_title or '' }}</td></tr>
   {% else %}
-    <tr><td colspan="11" class="empty">No people yet &mdash; run an Entra ID sync from <a href="/settings/entra">Settings</a>.</td></tr>
+    <tr><td colspan="7" class="empty">No people yet &mdash; run an Entra ID sync from <a href="/settings/entra">Settings</a>.</td></tr>
   {% endfor %}
   </tbody>
 </table>

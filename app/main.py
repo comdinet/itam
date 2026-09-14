@@ -211,7 +211,9 @@ LEFT JOIN (SELECT assigned_upn,
                   SUM(""" + db.conv("cost_cents", "rate_micro") + """) asset_total,
                   COUNT(*) asset_count,
                   GROUP_CONCAT(DISTINCT currency) currencies
-             FROM assets WHERE assigned_upn IS NOT NULL GROUP BY assigned_upn) a
+             FROM assets WHERE assigned_upn IS NOT NULL
+              AND """ + devices.not_ignored("assets") + """
+            GROUP BY assigned_upn) a
        ON a.assigned_upn = u.upn
 LEFT JOIN (SELECT al.upn,
                   SUM(""" + db.conv("al.quantity * si.unit_cost_cents", "si.rate_micro") + """) pooled_total,
@@ -954,7 +956,8 @@ def user_detail(request: Request, upn: str):
         """SELECT a.*, d.id AS device_id, d.device_name, d.model AS device_model
            FROM assets a
            LEFT JOIN devices d ON d.asset_id = a.id
-           WHERE a.assigned_upn = ? ORDER BY a.category, a.name""", (upn,))
+           WHERE a.assigned_upn = ? AND """ + devices.NOT_IGNORED + """
+           ORDER BY a.category, a.name""", (upn,))
     # Three facts per asset - processor, memory, disk - not the dozen inventory
     # properties Intune happens to carry.
     asset_specs = devices.specs_for(upn)

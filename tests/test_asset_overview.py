@@ -187,6 +187,41 @@ with TestClient(main.app) as client:
           left[0]["id"], vm_ids[0])
 
 
+print("\n--- a person's own figures leave out an ignored device's asset too ---")
+# The Assets page, the dashboard and the widgets all exclude these. A person's
+# card counting them anyway is the same estate answering two different ways.
+db.execute("""INSERT INTO assets (name, category, cost_cents, assigned_upn)
+              VALUES ('VMware20,1','Laptop',99900,'a@x.com')""")
+ghost = db.q1("SELECT id FROM assets WHERE name='VMware20,1' AND assigned_upn='a@x.com'")
+db.execute("""INSERT INTO devices (id, device_name, os, asset_id, ignored_reason)
+              VALUES ('vmx','WINVM','Windows',?,'Model contains "vmware"')""",
+           (ghost["id"],))
+with TestClient(main.app) as client:
+    client.post("/login", data={"username": "admin", "password": "Overview!2345"},
+                follow_redirects=False)
+    page = client.get("/users").text
+    row = page.split('href="/users/a@x.com"', 1)[1].split("</tr>", 1)[0]
+    check("it is not in the person's asset count", "VMware" in row, False)
+    real = db.q1("""SELECT COUNT(*) c FROM assets a WHERE a.assigned_upn='a@x.com'
+                    AND a.id NOT IN (SELECT asset_id FROM devices
+                                     WHERE ignored_reason IS NOT NULL
+                                       AND asset_id IS NOT NULL)""")["c"]
+    counts = [int(c) for c in __import__("re").findall(
+        r'<td class="num">(\d+)</td>', row)]
+    check("the count is the real kit only", counts, [real])
+    check("and its cost is not in the person's total",
+          "999.00" in client.get("/users/a@x.com").text, False)
+
+print("\n--- and the People list is names and kit, not a finance report ---")
+with TestClient(main.app) as client:
+    client.post("/login", data={"username": "admin", "password": "Overview!2345"},
+                follow_redirects=False)
+    head = client.get("/users").text.split("<thead>", 1)[1].split("</thead>", 1)[0]
+    for gone in ("Asset value", "Pooled", "Licences", "Monthly", "Annual"):
+        check(f"{gone} is gone", gone in head, False)
+    for kept in ("Name", "UPN", "Department", "Country", "Assets", "Job title"):
+        check(f"{kept} stays", kept in head, True)
+
 print()
 print("FAILURES:", ", ".join(fails) if fails else "none")
 sys.exit(1 if fails else 0)
