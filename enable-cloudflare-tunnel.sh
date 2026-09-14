@@ -98,20 +98,29 @@ fi
 if [ -z "$TOKEN_ARG" ]; then
     cat <<'HOWTO'
 
-Create the tunnel first - it takes a minute, in the dashboard:
+Create the tunnel first, in the dashboard:
 
   1. https://one.dash.cloudflare.com  ->  Networks  ->  Tunnels
   2. Create a tunnel  ->  Cloudflared  ->  name it (itam, say)
-  3. Skip the install instructions. Copy the token from the command it
-     shows you: the long string after --token, starting eyJ...
-  4. On the "Route tunnel" step, add a public hostname:
-       Subdomain: itam        Domain: remedio.io
-       Type: HTTP             URL: itam:8000
-     HTTP and port 8000 are right: the tunnel reaches the app inside this
-     machine's Docker network, and Cloudflare does TLS at the edge.
+  3. Ignore the install instructions - this script is the install. Copy the
+     token out of the command it shows you: the long string after --token,
+     starting eyJ.
 
-That step also creates the DNS record for you, proxied, pointing at the
-tunnel rather than at this machine's address.
+Then come back here and paste it. The dashboard will not let you add a
+public hostname yet: "Connection Status" says no connection detected, and
+Next stays greyed out until something connects. Running this script is what
+connects it.
+
+Once it is running, go back to that tunnel in the dashboard, press Next, and
+add the public hostname:
+
+  Subdomain: itam        Domain: remedio.io
+  Type: HTTP             URL: itam:8000
+
+HTTP and port 8000 are right: the tunnel reaches the app inside this
+machine's Docker network, and Cloudflare does TLS at the edge. Saving that
+also creates the DNS record for you - proxied, pointing at the tunnel rather
+than at this machine's address.
 
 HOWTO
     printf 'Tunnel token: '
@@ -191,6 +200,7 @@ if [ "$NO_START" = "1" ]; then
     exit 0
 fi
 
+hostname_guess=$(read_env ITAM_PUBLIC_HOSTNAME | cut -d. -f1)
 echo "Starting..."
 $COMPOSE up -d --remove-orphans
 
@@ -208,6 +218,13 @@ if [ "$KEEP_PORTS" = "0" ]; then
     echo "To undo just that part:  ./enable-cloudflare-tunnel.sh --keep-ports"
 fi
 echo
-echo "Check it from somewhere else:  curl -I https://$(read_env ITAM_PUBLIC_HOSTNAME)"
+echo "NEXT: the tunnel is connected but not yet routed anywhere. Back in the"
+echo "dashboard, that tunnel's Next button is live now. Press it and add a"
+echo "public hostname:"
+echo "    Subdomain: ${hostname_guess:-itam}   Domain: your zone"
+echo "    Type: HTTP                Service URL: itam:8000"
+echo "Saving that creates the proxied DNS record too."
+echo
+echo "Then check it from somewhere else:  curl -I https://$(read_env ITAM_PUBLIC_HOSTNAME)"
 echo "Logs:                          $COMPOSE logs -f cloudflared"
 echo "Off again:                     ./enable-cloudflare-tunnel.sh --disable"

@@ -136,12 +136,29 @@ firewall hole, no public IP, and the origin address is never published. It is
 also the only one of the three that works behind NAT or on a machine with no
 public address at all.
 
-**1. Create the tunnel.** [one.dash.cloudflare.com](https://one.dash.cloudflare.com)
-→ Networks → Tunnels → Create a tunnel → **Cloudflared** → name it. Skip the
-install instructions; copy the token out of the command it shows you — the
-long string after `--token`, starting `eyJ`.
+The order matters, and it is not the order the dashboard appears to suggest:
+you cannot add the public hostname until a connector has connected. The
+**Next** button on the create screen stays greyed out while Connection Status
+reads *No connection detected yet*.
 
-**2. Route it.** On the same screen, add a public hostname:
+**1. Create the tunnel.** [one.dash.cloudflare.com](https://one.dash.cloudflare.com)
+→ Networks → Tunnels → Create a tunnel → **Cloudflared** → name it. Ignore the
+install instructions — the script below is the install. Copy the token out of
+the command it shows: the long string after `--token`, starting `eyJ`. Treat it
+like a password; it grants access to route traffic into your account.
+
+**2. Connect it.**
+
+```bash
+sudo ./enable-cloudflare-tunnel.sh
+```
+
+It pastes through step 1, **runs the real connector with your token and waits
+for it to register a connection before writing anything to `.env`**, then
+starts the tunnel alongside everything else.
+
+**3. Now route it.** Back on that tunnel in the dashboard, Connection Status
+shows a connector and **Next** is live. Press it and add a public hostname:
 
 | Field | Value |
 |---|---|
@@ -151,19 +168,9 @@ long string after `--token`, starting `eyJ`.
 | URL | `itam:8000` |
 
 `HTTP` and port `8000` are right: the tunnel reaches the app inside this
-machine's Docker network, and Cloudflare does TLS at the edge. That step also
-creates the DNS record for you — a proxied `CNAME`, the orange cloud, pointing
-at the tunnel rather than at this machine.
-
-**3. Turn it on.**
-
-```bash
-sudo ./enable-cloudflare-tunnel.sh
-```
-
-It pastes through the steps above, **runs the real connector with your token
-and waits for it to register a connection before writing anything to `.env`**,
-then starts the tunnel alongside everything else.
+machine's Docker network, and Cloudflare does TLS at the edge. Saving that also
+creates the DNS record — a proxied `CNAME`, the orange cloud, pointing at the
+tunnel rather than at this machine.
 
 Non-interactive:
 
