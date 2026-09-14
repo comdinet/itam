@@ -167,7 +167,7 @@ def render(request: Request, name: str, **ctx):
     if path == "/":
         section = "/"
     else:
-        for candidate in ("/users", "/assets", "/subscriptions", "/activity",
+        for candidate in ("/users", "/assets", "/applications", "/activity",
                           "/settings"):
             if path == candidate or path.startswith(candidate + "/"):
                 section = candidate
@@ -1498,7 +1498,16 @@ def activity(request: Request, upn: str = ""):
 
 # --- subscriptions -------------------------------------------------------
 
-@app.get("/subscriptions", response_class=HTMLResponse)
+# "Subscriptions" was the old name. Bookmarks, the API's own links and anyone
+# who learned the URL keep working, the same way /admin still reaches Settings.
+@app.get("/subscriptions", include_in_schema=False)
+@app.get("/subscriptions/{rest:path}", include_in_schema=False)
+def subscriptions_renamed(rest: str = ""):
+    return RedirectResponse("/applications" + (f"/{rest}" if rest else ""),
+                            status_code=308)
+
+
+@app.get("/applications", response_class=HTMLResponse)
 def subs_list(request: Request):
     rows = db.q(
         """SELECT sub.*, COUNT(ss.upn) AS seats,
@@ -1512,22 +1521,22 @@ def subs_list(request: Request):
                   currencies=fx.listing(active_only=True))
 
 
-@app.post("/subscriptions/new")
+@app.post("/applications/new")
 def sub_new(name: str = Form(...), vendor: str = Form(""), monthly_cost: str = Form("0"),
             currency: str = Form(""), notes: str = Form("")):
     code, rate, problem = pick_currency(currency)
     if problem:
-        return back("/subscriptions", problem)
+        return back("/applications", problem)
     db.execute(
         """INSERT INTO subscriptions (name, vendor, monthly_cost_cents, currency,
                                       rate_micro, notes)
            VALUES (?,?,?,?,?,?)""",
         (name.strip(), vendor.strip() or None, db.to_cents(monthly_cost), code, rate,
          notes.strip() or None))
-    return back("/subscriptions", "Subscription added")
+    return back("/applications", "Application added")
 
 
-@app.get("/subscriptions/{sub_id}", response_class=HTMLResponse)
+@app.get("/applications/{sub_id}", response_class=HTMLResponse)
 def sub_detail(request: Request, sub_id: int):
     sub = db.q1("SELECT * FROM subscriptions WHERE id = ?", (sub_id,))
     if not sub:
@@ -1547,16 +1556,16 @@ def sub_detail(request: Request, sub_id: int):
                   currencies=fx.listing(active_only=True))
 
 
-@app.post("/subscriptions/{sub_id}/edit")
+@app.post("/applications/{sub_id}/edit")
 def sub_edit(sub_id: int, name: str = Form(...), vendor: str = Form(""),
              monthly_cost: str = Form("0"), currency: str = Form(""),
              notes: str = Form("")):
     prev = db.q1("SELECT currency, rate_micro FROM subscriptions WHERE id = ?", (sub_id,))
     if not prev:
-        return back("/subscriptions", "No such subscription")
+        return back("/applications", "No such application")
     code, rate, problem = pick_currency(currency)
     if problem:
-        return back(f"/subscriptions/{sub_id}", problem)
+        return back(f"/applications/{sub_id}", problem)
     if code == (prev["currency"] or "") and prev["rate_micro"]:
         rate = int(prev["rate_micro"])
     db.execute(
@@ -1564,27 +1573,27 @@ def sub_edit(sub_id: int, name: str = Form(...), vendor: str = Form(""),
                                     rate_micro=?, notes=? WHERE id=?""",
         (name.strip(), vendor.strip() or None, db.to_cents(monthly_cost), code, rate,
          notes.strip() or None, sub_id))
-    return back(f"/subscriptions/{sub_id}", "Subscription updated")
+    return back(f"/applications/{sub_id}", "Application updated")
 
 
-@app.post("/subscriptions/{sub_id}/delete")
+@app.post("/applications/{sub_id}/delete")
 def sub_delete(sub_id: int):
     db.execute("DELETE FROM subscriptions WHERE id = ?", (sub_id,))
-    return back("/subscriptions", "Subscription deleted")
+    return back("/applications", "Subscription deleted")
 
 
-@app.post("/subscriptions/{sub_id}/seats/add")
+@app.post("/applications/{sub_id}/seats/add")
 def seat_add(sub_id: int, upn: str = Form(...)):
     db.execute(
         "INSERT OR IGNORE INTO subscription_seats (subscription_id, upn, assigned_on) VALUES (?,?,?)",
         (sub_id, upn, today()))
-    return back(f"/subscriptions/{sub_id}", "Seat assigned")
+    return back(f"/applications/{sub_id}", "Seat assigned")
 
 
-@app.post("/subscriptions/{sub_id}/seats/remove")
+@app.post("/applications/{sub_id}/seats/remove")
 def seat_remove(sub_id: int, upn: str = Form(...), redirect: str = Form("")):
     db.execute("DELETE FROM subscription_seats WHERE subscription_id = ? AND upn = ?", (sub_id, upn))
-    return back(redirect or f"/subscriptions/{sub_id}", "Seat removed")
+    return back(redirect or f"/applications/{sub_id}", "Seat removed")
 
 
 # --- admin / Entra sync --------------------------------------------------
@@ -2170,7 +2179,7 @@ def licence_create_subscription(sku_id: str):
         return back("/settings/entra/licences", "No such licence")
     existing = db.q1("SELECT id FROM subscriptions WHERE sku_id = ?", (sku_id,))
     if existing:
-        return back(f"/subscriptions/{existing['id']}",
+        return back(f"/applications/{existing['id']}",
                     "That licence already has a subscription")
 
     sub_id = db.execute(
@@ -2186,7 +2195,7 @@ def licence_create_subscription(sku_id: str):
             """INSERT OR IGNORE INTO subscription_seats (subscription_id, upn, assigned_on)
                VALUES (?,?,?)""", (sub_id, row["upn"], today()))
         seats += 1
-    return back(f"/subscriptions/{sub_id}",
+    return back(f"/applications/{sub_id}",
                 f"Subscription created with {seats} seat(s) - set the per-seat cost")
 
 

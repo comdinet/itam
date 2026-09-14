@@ -82,5 +82,22 @@ with TestClient(main.app) as client:          # lifespan runs: init_db, bootstra
     check("something was actually checked", checked > 15, True)
     print(f"       ({checked} routes exercised)")
 
+print("\n--- the old subscription URLs still work ---")
+# Bookmarks, and anybody who learned the address, keep working the way /admin
+# still reaches Settings.
+with TestClient(main.app) as client:
+    client.post("/login", data={"username": "admin", "password": "RouteTest!2345"},
+                follow_redirects=False)
+    for old, new in [("/subscriptions", "/applications"),
+                     ("/subscriptions/1", "/applications/1")]:
+        r = client.get(old, follow_redirects=False)
+        check(f"{old} redirects", (r.status_code, r.headers.get("location")),
+              (308, new))
+    check("and the new one is the page itself",
+          client.get("/applications").status_code, 200)
+    page = client.get("/applications").text
+    check("which says Applications", "Applications" in page, True)
+    check("and not Subscriptions", "Subscription" in page, False)
+
 print("\nFAILURES:", ", ".join(fails) if fails else "none")
 sys.exit(1 if fails else 0)

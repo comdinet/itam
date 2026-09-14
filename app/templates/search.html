@@ -40,7 +40,7 @@
           <td>{% if r.asset_id %}<a href="/assets/{{ r.asset_id }}">the asset</a>
               {% else %}<span class="pill flat">no asset</span>{% endif %}</td></tr>
     {% else %}
-      <tr><td><a href="/subscriptions/{{ r.id }}">{{ r.name }}</a></td>
+      <tr><td><a href="/applications/{{ r.id }}">{{ r.name }}</a></td>
           <td class="meta">{{ r.vendor or '' }}</td></tr>
     {% endif %}
   {% endfor %}

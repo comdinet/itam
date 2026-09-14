@@ -136,7 +136,16 @@ def refused(text):
 
 missing = refused("Email,Tier\nnoa@x.com,Premium\n")
 check("a missing required column is refused", missing is not None, True)
-check("saying which one", "Subscription name" in missing, True)
+check("saying which one", "Application name" in missing, True)
+
+# The columns were called Subscription name and Subscription tier until the
+# rename. A file filled in before it still imports: a heading changing its
+# mind is no reason to invalidate somebody's spreadsheet.
+old_headers = imports.plan_subscription_seats(
+    "Email,Subscription name,Subscription tier\nnoa@x.com,Claude AI,Premium\n")
+check("an old file still reads", [s["name"] for s in old_headers["subscriptions"]],
+      ["Claude AI Premium"])
+check("and nothing is skipped for the header alone", old_headers["skipped"], [])
 check("and showing what it did find", "Tier" in missing, True)
 check("an empty file is refused", refused("") is not None, True)
 

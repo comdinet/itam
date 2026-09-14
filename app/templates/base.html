@@ -33,7 +33,7 @@
     <a href="/" class="{{ 'on' if nav_here == '/' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg><span>Dashboard</span></a>
     <a href="/users" class="{{ 'on' if nav_here == '/users' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/><path d="M16 5.2a3.2 3.2 0 0 1 0 6"/><path d="M17.5 15.2c2 .6 3.2 2.3 3.2 4.8"/></svg><span>People</span></a>
     <a href="/assets" class="{{ 'on' if nav_here == '/assets' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="5" width="19" height="12" rx="2"/><path d="M8 20h8"/><path d="M12 17v3"/></svg><span>Assets</span></a>
-    <a href="/subscriptions" class="{{ 'on' if nav_here == '/subscriptions' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9h18"/><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 14h4"/></svg><span>Subscriptions</span></a>
+    <a href="/applications" class="{{ 'on' if nav_here == '/applications' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9h18"/><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 14h4"/></svg><span>Applications</span></a>
     <a href="/activity" class="{{ 'on' if nav_here == '/activity' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l2.5-7 4 14 2.5-7H21"/></svg><span>Activity</span></a>
     <div class="side-sep"></div>
     <a href="/settings" class="{{ 'on' if nav_here == '/settings' }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1v.2a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 7 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H1.2a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 2.9 7a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H7a1.6 1.6 0 0 0 1-1.5V1a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V7a1.6 1.6 0 0 0 1.5 1h.2a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg><span>Settings</span></a>
@@ -73,7 +73,7 @@
   <main id="content">
     {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
     {% block body %}{% endblock %}
-    <footer>Costs in {{ currency }}. Assets are one-off cost; subscriptions are
+    <footer>Costs in {{ currency }}. Assets are one-off cost; applications are
       per-seat per-month.</footer>
   </main>
 </div>

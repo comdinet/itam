@@ -8,7 +8,7 @@
   <strong>Nothing tracked yet.</strong>
   Start by pulling your people in from Entra ID under <a href="/settings/entra">Settings</a>,
   then add hardware under <a href="/assets">Assets</a> and licences under
-  <a href="/subscriptions">Subscriptions</a>.
+  <a href="/applications">Applications</a>.
 </div>
 {% endif %}
 {% if country %}
@@ -16,7 +16,7 @@
   counts what people there hold. <a href="/">Show everywhere</a>.</p>
 {% endif %}
 <div class="cards">
-  <a class="card" href="/subscriptions"><span class="label">Monthly SaaS run-rate</span>
+  <a class="card" href="/applications"><span class="label">Monthly SaaS run-rate</span>
     <span class="big">{{ currency }} {{ t.monthly|money }}</span>
     <span class="sub">{{ currency }} {{ (t.monthly * 12)|money }} / year</span></a>
   <a class="card" href="/assets"><span class="label">Hardware &amp; software value</span>
@@ -109,13 +109,13 @@
   and set what they were actually paid in.</p>
 {% endif %}
 
-<h2>Subscriptions by monthly spend</h2>
+<h2>Applications by monthly spend</h2>
 <table>
-  <thead><tr><th>Subscription</th><th>Vendor</th><th class="num">Per seat</th>
+  <thead><tr><th>Application</th><th>Vendor</th><th class="num">Per seat</th>
     <th class="num">Seats</th><th class="num">Monthly</th><th class="num">Annual</th></tr></thead>
   <tbody>
   {% for s in top_subs %}
-    <tr><td><a href="/subscriptions/{{ s.id }}">{{ s.name }}</a></td>
+    <tr><td><a href="/applications/{{ s.id }}">{{ s.name }}</a></td>
         <td>{{ s.vendor or '' }}</td>
         <td class="num">{{ s.monthly_cost_cents|money }}
             <span class="chip">{{ s.currency or currency }}</span></td>
@@ -123,7 +123,7 @@
         <td class="num">{{ s.monthly|money }}</td>
         <td class="num">{{ (s.monthly * 12)|money }}</td></tr>
   {% else %}
-    <tr><td colspan="6" class="empty">No subscriptions yet.</td></tr>
+    <tr><td colspan="6" class="empty">No applications yet.</td></tr>
   {% endfor %}
   </tbody>
 </table>

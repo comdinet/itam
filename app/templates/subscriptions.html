@@ -1,29 +1,29 @@
 {% extends "base.html" %}
 {% from "_currency.html" import currency_select %}
-{% block title %}Subscriptions &middot; ITAM{% endblock %}
+{% block title %}Applications &middot; ITAM{% endblock %}
 {% block body %}
-<h1>Subscriptions <span class="count">{{ subs|length }}</span></h1>
+<h1>Applications <span class="count">{{ subs|length }}</span></h1>
 <p class="meta">Run-rate: <strong>{{ currency }} {{ monthly|money }}</strong> / month
    &middot; {{ currency }} {{ (monthly * 12)|money }} / year</p>
 
-<details class="panel" data-panel="add-subscription" {% if not subs %}open{% endif %}>
-  <summary>Add a subscription</summary>
-  <form class="grid-form" method="post" action="/subscriptions/new">
+<details class="panel" data-panel="add-application" {% if not subs %}open{% endif %}>
+  <summary>Add a application</summary>
+  <form class="grid-form" method="post" action="/applications/new">
     <label>Name<input name="name" required placeholder="Microsoft 365 E3"></label>
     <label>Vendor<input name="vendor" placeholder="Microsoft"></label>
     <label>Cost per seat / month<input name="monthly_cost" inputmode="decimal" placeholder="33.00"></label>
     <label>Billed in{{ currency_select(currencies) }}</label>
     <label class="wide">Notes<input name="notes" placeholder="renewal date, contract ref, …"></label>
-    <button type="submit">Add subscription</button>
+    <button type="submit">Add application</button>
   </form>
 </details>
 
 <table>
-  <thead><tr><th>Subscription</th><th>Vendor</th><th class="num">Per seat / mo</th>
+  <thead><tr><th>Application</th><th>Vendor</th><th class="num">Per seat / mo</th>
     <th class="num">Seats</th><th class="num">Monthly</th><th class="num">Annual</th></tr></thead>
   <tbody>
   {% for s in subs %}
-    <tr><td><a href="/subscriptions/{{ s.id }}">{{ s.name }}</a></td>
+    <tr><td><a href="/applications/{{ s.id }}">{{ s.name }}</a></td>
         <td>{{ s.vendor or '' }}</td>
         <td class="num">{{ s.monthly_cost_cents|money }}
           <span class="chip">{{ s.currency or currency }}</span></td>
@@ -31,7 +31,7 @@
         <td class="num">{{ s.monthly_rep|money }}</td>
         <td class="num">{{ (s.monthly_rep * 12)|money }}</td></tr>
   {% else %}
-    <tr><td colspan="6" class="empty">No subscriptions yet &mdash; add your first one above.</td></tr>
+    <tr><td colspan="6" class="empty">No applications yet &mdash; add your first one above.</td></tr>
   {% endfor %}
   </tbody>
 </table>

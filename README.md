@@ -1,4 +1,4 @@
-# ITAM — simple IT asset & subscription tracking
+# ITAM — simple IT asset & application tracking
 
 A small internal web app for tracking who has what and what it costs.
 People come from **Entra ID**, keyed on **UPN**. Two kinds of cost:
@@ -6,7 +6,7 @@ People come from **Entra ID**, keyed on **UPN**. Two kinds of cost:
 | | What it is | Cost model |
 |---|---|---|
 | **Assets** | Kit you own, by category: laptops, monitors, peripherals, software | one-off cost in any currency — machines with a serial get a row each, interchangeable kit is counted |
-| **Subscriptions** | SaaS licences (M365, GitHub, Slack, …) | cost per seat, per month |
+| **Applications** | SaaS licences (M365, GitHub, Slack, …) | cost per seat, per month |
 
 Repository: <https://github.com/comdinet/itam>
 
@@ -348,7 +348,7 @@ Admins manage them under **Accounts**:
 - **Add an account** — minimum 12-character password; the new account must
   choose its own password at first sign-in.
 - **Roles** — *Admin* can manage accounts; *Standard* can do everything else
-  (assets, subscriptions, assignments, Entra sync).
+  (assets, applications, assignments, Entra sync).
 - **Reset someone's password** — signs out their sessions and forces a change.
 
 ### Two-factor authentication
@@ -521,7 +521,7 @@ Sync behaviour:
 ## What each screen does
 
 - **Dashboard** — monthly SaaS run-rate and annualised figure, total hardware
-  value, spare kit sitting idle, spend by subscription and by department, and
+  value, spare kit sitting idle, spend by application and by department, and
   a reclaim list of licences on disabled accounts.
 - **People** — everyone with their asset count, asset value, licence count and
   monthly/annual licence cost. Searchable, filterable by department.
@@ -547,8 +547,8 @@ Sync behaviour:
   Intune sync lands at zero unless a pricing group covers it. The count of
   unpriced records is offered on the page, so the gap is not something you have
   to go looking for.
-- **Subscriptions** — per-seat cost, seat count, monthly and annual spend;
-  manage seats per subscription.
+- **Applications** — per-seat cost, seat count, monthly and annual spend;
+  manage seats per application.
 - **Settings** — subsections:
   - **General** — counts, plus the application settings, **editable here**.
     Below them, the handful that must stay in `.env`, with the reason.
@@ -591,11 +591,11 @@ string ID:
 Any SKU not in that map is listed under its raw string ID rather than hidden,
 so nothing goes missing.
 
-**Create subscription** turns a licence into a tracked subscription and grants
+**Create application** turns a licence into a tracked application and grants
 its current holders a seat, so the counts line up with Entra immediately. The
 cost starts at zero: Entra knows who holds a licence, not what you pay for it,
-so set the per-seat price on the Subscriptions page. The licence row then links
-to the subscription and flags it while no cost is set.
+so set the per-seat price on the Applications page. The licence row then links
+to the application and flags it while no cost is set.
 
 Two numbers are worth watching:
 
@@ -762,7 +762,7 @@ Which to use:
   linked from Intune.
 - **Counted** — units are interchangeable and have no serial. This is what
   entitlement rules hand out.
-- **Subscriptions** — a recurring monthly charge per person.
+- **Applications** — a recurring monthly charge per person.
 
 Both kinds feed the People list, each person's page, their first-year total, the
 dashboard and the finance CSV (`pooled_units`, `pooled_value`, `onetime_total`).
@@ -1221,7 +1221,7 @@ The form reveals itself a step at a time. Choose whether the rule grants an
 - **Asset** → choose a **category**, then the **item** within it. Both lists
   are drawn from your **counted** assets, so the rule grants *two Dell
   U2723QE* — a specific thing you actually buy, not "any monitor".
-- **Licence** → choose the subscription. Quantity disappears, since a licence
+- **Licence** → choose the application. Quantity disappears, since a licence
   is one per person.
 
 **Machines tracked by serial are not offered.** Each one is a specific piece of
@@ -1296,14 +1296,14 @@ shay@example.com,Claude AI,Premium
 brachi@example.com,Claude AI,Standard
 ```
 
-That creates **two** subscriptions — `Claude AI Premium` and `Claude AI
+That creates **two** applications — `Claude AI Premium` and `Claude AI
 Standard` — and gives each person a seat on the right one. The tier is appended
 to the name; leave it blank for a product that has no tiers.
 
 | Column | | |
 |---|---|---|
 | `Email` | required | The person's UPN, as it is in Entra ID |
-| `Subscription name` | required | Rows sharing a name share a subscription |
+| `Subscription name` | required | Rows sharing a name share a application |
 | `Subscription tier` | optional | Appended to the name |
 | `Monthly cost` | optional | Per seat, per month |
 | `Currency` | optional | Required if you give a cost |
@@ -1312,19 +1312,19 @@ to the name; leave it blank for a product that has no tiers.
 Column order does not matter and headings are matched case-insensitively.
 
 **Nothing is written until you have seen a preview.** Uploading shows what
-would happen — subscriptions to create, seats to assign, and every row it
+would happen — applications to create, seats to assign, and every row it
 cannot use — and only then offers the button.
 
 - **People are never invented.** An address ITAM has not seen is listed as
   skipped with the line number. People come from Entra ID; sync them first.
 - **A cost with no currency is dropped**, not guessed, and the preview says
   which line. Same for a currency you have not set up.
-- **Two different prices for one subscription**: the first wins, and the clash
+- **Two different prices for one application**: the first wins, and the clash
   is reported rather than resolved silently.
-- **Re-importing the same file does nothing.** Subscriptions are matched by
+- **Re-importing the same file does nothing.** Applications are matched by
   name and seats already held are left alone, so a re-run after adding people
   only adds the new ones.
-- An existing subscription **keeps the price you set by hand** unless the file
+- An existing application **keeps the price you set by hand** unless the file
   states one.
 
 ## API for webhooks
@@ -1516,7 +1516,7 @@ SAML endpoint. Worth running after any change near sign-in.
 - Every amount is recorded in the currency it was paid in, at a rate frozen at
   that moment. Consolidated figures are converted to the reporting currency
   (`ITAM_CURRENCY`, default `USD`) — see **Currencies** above.
-- Subscription cost is **per seat per month**, so a subscription's monthly total
+- Application cost is **per seat per month**, so a application's monthly total
   is `seats × per-seat cost`. Annual figures are `monthly × 12` — they do not
   model annual-prepay discounts or mid-month proration.
 - Sign-in protects every page and every action; only the login page and the

@@ -25,7 +25,7 @@
     <label>Grants<select name="kind" required id="rule-kind">
       <option value="">&mdash; choose &mdash;</option>
       <option value="asset">an asset</option>
-      <option value="subscription">a subscription licence</option></select></label>
+      <option value="application">a application licence</option></select></label>
 
     <label id="field-category">Category<select name="category" id="rule-category">
       <option value="">&mdash; choose a category &mdash;</option>
@@ -46,7 +46,7 @@
         serial are assigned by hand, not by a rule.</span>
     </label>
 
-    <label id="field-subscription">Which subscription<select name="subscription_id">
+    <label id="field-application">Which application<select name="subscription_id">
       <option value="">&mdash; choose &mdash;</option>
       {% for s in subs %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}
     </select></label>
@@ -89,7 +89,7 @@
       var fields = {
         category: document.getElementById('field-category'),
         item: document.getElementById('field-item'),
-        subscription: document.getElementById('field-subscription'),
+        application: document.getElementById('field-application'),
         quantity: document.getElementById('field-quantity')
       };
 
@@ -114,15 +114,15 @@
 
       function sync() {
         var isAsset = kind.value === 'asset';
-        var isSub = kind.value === 'subscription';
+        var isSub = kind.value === 'application';
         show(fields.category, isAsset);
         show(fields.quantity, isAsset);
-        show(fields.subscription, isSub);
+        show(fields.application, isSub);
         // The item list only makes sense once a category is chosen.
         show(fields.item, isAsset && !!category.value);
         fields.category.querySelector('select').required = isAsset;
         item.required = isAsset;
-        fields.subscription.querySelector('select').required = isSub;
+        fields.application.querySelector('select').required = isSub;
       }
 
       kind.addEventListener('change', sync);

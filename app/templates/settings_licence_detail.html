@@ -14,13 +14,13 @@
 </div>
 
 {% if sub_row %}
-<p class="meta">Tracked as the subscription
-  <a href="/subscriptions/{{ sub_row.id }}">{{ sub_row.name }}</a>
+<p class="meta">Tracked as the application
+  <a href="/applications/{{ sub_row.id }}">{{ sub_row.name }}</a>
   {% if not sub_row.monthly_cost_cents %}&mdash; <span class="tag">no per-seat cost set yet</span>{% endif %}</p>
 {% else %}
-<form method="post" action="/settings/entra/licences/{{ l.sku_id }}/create-subscription"
+<form method="post" action="/settings/entra/licences/{{ l.sku_id }}/create-application"
       class="inline-form">
-  <button type="submit">Create subscription from this licence</button>
+  <button type="submit">Create application from this licence</button>
   <span class="hint">Creates it with the current holders as seats. Cost starts at zero.</span>
 </form>
 {% endif %}

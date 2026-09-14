@@ -21,18 +21,32 @@ def _key(header: str) -> str:
     return " ".join((header or "").replace("﻿", "").split()).lower()
 
 
+# What these were called before they were called applications. A file somebody
+# filled in last month still imports: a rename of a heading has no business
+# invalidating a spreadsheet.
+HEADER_ALIASES = {
+    "subscription name": "application name",
+    "subscription tier": "application tier",
+}
+
+
+def _canonical(header: str) -> str:
+    key = _key(header)
+    return HEADER_ALIASES.get(key, key)
+
+
 SUBSCRIPTION_SEATS = {
     "id": "subscription-seats",
-    "label": "Subscription seats",
-    "filename": "itam-subscription-seats.csv",
+    "label": "Application seats",
+    "filename": "itam-application-seats.csv",
     "blurb": ("One row per person per licence. Creates any subscription the file "
               "names, and gives that person a seat on it."),
     "columns": [
         ("Email", True, "The person's UPN, as it is in Entra ID."),
-        ("Subscription name", True, "The product. Rows sharing a name share a subscription."),
-        ("Subscription tier", False,
+        ("Application name", True, "The product. Rows sharing a name share an application."),
+        ("Application tier", False,
          "Premium, Standard, Business… Appended to the name, so Claude AI + Premium "
-         "becomes one subscription and Claude AI + Standard another. Leave blank "
+         "becomes one application and Claude AI + Standard another. Leave blank "
          "if the product has no tiers."),
         ("Monthly cost", False, "Per seat, per month. Leave blank to set it later."),
         ("Currency", False, "Required if you give a cost. ILS, EUR, GBP, USD…"),
@@ -88,9 +102,9 @@ def _rows(text: str, spec) -> list[dict]:
         header = next(reader)
     except StopIteration:
         raise ImportError_("That file is empty.")
-    seen = [_key(h) for h in header]
+    seen = [_canonical(h) for h in header]
     required = [name for name, req, _ in spec["columns"] if req]
-    missing = [name for name in required if _key(name) not in seen]
+    missing = [name for name in required if _canonical(name) not in seen]
     if missing:
         raise ImportError_(
             "The file is missing " + ", ".join(f"“{m}”" for m in missing)
@@ -127,8 +141,8 @@ def plan_subscription_seats(text: str) -> dict:
     for row in rows:
         line = row["_line"]
         email = row.get("email", "").lower()
-        product = row.get("subscription name", "")
-        tier = row.get("subscription tier", "")
+        product = row.get("application name", "")
+        tier = row.get("application tier", "")
         if not email:
             skipped.append({"line": line, "what": "(no email)", "why": "no email given"})
             continue

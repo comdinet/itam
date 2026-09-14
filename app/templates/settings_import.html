@@ -25,7 +25,7 @@
    them and they will be skipped as unknown people.</p>
 
 <form class="inline-form" method="post"
-      action="/settings/import/subscription-seats/preview" enctype="multipart/form-data">
+      action="/settings/import/application-seats/preview" enctype="multipart/form-data">
   <a class="btn light" href="/settings/import/{{ spec.id }}/template.csv">Download the template</a>
   <input type="file" name="file" accept=".csv,text/csv" required>
   <button type="submit">Check the file</button>
@@ -110,9 +110,9 @@
 <div class="cards">
   <div class="card"><span class="label">Rows read</span>
     <span class="big">{{ plan.rows }}</span></div>
-  <div class="card"><span class="label">Subscriptions to create</span>
+  <div class="card"><span class="label">Applications to create</span>
     <span class="big">{{ plan.to_create|length }}</span>
-    <span class="sub">{{ plan.subscriptions|length - plan.to_create|length }} already exist</span></div>
+    <span class="sub">{{ plan.applications|length - plan.to_create|length }} already exist</span></div>
   <div class="card"><span class="label">Seats to assign</span>
     <span class="big">{{ plan.seats|length }}</span>
     <span class="sub">{{ plan.already|length }} already had one</span></div>
@@ -120,12 +120,12 @@
     <span class="big">{{ plan.skipped|length }}</span></div>
 </div>
 
-<h3>Subscriptions</h3>
+<h3>Applications</h3>
 <table>
   <thead><tr><th>Name</th><th>Vendor</th><th class="num">Per seat / month</th>
     <th class="num">Seats from this file</th><th></th></tr></thead>
   <tbody>
-  {% for e in plan.subscriptions %}
+  {% for e in plan.applications %}
     <tr><td>{{ e.name }}</td>
         <td>{{ e.vendor or '' }}</td>
         <td class="num">{% if e.currency %}{{ e.cost_cents|money }}
@@ -143,9 +143,9 @@
   </tbody>
 </table>
 {% if plan.unpriced %}
-<p class="hint">{{ plan.unpriced|length }} new subscription(s) arrive with no
+<p class="hint">{{ plan.unpriced|length }} new application(s) arrive with no
    price, so they add nothing to the run-rate until you set one under
-   <a href="/subscriptions">Subscriptions</a>. Put a <span class="mono">Monthly
+   <a href="/applications">Applications</a>. Put a <span class="mono">Monthly
    cost</span> and <span class="mono">Currency</span> in the file to set it here
    instead.</p>
 {% endif %}
@@ -170,7 +170,7 @@
 <details class="panel" data-panel="import-preview">
   <summary>{{ plan.already|length }} row(s) already have that seat &mdash; they will be left alone</summary>
   <table>
-    <thead><tr><th class="num">Line</th><th>Person</th><th>Subscription</th></tr></thead>
+    <thead><tr><th class="num">Line</th><th>Person</th><th>Application</th></tr></thead>
     <tbody>
     {% for a in plan.already %}
       <tr><td class="num">{{ a.line }}</td><td class="mono">{{ a.upn }}</td>
@@ -183,13 +183,13 @@
 {% endif %}
 
 {% if plan.seats or plan.to_create %}
-<form method="post" action="/settings/import/subscription-seats/apply"
-      onsubmit="return confirm('Create {{ plan.to_create|length }} subscription(s) and assign {{ plan.seats|length }} seat(s)?')">
+<form method="post" action="/settings/import/application-seats/apply"
+      onsubmit="return confirm('Create {{ plan.to_create|length }} application(s) and assign {{ plan.seats|length }} seat(s)?')">
   <input type="hidden" name="csv_text" value="{{ csv_text }}">
   <button type="submit">Import {{ plan.seats|length }} seat(s)</button>
 </form>
 <p class="hint">Re-importing the same file later changes nothing: seats already
-   held are left alone and subscriptions are matched by name.</p>
+   held are left alone and applications are matched by name.</p>
 {% else %}
 <p class="hint">There is nothing to import from this file.</p>
 {% endif %}

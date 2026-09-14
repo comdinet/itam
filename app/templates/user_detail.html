@@ -15,7 +15,7 @@
   <div class="card"><span class="label">Assets assigned</span>
     <span class="big">{{ u.asset_count }}</span>
     <span class="sub">{{ currency }} {{ u.asset_total|money }} one-off</span></div>
-  <div class="card"><span class="label">Monthly subscriptions</span>
+  <div class="card"><span class="label">Monthly applications</span>
     <span class="big">{{ currency }} {{ u.monthly_total|money }}</span>
     <span class="sub">{{ currency }} {{ (u.monthly_total * 12)|money }} / year</span></div>
   <div class="card"><span class="label">Pooled units held</span>
@@ -110,21 +110,21 @@
   {% endfor %}
   </tbody>
 </table>
-<p class="hint">Read from Entra. Separate from the subscriptions below, which are
+<p class="hint">Read from Entra. Separate from the applications below, which are
   what you track and cost here.</p>
 
-<h2>Subscriptions</h2>
+<h2>Applications</h2>
 <table>
-  <thead><tr><th>Subscription</th><th>Vendor</th><th>Since</th>
+  <thead><tr><th>Application</th><th>Vendor</th><th>Since</th>
     <th class="num">Monthly</th><th class="num">Annual</th><th></th></tr></thead>
   <tbody>
   {% for s in subs %}
-    <tr><td><a href="/subscriptions/{{ s.id }}">{{ s.name }}</a></td>
+    <tr><td><a href="/applications/{{ s.id }}">{{ s.name }}</a></td>
         <td>{{ s.vendor or '' }}</td><td>{{ s.assigned_on or '' }}</td>
         <td class="num">{{ s.monthly_cost_cents|money }}</td>
         <td class="num">{{ (s.monthly_cost_cents * 12)|money }}</td>
         <td class="row-actions">
-          <form method="post" action="/subscriptions/{{ s.id }}/seats/remove">
+          <form method="post" action="/applications/{{ s.id }}/seats/remove">
             <input type="hidden" name="upn" value="{{ u.upn }}">
             <input type="hidden" name="redirect" value="{{ here_url }}">
             <button class="link">Revoke</button></form></td></tr>
@@ -137,5 +137,5 @@
 {{ picker("give-sub", "Assign licences",
           "Give " ~ u.display_name ~ " a seat", "/users/" ~ u.upn ~ "/assign-sub",
           sub_rows, "subscription_id",
-          "Every subscription already has a seat for this person.") }}
+          "Every application already has a seat for this person.") }}
 {% endblock %}
