@@ -98,17 +98,43 @@
 
 {% if pooled_available %}
 <div class="inline-form">
-  {% for k in pooled_available %}
-  <form method="post" action="/assets/pooled/{{ k.id }}/assign">
-    <input type="hidden" name="upn" value="{{ u.upn }}">
-    <input type="hidden" name="quantity" value="1">
-    <input type="hidden" name="redirect" value="{{ here_url }}">
-    <button class="link">+ {{ k.name }}{% if k.spare %} ({{ k.spare }} on the shelf){% endif %}</button>
-  </form>
-  {% endfor %}
+  <button type="button" class="open-dialog" data-dialog="hand-out">Hand out items</button>
+  <span class="hint">Anything on the shelf is used first &mdash; otherwise a unit
+    counts as a new one and adds its price to this person&rsquo;s total.</span>
 </div>
-<p class="hint">Hands out one unit. Anything on the shelf is used first &mdash;
-   otherwise it counts as a new one and adds its price to this person's total.</p>
+
+<dialog id="hand-out" class="picker">
+  <form method="post" action="/users/{{ u.upn }}/hand-out">
+    <header>
+      <h2>Hand out to {{ u.display_name }}</h2>
+      <button type="button" class="close-dialog" aria-label="Close">&times;</button>
+    </header>
+    <input class="picker-search" type="search" placeholder="Filter by name or category"
+           aria-label="Filter items" autocomplete="off">
+    <div class="picker-list">
+      {% for k in pooled_available %}
+      <label class="picker-row" data-text="{{ k.name|lower }} {{ k.category|lower }}">
+        <input type="checkbox" name="item" value="{{ k.id }}">
+        <span class="picker-name">{{ k.name }}
+          <span class="meta">{{ k.category }}</span></span>
+        <span class="picker-price">{% if k.unit_cost_cents %}{{ k.currency or currency }}
+          {{ k.unit_cost_cents|money }}{% else %}<span class="meta">no cost set</span>{% endif %}</span>
+        <span class="picker-shelf">{% if k.spare %}<span class="pill good">{{ k.spare }} on the shelf</span>
+          {% else %}<span class="meta">none returned</span>{% endif %}</span>
+        <input class="picker-qty" type="number" name="qty-{{ k.id }}" value="1" min="1"
+               aria-label="How many {{ k.name }}">
+      </label>
+      {% endfor %}
+      <p class="picker-empty" hidden>Nothing matches that.</p>
+    </div>
+    <footer>
+      <span class="picker-count meta">Nothing picked</span>
+      <span class="spacer"></span>
+      <button type="button" class="light close-dialog">Cancel</button>
+      <button type="submit">Hand out</button>
+    </footer>
+  </form>
+</dialog>
 {% endif %}
 
 <h2>Entra ID licences</h2>

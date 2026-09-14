@@ -100,6 +100,51 @@
   })();
 
   (function () {
+    // The picker dialog: open it, filter it, and say how many are ticked.
+    // <dialog> gives Escape, the backdrop and focus handling for free.
+    document.querySelectorAll('.open-dialog').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var d = document.getElementById(b.getAttribute('data-dialog'));
+        if (!d) return;
+        d.showModal();
+        var search = d.querySelector('.picker-search');
+        if (search) search.focus();
+      });
+    });
+    document.querySelectorAll('dialog .close-dialog').forEach(function (b) {
+      b.addEventListener('click', function () { b.closest('dialog').close(); });
+    });
+
+    document.querySelectorAll('dialog.picker').forEach(function (d) {
+      var rows = d.querySelectorAll('.picker-row');
+      var empty = d.querySelector('.picker-empty');
+      var tally = d.querySelector('.picker-count');
+      var search = d.querySelector('.picker-search');
+
+      function count() {
+        if (!tally) return;
+        var picked = d.querySelectorAll('.picker-row input[type="checkbox"]:checked').length;
+        tally.textContent = picked ? picked + ' picked' : 'Nothing picked';
+      }
+      d.addEventListener('change', count);
+
+      if (search) search.addEventListener('input', function () {
+        var needle = search.value.trim().toLowerCase();
+        var shown = 0;
+        rows.forEach(function (row) {
+          // A ticked row stays visible whatever the filter says, or you would
+          // submit things you can no longer see.
+          var ticked = row.querySelector('input[type="checkbox"]').checked;
+          var hit = !needle || row.getAttribute('data-text').indexOf(needle) !== -1;
+          row.hidden = !(hit || ticked);
+          if (!row.hidden) shown++;
+        });
+        if (empty) empty.hidden = shown > 0;
+      });
+    });
+  })();
+
+  (function () {
     // Tabs on a record. Server-rendered panes, shown and hidden - no fetch, so
     // switching tabs cannot fail or wait. The hash is set so a reload, or a
     // link you send somebody, lands on the tab you were looking at.

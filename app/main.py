@@ -1199,6 +1199,46 @@ def pooled_assign(item_id: int, upn: str = Form(...), quantity: str = Form("1"),
     return back(target, problem or f"Handed out {qty} unit(s)")
 
 
+@app.post("/users/{upn}/hand-out")
+async def user_hand_out(request: Request, upn: str):
+    """Hand several counted items to one person in a single go.
+
+    One form, one redirect, one message. Doing it as a link per item meant a
+    page load each, and no way to see what you had already picked.
+    """
+    form = await request.form()
+    person = upn.strip().lower()
+    picked = [i for i in form.getlist("item") if str(i).strip()]
+    if not picked:
+        return back(f"/users/{person}", "Pick at least one item")
+
+    handed, problems = [], []
+    for raw in picked:
+        try:
+            item_id = int(raw)
+        except (TypeError, ValueError):
+            continue
+        try:
+            qty = int(form.get(f"qty-{item_id}") or 1)
+        except (TypeError, ValueError):
+            qty = 1
+        qty = max(1, qty)
+        item = pooled.get(item_id)
+        if not item:
+            problems.append(f"item {item_id} no longer exists")
+            continue
+        complaint = pooled.assign(item_id, person, qty)
+        if complaint:
+            problems.append(f"{item['name']}: {complaint}")
+        else:
+            handed.append(f"{qty} x {item['name']}")
+
+    msg = ("Handed out " + ", ".join(handed)) if handed else "Nothing was handed out"
+    if problems:
+        msg += " - " + "; ".join(problems)
+    return back(f"/users/{person}", msg)
+
+
 @app.post("/assets/pooled/{item_id}/take-back")
 def pooled_take_back(item_id: int, upn: str = Form(...), quantity: str = Form(""),
                      redirect: str = Form("")):

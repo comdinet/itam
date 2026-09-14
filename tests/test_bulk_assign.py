@@ -84,5 +84,47 @@ with TestClient(main.app) as client:
     check("the filter is carried back so you land where you were",
           'value="/users?country=Israel"' in client.get("/users?country=Israel").text, True)
 
+print("\n--- handing several things to one person, in one go ---")
+# The old shape was a link per item: four things meant four page loads and no
+# way to see what you had already chosen.
+kb = pooled.create("Logitech MX Keys", "Peripheral", 49900)
+pad = pooled.create("Apple Magic Trackpad", "Peripheral", 34900)
+stand = pooled.create("Laptop stand 360", "Peripheral", 19900)
+with TestClient(main.app) as client:
+    client.post("/login", data={"username": "admin", "password": "BulkTest!2345"},
+                follow_redirects=False)
+    who = db.q1("SELECT upn FROM users ORDER BY upn LIMIT 1")["upn"]
+    r = client.post(f"/users/{who}/hand-out", follow_redirects=False,
+                    data={"item": [str(kb), str(pad)],
+                          f"qty-{kb}": "1", f"qty-{pad}": "3"})
+    check("one redirect, not three", r.status_code, 303)
+    check("the keyboard", pooled.held_by(who, "Peripheral", "Logitech MX Keys"), 1)
+    check("three trackpads", pooled.held_by(who, "Peripheral", "Apple Magic Trackpad"), 3)
+    check("and nothing that was not ticked",
+          pooled.held_by(who, "Peripheral", "Laptop stand 360"), 0)
+    check("the message names what went out",
+          "Apple+Magic+Trackpad" in r.headers["location"], True)
+
+    print("\n--- a picker that shows what is on the shelf before you choose ---")
+    pooled.assign(stand, who, 1)
+    pooled.take_back(stand, who)
+    page = client.get(f"/users/{who}").text
+    dialog = page.split('<dialog id="hand-out"', 1)[1].split("</dialog>", 1)[0]
+    check("every item is offered", 'value="' + str(stand) + '"' in dialog, True)
+    check("with what came back already on the shelf", "1 on the shelf" in dialog, True)
+    check("and a quantity per item, not one for all of them",
+          f'name="qty-{stand}"' in dialog, True)
+    check("the row of one-click links is gone", "+ Logitech MX Keys" in page, False)
+
+    print("\n--- an item deleted while the dialog was open is reported ---")
+    gone = pooled.create("Sony ULT900", "Peripheral", 29900)
+    pooled.delete(gone)
+    r = client.post(f"/users/{who}/hand-out", follow_redirects=False,
+                    data={"item": [str(gone), str(kb)]})
+    check("the one that still exists goes out",
+          pooled.held_by(who, "Peripheral", "Logitech MX Keys"), 2)
+    check("and the missing one is named, not silently dropped",
+          "no+longer+exists" in r.headers["location"], True)
+
 print("\nFAILURES:", ", ".join(fails) if fails else "none")
 sys.exit(1 if fails else 0)

@@ -66,7 +66,22 @@ with TestClient(main.app) as client:
           client.get(location.split("&msg=")[0]).status_code, 200)
 
     print("\n--- a person's page keeps its place too ---")
-    check("user detail", redirect_field("/users/yael@x.com")[0], "/users/yael@x.com")
+    # Handing things out no longer carries a hidden redirect: it is one form
+    # for several items now, and the route knows whose page it was. What
+    # matters is the same either way - you end up back where you were.
+    item = db.q1("SELECT id FROM pooled_items ORDER BY id LIMIT 1")
+    r = client.post("/users/yael@x.com/hand-out", follow_redirects=False,
+                    data={"item": str(item["id"]), f"qty-{item['id']}": "2"})
+    check("handing out comes back to the person",
+          r.headers["location"].startswith("/users/yael@x.com?msg="), True)
+    check("and it says what was handed out",
+          "2+x" in r.headers["location"], True)
+    check("picking nothing is refused, not silently a no-op",
+          "Pick+at+least+one" in client.post(
+              "/users/yael@x.com/hand-out", follow_redirects=False,
+              data={}).headers["location"], True)
+    check("taking it back still lands on the page you were on",
+          redirect_field("/users/yael@x.com")[0], "/users/yael@x.com")
 
     print("\n--- every panel has a stable key to be remembered by ---")
     import pathlib                                  # noqa: E402
