@@ -114,13 +114,16 @@ connects it.
 Once it is running, go back to that tunnel in the dashboard, press Next, and
 add the public hostname:
 
-  Subdomain: itam        Domain: remedio.io
-  Type: HTTP             URL: itam:8000
+  Subdomain: itam          Domain: your zone
+  Service URL: http://itam:8000
 
-HTTP and port 8000 are right: the tunnel reaches the app inside this
-machine's Docker network, and Cloudflare does TLS at the edge. Saving that
-also creates the DNS record for you - proxied, pointing at the tunnel rather
-than at this machine's address.
+Include the http:// - the newer dialog rejects a bare host. An older
+dashboard splits that into a Type dropdown (HTTP) and a URL box (itam:8000);
+either way it is plain http to port 8000, because the tunnel reaches the app
+inside this machine's Docker network and Cloudflare does TLS at the edge.
+
+Saving the route also creates the DNS record for you - proxied, pointing at
+the tunnel rather than at this machine's address.
 
 HOWTO
     printf 'Tunnel token: '
@@ -222,7 +225,7 @@ echo "NEXT: the tunnel is connected but not yet routed anywhere. Back in the"
 echo "dashboard, that tunnel's Next button is live now. Press it and add a"
 echo "public hostname:"
 echo "    Subdomain: ${hostname_guess:-itam}   Domain: your zone"
-echo "    Type: HTTP                Service URL: itam:8000"
+echo "    Service URL: http://itam:8000    (the http:// is required)"
 echo "Saving that creates the proxied DNS record too."
 echo
 echo "Then check it from somewhere else:  curl -I https://$(read_env ITAM_PUBLIC_HOSTNAME)"

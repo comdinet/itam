@@ -164,13 +164,19 @@ shows a connector and **Next** is live. Press it and add a public hostname:
 |---|---|
 | Subdomain | `itam` |
 | Domain | `remedio.io` |
-| Type | `HTTP` |
-| URL | `itam:8000` |
+| Service URL | `http://itam:8000` |
 
-`HTTP` and port `8000` are right: the tunnel reaches the app inside this
-machine's Docker network, and Cloudflare does TLS at the edge. Saving that also
-creates the DNS record — a proxied `CNAME`, the orange cloud, pointing at the
-tunnel rather than at this machine.
+Cloudflare has two shapes of this form depending on how new your dashboard is.
+The older one has a **Type** dropdown and a bare **URL** box — pick `HTTP` and
+enter `itam:8000`. The newer *Add published application* dialog has a single
+**Service URL** field and rejects a bare host with *"must start with protocol"*
+— enter `http://itam:8000`.
+
+Plain `http` and port `8000` are right either way: the tunnel reaches the app
+inside this machine's Docker network, where there is no TLS to speak of and
+none needed, and Cloudflare presents the certificate at the edge. Saving the
+route also creates the DNS record — a proxied `CNAME`, the orange cloud,
+pointing at the tunnel rather than at this machine.
 
 Non-interactive:
 
