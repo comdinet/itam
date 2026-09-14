@@ -143,6 +143,46 @@ with TestClient(main.app) as client:
     check("a deleted asset is struck through rather than linked",
           "MacBook Air 15</span>" in feed, True)
 
+    print("\n--- the machine is reachable from everywhere it is named ---")
+    # The audit is about the laptop in somebody's hands, not about a row in a
+    # table, so every place a device is mentioned is a way in to it.
+    did = "dv-1"
+    db.execute("""INSERT INTO devices (id, device_name, serial_number, model, os,
+                                       primary_upn, compliance_state, asset_id,
+                                       storage_total, memory_total, cpu_model)
+                  VALUES (?,'ARIELPC','6898QV3','Latitude 5440','Windows',
+                          'ann@x.com','compliant',?,512110190592,34359738368,
+                          'Intel(R) Core(TM) Ultra 7 165U')""", (did, aid2))
+    db.execute("""INSERT INTO device_attributes (device_id, name, value, collected_at)
+                  VALUES (?, 'Mac HW TAG', 'MBA-15/24/512G',
+                          '2026-09-14T00:00:00+00:00')""", (did,))
+    link = f'href="/devices/{did}"'
+    check("from the assets list", link in client.get("/assets?q=Latitude").text, True)
+    check("from the asset itself", link in client.get(f"/assets/{aid2}").text, True)
+    check("from the devices page in settings",
+          link in client.get("/settings/devices").text, True)
+    db.execute("UPDATE assets SET assigned_upn = 'ann@x.com' WHERE id = ?", (aid2,))
+    check("and from the person holding it",
+          link in client.get("/users/ann@x.com").text, True)
+
+    page = client.get(f"/devices/{did}").text
+    check("the machine's own page opens", "ARIELPC" in page, True)
+    check("it carries the spec", "Intel(R) Core(TM) Ultra 7 165U" in page, True)
+    check("the attribute the script reported, verbatim",
+          "MBA-15/24/512G" in page, True)
+    check("it links back to the asset", f'href="/assets/{aid2}"' in page, True)
+    check("and the audit is on it, not only in a global feed",
+          'class="timeline"' in page, True)
+    check("a machine ITAM does not have is a 404, not a blank page",
+          client.get("/devices/nope").status_code, 404)
+
+    print("\n--- a machine with no asset says why its history is empty ---")
+    db.execute("""INSERT INTO devices (id, device_name, os)
+                  VALUES ('dv-2','ORPHAN','Windows')""")
+    page = client.get("/devices/dv-2").text
+    check("no invented history", 'class="timeline"' in page, False)
+    check("it says what to do instead", "Link one from" in page, True)
+
 print()
 print("FAILURES:", ", ".join(fails) if fails else "none")
 sys.exit(1 if fails else 0)

@@ -29,7 +29,7 @@
     </div>
     {% if device %}
     <div class="chip">
-      <span class="chip-k">Intune</span>
+      <span class="chip-k"><a href="/devices/{{ device.id }}">Intune</a></span>
       <span class="chip-v">{% if device.compliance_state == 'compliant' %}
         <span class="pill good">compliant</span>
         {% elif device.compliance_state %}<span class="pill bad">{{ device.compliance_state }}</span>
@@ -84,7 +84,7 @@
 <section data-pane="hardware" hidden>
 <table>
   <tbody>
-    <tr><th>Device</th><td>{{ device.device_name or '' }}</td></tr>
+    <tr><th>Device</th><td><a href="/devices/{{ device.id }}">{{ device.device_name or device.id }}</a></td></tr>
     <tr><th>Model</th><td>{{ device.model or '' }}</td></tr>
     <tr><th>Operating system</th><td>{{ device.os or '' }} {{ device.os_version or '' }}</td></tr>
     <tr><th>Serial</th><td class="mono">{{ device.serial_number or '' }}</td></tr>

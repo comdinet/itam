@@ -100,8 +100,11 @@ a.card .big { color: var(--ink); }
    one line, clipped, and the box scrolls rather than the window. */
 .table-scroll { overflow-x: auto; background: var(--panel);
     border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); }
+/* Fill the box and truncate; scroll only when the columns genuinely cannot
+   fit. max-content forced every column to its longest value, which made a
+   six-row table 3500px wide and gave it a scrollbar on a 2469px screen. */
 .table-scroll table { border: 0; border-radius: 0; box-shadow: none;
-    min-width: max-content; }
+    min-width: 100%; }
 table { width: 100%; border-collapse: collapse; background: var(--panel);
         border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
 th, td { text-align: left; padding: 10px 13px; border-bottom: 1px solid var(--line);
@@ -310,7 +313,7 @@ textarea.wide-input { font-family: ui-monospace, SFMono-Regular, Menlo, monospac
 .shell.rail .side-foot { justify-content: center; }
 
 .content { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
-.topbar { display: flex; align-items: center; gap: 8px; padding: 12px 28px 4px; }
+.topbar { display: flex; align-items: center; gap: 8px; padding: 12px 32px 4px; }
 .omni { flex: 1 1 auto; max-width: 520px; margin: 0 auto 0 0; position: relative;
     display: flex; align-items: center; }
 .omni svg { width: 16px; height: 16px; position: absolute; left: 11px;
@@ -328,7 +331,14 @@ textarea.wide-input { font-family: ui-monospace, SFMono-Regular, Menlo, monospac
   :root:not([data-theme="light"]) .theme .sun { display: none; }
   :root:not([data-theme="light"]) .theme .moon { display: inline; }
 }
-main { max-width: 1180px; width: 100%; margin: 0 auto; padding: 4px 28px 28px; }
+/* The content starts where the rail ends. A fixed 1180px column centred in a
+   2469px window leaves a 759px gutter on each side and reads as an iframe
+   floating on a page rather than as the application. Tables and cards take
+   the width they are given; prose is capped separately, below, because a
+   2000px line of text is unreadable however much room there is. */
+main { width: 100%; max-width: 1760px; margin: 0; padding: 4px 32px 32px; }
+main > p, main > .meta, main > .hint, .panel > .hint, .panel > .meta,
+main > h1 + .meta, footer { max-width: 88ch; }
 
 @media (max-width: 860px) {
   .side { position: fixed; z-index: 8; transform: translateX(-100%);

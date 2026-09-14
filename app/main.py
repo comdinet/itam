@@ -1008,8 +1008,11 @@ def assign_sub(upn: str, subscription_id: int = Form(...)):
 
 def asset_rows(q: str = "", category: str = "", state: str = "", priced: str = "",
                status: str = ""):
-    sql = """SELECT a.*, u.display_name FROM assets a
-             LEFT JOIN users u ON u.upn = a.assigned_upn"""
+    sql = """SELECT a.*, u.display_name,
+                    d.id AS device_id, d.device_name, d.os AS device_os
+             FROM assets a
+             LEFT JOIN users u ON u.upn = a.assigned_upn
+             LEFT JOIN devices d ON d.asset_id = a.id"""
     where, params = [], []
     if q:
         where.append("(a.name LIKE ? OR COALESCE(a.serial,'') LIKE ?)")
@@ -1272,6 +1275,32 @@ def asset_delete(request: Request, asset_id: int, redirect: str = Form("/assets"
     events.deleted(asset_id, "ui", actor(request))
     db.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
     return back(redirect, "Asset deleted")
+
+
+@app.get("/devices/{device_id}", response_class=HTMLResponse)
+def device_page(request: Request, device_id: str):
+    """One machine, as Intune reports it - and what has happened to it.
+
+    The history belongs here as much as on the asset: an audit is about the
+    machine in somebody's hands, not about a row in a table, and "show me this
+    laptop" should not mean finding the asset record first.
+    """
+    d = db.q1("SELECT * FROM devices WHERE id = ?", (device_id,))
+    if not d:
+        return HTMLResponse("<h1>404</h1><p>No such device.</p>", status_code=404)
+    asset = db.q1("SELECT * FROM assets WHERE id = ?", (d["asset_id"],)) \
+        if d["asset_id"] else None
+    holder = db.q1("SELECT display_name FROM users WHERE upn = ?",
+                   (d["primary_upn"],)) if d["primary_upn"] else None
+    attrs = [(r["name"], r["value"]) for r in db.q(
+        "SELECT name, value FROM device_attributes WHERE device_id = ? ORDER BY name",
+        (device_id,))]
+    return render(request, "device_detail.html", d=d, asset=asset,
+                  holder=holder["display_name"] if holder else None,
+                  attrs=attrs,
+                  ram=devices._ram_gb(d["memory_total"]),
+                  disk=devices._disk_gb(d["storage_total"]),
+                  history=events.for_asset(d["asset_id"]) if d["asset_id"] else [])
 
 
 @app.get("/search", response_class=HTMLResponse)

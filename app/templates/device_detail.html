@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% from "_history.html" import timeline %}
+{% block title %}{{ d.device_name or d.id }} &middot; ITAM{% endblock %}
+{% block body %}
+<p class="crumb"><a href="/settings/devices">&larr; Devices</a></p>
+
+<div class="record-head">
+  <div class="record-title">
+    <h1>{{ d.device_name or '(unnamed)' }}</h1>
+    <p class="meta">{{ d.model or 'unknown model' }}{% if d.serial_number %} &middot;
+      <span class="mono">{{ d.serial_number }}</span>{% endif %}</p>
+  </div>
+  <div class="chips">
+    <div class="chip"><span class="chip-k">Compliance</span>
+      <span class="chip-v">{% if d.compliance_state == 'compliant' %}
+        <span class="pill good">compliant</span>
+        {% elif d.compliance_state %}<span class="pill bad">{{ d.compliance_state }}</span>
+        {% else %}<span class="pill flat">unknown</span>{% endif %}</span></div>
+    <div class="chip"><span class="chip-k">Primary user</span>
+      <span class="chip-v">{% if d.primary_upn %}<a href="/users/{{ d.primary_upn }}">{{ holder or d.primary_upn }}</a>
+        {% else %}<span class="pill flat">nobody</span>{% endif %}</span></div>
+    <div class="chip"><span class="chip-k">Asset</span>
+      <span class="chip-v">{% if asset %}<a href="/assets/{{ asset.id }}">{{ asset.name }}</a>
+        {% else %}<span class="pill warn">not linked</span>{% endif %}</span></div>
+    <div class="chip"><span class="chip-k">Operating system</span>
+      <span class="chip-v">{{ d.os or 'unknown' }}</span></div>
+  </div>
+</div>
+
+{% if d.ignored_reason %}
+<div class="warn"><strong>Hidden by a rule</strong> &mdash; {{ d.ignored_reason }}.
+  This machine is synced but kept out of the lists and the totals.</div>
+{% endif %}
+
+<div class="tabs" data-tabs>
+  <button type="button" class="on" data-tab="details">Details</button>
+  <button type="button" data-tab="history">History
+    <span class="count">{{ history|length }}</span></button>
+</div>
+
+<section data-pane="details">
+<table>
+  <tbody>
+    <tr><th>Processor</th><td>{{ d.cpu_model or '' }}
+        {%- if not d.cpu_model %}<span class="meta">not reported &mdash; Graph has no
+        CPU field, so this comes from Endpoint Analytics</span>{% endif %}</td></tr>
+    <tr><th>Memory</th><td>{% if ram %}{{ ram }}GB{% else %}<span class="meta">not reported</span>{% endif %}</td></tr>
+    <tr><th>Storage</th><td>{% if disk %}{{ disk }}GB{% else %}<span class="meta">not reported</span>{% endif %}</td></tr>
+    <tr><th>Operating system</th><td>{{ d.os or '' }} {{ d.os_version or '' }}</td></tr>
+    <tr><th>Manufacturer</th><td>{{ d.manufacturer or '' }}</td></tr>
+    <tr><th>Model</th><td>{{ d.model or '' }}</td></tr>
+    <tr><th>Serial</th><td class="mono">{{ d.serial_number or '' }}</td></tr>
+    <tr><th>Enrolled</th><td>{{ (d.enrolled_at or '')[:10] }}</td></tr>
+    <tr><th>Last seen</th><td>{{ (d.last_contact or '')[:16].replace('T', ' ') }}</td></tr>
+    <tr><th>Last synced</th><td>{{ (d.synced_at or '')[:16].replace('T', ' ') }}</td></tr>
+    <tr><th>Intune id</th><td class="mono">{{ d.id }}</td></tr>
+    {% if d.azure_device_id %}
+    <tr><th>Entra device id</th><td class="mono">{{ d.azure_device_id }}</td></tr>
+    {% endif %}
+  </tbody>
+</table>
+
+{% if attrs %}
+<h2>Custom attributes <span class="count">{{ attrs|length }}</span></h2>
+<table>
+  <tbody>
+  {% for name, value in attrs %}
+    <tr><th>{{ name }}</th><td>{{ value }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="hint">Whatever the script on the machine printed, stored exactly as it
+   reported it.</p>
+{% endif %}
+</section>
+
+<section data-pane="history" hidden>
+{% if asset %}
+  {{ timeline(history) }}
+{% else %}
+  <p class="meta">No asset is linked to this machine, and history is recorded
+    against the asset. Link one from <a href="/settings/devices">Devices</a> and
+    everything that happens to it from then on shows up here.</p>
+{% endif %}
+</section>
+{% endblock %}

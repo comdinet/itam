@@ -352,7 +352,7 @@
   <tbody>
   {% for d in devices %}
     <tr>
-      <td><strong>{{ d.device_name or '(unnamed)' }}</strong>
+      <td><strong><a href="/devices/{{ d.id }}">{{ d.device_name or '(unnamed)' }}</a></strong>
         {% if attrs.get(d.id) %}
           <div class="attrs">
             {% for name, value in attrs[d.id] %}

@@ -40,6 +40,7 @@
   {% for a in assets %}
     {% set spec = asset_specs.get(a.id) %}
     <tr><td><a href="/assets/{{ a.id }}">{{ a.name }}</a>
+          {%- if a.device_id %} <a class="meta" href="/devices/{{ a.device_id }}">{{ a.device_name }}</a>{% endif %}
           {% if spec %}
             <div class="spec">
               {%- for name, value in spec %}<span><b>{{ name }}</b> {{ value }}</span>{% endfor %}
