@@ -462,3 +462,11 @@ dialog.picker footer .spacer { flex: 1 1 auto; }
   .picker-price, .picker-shelf { grid-column: 2; }
   .picker-qty { grid-column: 3; }
 }
+
+
+/* A setting's name is the label; the environment variable behind it is a
+   footnote, not a second heading competing with it. */
+.setting-key { color: var(--muted); font-size: 11px; opacity: .75; }
+.wide-form { display: flex; gap: 8px; align-items: center; flex-wrap: nowrap; }
+.wide-form .wide-input { flex: 1 1 auto; min-width: 0; }
+td.copyable { cursor: text; user-select: all; }

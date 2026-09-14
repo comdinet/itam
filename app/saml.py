@@ -12,6 +12,9 @@ we have already consumed.
 import datetime
 import os
 import re
+from xml.etree import ElementTree
+
+import httpx
 
 from . import db, settings
 
@@ -97,6 +100,130 @@ def config_status() -> dict:
         "allow_idp_initiated": allow_unsolicited(),
         "username_attribute": username_attribute() or "NameID",
     }
+
+
+# What Entra calls the App Federation Metadata Url. One address that carries
+# the entity id, the sign-on URL and the signing certificate - the three things
+# somebody was otherwise copying across a screen by hand, one at a time, with a
+# certificate among them.
+METADATA_KEYS = {
+    "entity_id": "ITAM_SAML_IDP_ENTITY_ID",
+    "sso_url": "ITAM_SAML_IDP_SSO_URL",
+    "cert": "ITAM_SAML_IDP_CERT",
+}
+
+
+class MetadataError(Exception):
+    """The metadata could not be read, with a reason worth showing."""
+
+
+MD_NS = "urn:oasis:names:tc:SAML:2.0:metadata"
+DS_NS = "http://www.w3.org/2000/09/xmldsig#"
+REDIRECT_BINDING = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+MAX_METADATA = 2 * 1024 * 1024      # a federation document is a few KB
+
+
+def _metadata_xml(source: str) -> str:
+    """The XML itself, whether a URL or the document was pasted."""
+    text = (source or "").strip()
+    if not text:
+        raise MetadataError("Paste the metadata URL, or the XML itself.")
+    if text.startswith("<"):
+        return text
+    if not text.lower().startswith(("http://", "https://")):
+        raise MetadataError(
+            "That is neither a URL nor XML. In Entra it is under SAML "
+            "Certificates, called \u201cApp Federation Metadata Url\u201d.")
+    try:
+        with httpx.Client(timeout=20, follow_redirects=True) as client:
+            with client.stream("GET", text) as response:
+                if response.status_code >= 400:
+                    raise MetadataError(
+                        f"{text} answered {response.status_code}. Check the URL, "
+                        "or paste the XML instead if this machine cannot reach it.")
+                chunks, total = [], 0
+                for chunk in response.iter_bytes():
+                    total += len(chunk)
+                    if total > MAX_METADATA:
+                        raise MetadataError(
+                            "That document is far larger than any federation "
+                            "metadata. Check the URL points at the metadata "
+                            "and not at something else.")
+                    chunks.append(chunk)
+    except MetadataError:
+        raise
+    except Exception as exc:
+        raise MetadataError(f"Could not fetch {text}: {exc}") from exc
+    return b"".join(chunks).decode("utf-8", "replace")
+
+
+def read_metadata(source: str) -> dict:
+    """Pull the IdP's details out of its federation metadata.
+
+    Takes the URL Entra shows under SAML Certificates, or the XML itself when
+    this machine cannot reach it. One paste instead of copying an identifier,
+    a URL and a certificate across a screen by hand.
+
+    Parsed with the standard library rather than the SAML stack: this is
+    ordinary XML, and nothing here is trusted on its own - the certificate it
+    yields is what later assertions are checked against, which is the same
+    thing that would have been typed in by hand.
+    """
+    xml = _metadata_xml(source)
+    # A DOCTYPE is where entity-expansion attacks live, and federation
+    # metadata has no business carrying one.
+    if re.search(r"<!DOCTYPE", xml[:4096], re.IGNORECASE):
+        raise MetadataError("That document declares a DOCTYPE, which federation "
+                            "metadata does not use. Refusing to parse it.")
+    try:
+        root = ElementTree.fromstring(xml)
+    except ElementTree.ParseError as exc:
+        raise MetadataError(f"That is not valid XML: {exc}") from exc
+
+    # Entra returns one EntityDescriptor; a federation may wrap several.
+    if root.tag == f"{{{MD_NS}}}EntitiesDescriptor":
+        entities = root.findall(f"{{{MD_NS}}}EntityDescriptor")
+    elif root.tag == f"{{{MD_NS}}}EntityDescriptor":
+        entities = [root]
+    else:
+        raise MetadataError("That XML is not SAML metadata - its root element "
+                            f"is {root.tag.rsplit('}', 1)[-1]}.")
+
+    for entity in entities:
+        idp = entity.find(f"{{{MD_NS}}}IDPSSODescriptor")
+        if idp is None:
+            continue                      # a service provider's own metadata
+        services = idp.findall(f"{{{MD_NS}}}SingleSignOnService")
+        redirect = [s for s in services if s.get("Binding") == REDIRECT_BINDING]
+        chosen = (redirect or services)
+        certs = idp.findall(
+            f"{{{MD_NS}}}KeyDescriptor/{{{DS_NS}}}KeyInfo/"
+            f"{{{DS_NS}}}X509Data/{{{DS_NS}}}X509Certificate")
+        signing = [c for c in idp.findall(f"{{{MD_NS}}}KeyDescriptor")
+                   if (c.get("use") or "signing") == "signing"]
+        signing_certs = [c for k in signing for c in k.findall(
+            f"{{{DS_NS}}}KeyInfo/{{{DS_NS}}}X509Data/{{{DS_NS}}}X509Certificate")]
+        use = signing_certs or certs
+        found = {
+            "entity_id": (entity.get("entityID") or "").strip(),
+            "sso_url": (chosen[0].get("Location") or "").strip() if chosen else "",
+            "cert": normalise_cert(use[0].text or "") if use else "",
+        }
+        missing = [name for name, value in found.items() if not value]
+        if missing:
+            # Name the absent part rather than writing two of three and leaving
+            # a half-configured sign-in to be discovered at the door.
+            words = {"entity_id": "the Entra identifier",
+                     "sso_url": "the login URL",
+                     "cert": "the signing certificate"}
+            raise MetadataError(
+                "That metadata is missing " + ", ".join(words[m] for m in missing)
+                + ". Check it is the federation metadata for this application.")
+        return found
+
+    raise MetadataError("That metadata describes no identity provider. In Entra "
+                        "it is the App Federation Metadata Url on the single "
+                        "sign-on page, not the application's own metadata.")
 
 
 def sp_settings() -> dict:

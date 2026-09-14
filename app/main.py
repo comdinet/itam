@@ -2769,6 +2769,21 @@ async def settings_entra_save(request: Request):
     return _apply(data, "entra", request.state.user["username"], "/settings/entra")
 
 
+@app.post("/settings/sso/import")
+async def settings_sso_import(request: Request, metadata: str = Form("")):
+    """Fill the Entra side in from its federation metadata."""
+    try:
+        found = saml.read_metadata(metadata)
+    except saml.MetadataError as exc:
+        return back("/settings/sso", str(exc)[:400])
+    me = actor(request) or "admin"
+    for name, key in saml.METADATA_KEYS.items():
+        settings.set_value(key, found[name], me)
+    return back("/settings/sso",
+                "Read from the metadata: identifier, login URL and signing "
+                f"certificate. Entra identifier is {found['entity_id']}")
+
+
 @app.post("/settings/sso/save")
 async def settings_sso_save(request: Request):
     if not require_admin(request):

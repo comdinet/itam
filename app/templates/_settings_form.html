@@ -7,8 +7,8 @@
     <tbody>
     {% for f in fields %}
       <tr>
-        <td><strong>{{ f.label }}</strong>
-            <div class="meta mono">{{ f.key }}</div></td>
+        <td class="wrap"><strong>{{ f.label }}</strong>
+            <div class="setting-key mono">{{ f.key }}</div></td>
         <td>
           {% if f.kind == 'bool' %}
             <label class="check"><input type="checkbox" name="{{ f.key }}"
