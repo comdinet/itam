@@ -60,11 +60,16 @@ JOBS = {
 # Users first: groups, licences and devices all reference them. Holders last:
 # it needs both the people and the devices to be current.
 ORDER = ["users", "groups", "device_groups", "licences", "devices", "attributes",
-         "memory", "specs", "holders"]
+         "memory", "holders"]
 
 # Jobs kept out of the nightly run on purpose, with the reason. Anything else
 # missing from ORDER is an oversight, and a test says so.
 MANUAL_ONLY = {
+    "specs": "Endpoint Analytics carries a processor name only in its Resource "
+             "performance report, and that report returns nothing on this "
+             "tenant while the rest of Endpoint Analytics answers fine. A job "
+             "that reports NOTHING every night at 03:00 teaches you to ignore "
+             "the log. Run it by hand if that ever changes: ./sync.sh specs",
     "hardware": "Intune's Device inventory is an undocumented beta endpoint that "
                 "refuses an application token on at least some tenants. A job "
                 "that fails every night at 03:00 teaches you to ignore the log, "
