@@ -297,6 +297,57 @@ out = entra.sync_resource_performance()
 check("answered but matched nothing is called a bug, not a setting",
       "bug in the matching" in out["note"], True)
 
+print("\n--- when the collection is empty but the report is not ---")
+# Several tenants answer 200 with an empty list here while the portal's own
+# Resource performance report is full. The per-device summary is what that
+# report uses, so it is asked second rather than giving up.
+db.execute("UPDATE devices SET cpu_model = NULL")
+calls = []
+
+
+def two_sources(empty_first, summary_rows=None, refuse=False):
+    def fake(path, params=None, base=None, advanced=False):
+        calls.append(path)
+        if "summarizeDeviceResourcePerformance" in path:
+            if refuse:
+                raise entra.GraphError("403 Forbidden from Graph: needs "
+                                       "DeviceManagementManagedDevices.ReadWrite.All")
+            return summary_rows or []
+        return [] if empty_first else [{"deviceId": "w1", "cpuDisplayName": "From list"}]
+    return fake
+
+
+calls.clear()
+entra._get_all = two_sources(empty_first=True, summary_rows=[
+    {"deviceId": "w1", "deviceName": "ARIELPC",
+     "cpuDisplayName": "Intel(R) Core(TM) Ultra 7 165U", "totalRamInMB": 32768.0}])
+out = entra.sync_resource_performance()
+check("the collection is tried first", "summarize" in calls[0], False)
+check("then the summary", "summarizeDeviceResourcePerformance" in calls[1], True)
+check("and it is where the answer came from", out["read_from"], "the per-device summary")
+check("the CPU landed",
+      db.q1("SELECT cpu_model FROM devices WHERE id='w1'")["cpu_model"],
+      "Intel(R) Core(TM) Ultra 7 165U")
+
+print("\n--- the summary is not asked when the collection answers ---")
+calls.clear()
+db.execute("UPDATE devices SET cpu_model = NULL")
+entra._get_all = two_sources(empty_first=False)
+out = entra.sync_resource_performance()
+check("one call, not two", len(calls), 1)
+check("from the collection", out["read_from"], "the collection")
+
+print("\n--- a refusal names the permission instead of reading as no data ---")
+calls.clear()
+entra._get_all = two_sources(empty_first=True, refuse=True)
+out = entra.sync_resource_performance()
+check("no devices", out["devices"], 0)
+check("the job says nothing was read", out["read_from"], "nothing")
+check("and the note carries the refusal",
+      "ReadWrite.All" in out["note"], True)
+check("while still saying what to check in the portal",
+      "Endpoint analytics" in out["note"], True)
+
 print()
 print("FAILURES:", ", ".join(fails) if fails else "none")
 sys.exit(1 if fails else 0)

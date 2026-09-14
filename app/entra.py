@@ -870,6 +870,30 @@ def sync_physical_memory() -> dict:
             "not_in_itam": unknown}
 
 
+# Two ways to ask for the same rows. The plain collection is documented
+# read-only, so it is tried first; on several tenants it answers 200 with an
+# empty list while the portal's own Resource performance report is full, and
+# the per-device summary is what that report actually uses.
+#
+# The summary's documented application permission is the ReadWrite variant of
+# DeviceManagementManagedDevices - which is a lot to ask of a read-only
+# integration, so a refusal is reported rather than demanded.
+RESOURCE_PERF = "/deviceManagement/userExperienceAnalyticsResourcePerformance"
+
+
+def _resource_performance_rows() -> tuple[list[dict], str, str]:
+    """(rows, where they came from, why the fallback was refused)."""
+    rows = _get_all(RESOURCE_PERF, {"$top": "200"}, base=GRAPH_BETA)
+    if rows:
+        return rows, "the collection", ""
+    try:
+        rows = _get_all(RESOURCE_PERF + "/summarizeDeviceResourcePerformance(summarizeBy='none')",
+                        {"$top": "200"}, base=GRAPH_BETA)
+    except GraphError as exc:
+        return [], "nothing", str(exc)[:300]
+    return rows, ("the per-device summary" if rows else "nothing"), ""
+
+
 def sync_resource_performance() -> dict:
     """CPU model and total RAM, from Endpoint Analytics.
 
@@ -887,8 +911,7 @@ def sync_resource_performance() -> dict:
     Windows only, in practice - which is exactly the gap, since Macs report
     their own spec through a custom attribute script.
     """
-    rows = _get_all("/deviceManagement/userExperienceAnalyticsResourcePerformance",
-                    {"$top": "200"}, base=GRAPH_BETA)
+    rows, source, refused = _resource_performance_rows()
     cpus = rams = unmatched = no_cpu = 0
     for row in rows:
         # deviceId is documented only as "the id of the device", so which id is
@@ -926,16 +949,18 @@ def sync_resource_performance() -> dict:
                        (int(megabytes * 1024 * 1024), device["id"]))
             rams += 1
     out = {"devices": len(rows), "cpu_models": cpus, "ram_filled": rams,
-           "reported_no_cpu": no_cpu, "not_in_itam": unmatched}
+           "reported_no_cpu": no_cpu, "not_in_itam": unmatched, "read_from": source}
     if not rows:
         out["note"] = (
-            "Endpoint Analytics returned no devices, so there is nothing to "
-            "read. Switch it on in Intune under Reports > Endpoint analytics: "
-            "the guided setup asks 'Collect device data from', and All "
-            "cloud-managed devices assigns the Intune data collection policy "
-            "to every Intune-managed Windows device. Microsoft says data can "
-            "take up to 24 hours after a restart to appear, and the score "
-            "itself needs at least five devices reporting.")
+            "Endpoint Analytics returned no devices. The plain collection was "
+            "empty and " + (
+                "the per-device summary refused: " + refused if refused else
+                "so was the per-device summary") + ". If the Endpoint analytics "
+            "report in Intune does show devices, this is an API problem rather "
+            "than a setup one - send that line on. If it does not, switch it on "
+            "under Reports > Endpoint analytics: the guided setup asks 'Collect "
+            "device data from', and All cloud-managed devices assigns the data "
+            "collection policy. Data takes up to 24 hours after a restart.")
     elif cpus == 0 and unmatched == len(rows):
         out["note"] = (
             "Endpoint Analytics answered, but none of its deviceId values "

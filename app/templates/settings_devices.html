@@ -35,11 +35,13 @@
    <br><strong>CPU model</strong> &mdash; <span class="mono">Sync CPU
    model</span> above, from
    <span class="mono">userExperienceAnalyticsResourcePerformance</span>. It is
-   beta but documented, and application permission is the same
+   beta but documented, and the collection is readable with the same
    <span class="mono">DeviceManagementManagedDevices.Read.All</span> the device
-   sync uses. Endpoint Analytics has to be switched on and the machine has to
-   have reported, so a device can be legitimately absent; the result says how
-   many were.
+   sync uses. On some tenants that collection answers with an empty list while
+   the portal&rsquo;s own Resource performance report is full; the per-device
+   summary behind that report is asked next, and its documented permission is
+   the <span class="mono">ReadWrite</span> variant. A refusal is reported with
+   the permission it named rather than reading as &ldquo;no data&rdquo;.
    <br><strong>Total RAM</strong> &mdash; <span class="mono">Sync total
    RAM</span>, one call for the whole fleet. Intune reports 0 for some
    platforms; the result says how many gave a real number, and the CPU sync
