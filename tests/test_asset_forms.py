@@ -101,14 +101,22 @@ with TestClient(main.app) as client:     # lifespan runs: bootstrap the admin
         db.execute("""INSERT INTO users (upn, display_name, source, country)
                       VALUES (?,?,'entra',?)""", (f"u{i}@x.com", f"P{i}", country))
     db.init_db()          # the migration is what fixes rows that are already there
-    check("one United Kingdom, not two", fx.countries(),
-          ["Israel", "United Kingdom of Great Britain and Northern Ireland",
-           "United States of America"])
-    check("and the sync stores the tidy form",
-          people.tidy_country("United States of America (the)"), "United States of America")
-    check("a country without the tail is untouched",
+    check("four spellings become two countries", fx.countries(),
+          ["Israel", "UK&I", "USA"])
+    check("the tail goes and the long name is shortened",
+          people.tidy_country("United States of America (the)"), "USA")
+    check("with or without the tail",
+          people.tidy_country("United Kingdom of Great Britain and Northern Ireland"),
+          "UK&I")
+    check("a country nobody shortens is untouched",
           people.tidy_country("Israel"), "Israel")
     check("blank stays blank", people.tidy_country("  "), None)
+    # Shortened where it is stored, not on the way out: a filter offering USA
+    # has to be able to match on USA.
+    check("the filter offers the short name",
+          '<option value="USA"' in client.get("/users").text, True)
+    check("and filtering by it finds the people",
+          client.get("/users?country=USA").text.count('href="/users/'), 1)
 
 print()
 print("FAILURES:", ", ".join(fails) if fails else "none")

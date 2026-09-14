@@ -74,18 +74,19 @@ def _clause(rule) -> tuple[str, list]:
 
 
 def tidy_country(raw: str | None) -> str | None:
-    """Entra's country, without the ISO 3166 tail.
+    """Entra's country, short enough to read.
 
     The standard's official names read "United Kingdom of Great Britain and
     Northern Ireland (the)" and "United States of America (the)". Entra stores
     whichever form the directory was populated with, so the same country
     arrives under two spellings and the dashboard filter lists both - picking
-    one silently halves the answer.
+    one silently halves the answer. The long ones are then shortened -
+    "United States of America" is USA to everybody who works here.
     """
     text = (raw or "").strip()
     if text.lower().endswith("(the)"):
         text = text[:-len("(the)")].strip()
-    return text or None
+    return db.COUNTRY_SHORT.get(text.lower(), text) or None
 
 
 def recompute() -> int:

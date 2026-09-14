@@ -13,6 +13,15 @@ DEFAULT_CATEGORIES = ["Laptop", "Desktop", "Monitor", "Peripheral", "Software", 
 # Categories where every unit is a specific machine with a serial, so one row
 # per unit is the only shape that makes sense. Everything else is counted, and
 # a serial there is optional - give one and that unit becomes its own record.
+# Countries whose official ISO 3166 name is longer than anybody would ever
+# write. Entra hands back the official form, so "United Kingdom of Great
+# Britain and Northern Ireland" was five lines in a table cell and 401px of
+# <select>. Keyed on the lowercased official name; adding one is a line.
+COUNTRY_SHORT = {
+    "united states of america": "USA",
+    "united kingdom of great britain and northern ireland": "UK&I",
+}
+
 SERIAL_CATEGORIES = {"Laptop", "Desktop"}
 
 # What can be true of an asset besides who holds it. Blank is the ordinary
@@ -547,6 +556,14 @@ def init_db():
         conn.execute(
             """UPDATE users SET country = TRIM(SUBSTR(country, 1, LENGTH(country) - 5))
                WHERE country LIKE '%(the)'""")
+        # …and then the long ones get their short name. Stored rather than
+        # shortened on the way out: a filter that lists "USA" has to be able
+        # to match on "USA", and two spellings of one country in the dropdown
+        # is the bug this pair of migrations exists to prevent.
+        for official, short in COUNTRY_SHORT.items():
+            conn.execute(
+                "UPDATE users SET country = ? WHERE LOWER(TRIM(country)) = ?",
+                (short, official))
 
         # Migration: a rule can name a specific item, not just a category.
         rcols = [r["name"] for r in conn.execute("PRAGMA table_info(rules)")]
