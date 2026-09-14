@@ -34,6 +34,14 @@ with TestClient(main.app) as client:
                 follow_redirects=False)
 
     def bulk(**data):
+        # The quantity now lives in the dialog beside the item it belongs to,
+        # so it is named per target rather than once for the whole form.
+        qty = data.pop("quantity", None)
+        if qty is not None:
+            for t in ([data["target"]] if isinstance(data["target"], str)
+                      else data["target"]):
+                if str(t).startswith("pooled:"):
+                    data[f"qty-{t}"] = qty
         return client.post("/users/bulk-assign", data=data, follow_redirects=False)
 
     print("--- two monitors each to the two Israelis ---")
@@ -56,7 +64,7 @@ with TestClient(main.app) as client:
     check("three seats", db.q1("SELECT COUNT(*) c FROM subscription_seats")["c"], 3)
     r = bulk(upn=["yael@x.com", "noa@x.com"], target=f"sub:{sub}")
     check("re-running adds none", db.q1("SELECT COUNT(*) c FROM subscription_seats")["c"], 3)
-    check("and says so", "already+had+one" in (r.headers.get("location") or ""), True)
+    check("and says so", "already+had" in (r.headers.get("location") or ""), True)
 
     print("\n--- refusals ---")
     def complaint(**data):
@@ -64,12 +72,15 @@ with TestClient(main.app) as client:
         return loc.split("msg=")[-1] if "msg=" in loc else ""
 
     check("nobody ticked", complaint(upn=[], target=f"pooled:{mon}"), "Tick+somebody+first")
-    check("nothing chosen", complaint(upn=["yael@x.com"], target=""), "Choose+what+to+assign")
+    check("nothing chosen", complaint(upn=["yael@x.com"], target=""),
+          "Pick+at+least+one+thing+to+assign")
+    # Several things at once means one bad entry cannot abort the good ones, so
+    # an unusable target is reported rather than refusing the whole submission.
     check("a serial-tracked asset cannot be named",
-          complaint(upn=["yael@x.com"], target="asset:1"), "Choose+what+to+assign")
-    check("a made-up item", "No+such+item" in complaint(
+          complaint(upn=["yael@x.com"], target="asset:1"), "Nothing+was+assigned")
+    check("a made-up item", "no+longer+exists" in complaint(
         upn=["yael@x.com"], target="pooled:9999"), True)
-    check("a made-up subscription", "No+such+subscription" in complaint(
+    check("a made-up subscription", "no+longer+exists" in complaint(
         upn=["yael@x.com"], target="sub:9999"), True)
     check("an unknown person is reported, not created",
           "could+not+be+done" in complaint(
@@ -84,7 +95,7 @@ with TestClient(main.app) as client:
     check("the filter is carried back so you land where you were",
           'value="/users?country=Israel"' in client.get("/users?country=Israel").text, True)
 
-print("\n--- handing several things to one person, in one go ---")
+print("\n--- assigning several things to one person, in one go ---")
 # The old shape was a link per item: four things meant four page loads and no
 # way to see what you had already chosen.
 kb = pooled.create("Logitech MX Keys", "Peripheral", 49900)
@@ -94,7 +105,7 @@ with TestClient(main.app) as client:
     client.post("/login", data={"username": "admin", "password": "BulkTest!2345"},
                 follow_redirects=False)
     who = db.q1("SELECT upn FROM users ORDER BY upn LIMIT 1")["upn"]
-    r = client.post(f"/users/{who}/hand-out", follow_redirects=False,
+    r = client.post(f"/users/{who}/assign-items", follow_redirects=False,
                     data={"item": [str(kb), str(pad)],
                           f"qty-{kb}": "1", f"qty-{pad}": "3"})
     check("one redirect, not three", r.status_code, 303)
@@ -109,7 +120,7 @@ with TestClient(main.app) as client:
     pooled.assign(stand, who, 1)
     pooled.take_back(stand, who)
     page = client.get(f"/users/{who}").text
-    dialog = page.split('<dialog id="hand-out"', 1)[1].split("</dialog>", 1)[0]
+    dialog = page.split('<dialog id="give-item"', 1)[1].split("</dialog>", 1)[0]
     check("every item is offered", 'value="' + str(stand) + '"' in dialog, True)
     check("with what came back already on the shelf", "1 on the shelf" in dialog, True)
     check("and a quantity per item, not one for all of them",
@@ -119,7 +130,7 @@ with TestClient(main.app) as client:
     print("\n--- an item deleted while the dialog was open is reported ---")
     gone = pooled.create("Sony ULT900", "Peripheral", 29900)
     pooled.delete(gone)
-    r = client.post(f"/users/{who}/hand-out", follow_redirects=False,
+    r = client.post(f"/users/{who}/assign-items", follow_redirects=False,
                     data={"item": [str(gone), str(kb)]})
     check("the one that still exists goes out",
           pooled.held_by(who, "Peripheral", "Logitech MX Keys"), 2)

@@ -452,6 +452,7 @@ dialog.picker header h2 { margin: 0; font-size: 16px; }
 .picker-qty { width: 72px; padding: 5px 8px; border-radius: 7px;
     border: 1px solid var(--line); background: var(--panel); color: var(--ink);
     font: inherit; font-size: 13px; text-align: right; }
+.picker-row.no-qty { grid-template-columns: auto 1fr auto auto; }
 .picker-empty { color: var(--muted); padding: 14px 10px; }
 dialog.picker footer { display: flex; align-items: center; gap: 10px;
     padding: 12px 18px 16px; border-top: 1px solid var(--line); }

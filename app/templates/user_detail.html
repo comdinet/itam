@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_picker.html" import picker %}
 {% block title %}{{ u.display_name }} &middot; ITAM{% endblock %}
 {% block body %}
 <p class="crumb"><a href="/users">&larr; People</a></p>
@@ -61,17 +62,10 @@
   </tbody>
 </table>
 
-<form class="inline-form" method="post" action="/users/{{ u.upn }}/assign-asset">
-  <select name="asset_id" required>
-    <option value="">Assign a spare asset&hellip;</option>
-    {% for a in spare %}
-      <option value="{{ a.id }}">{{ a.category }} &mdash; {{ a.name }}
-        {% if a.serial %}({{ a.serial }}){% endif %} &mdash; {{ a.cost_cents|money }}</option>
-    {% endfor %}
-  </select>
-  <button type="submit">Assign</button>
-  {% if not spare %}<span class="hint">Nothing spare to assign.</span>{% endif %}
-</form>
+{{ picker("give-asset", "Assign assets",
+          "Assign to " ~ u.display_name, "/users/" ~ u.upn ~ "/assign-asset",
+          spare_rows, "asset_id",
+          "Nothing spare to assign. Every serial-tracked asset is with somebody.") }}
 
 <h2>Pooled assets</h2>
 <table>
@@ -96,46 +90,13 @@
   </tbody>
 </table>
 
-{% if pooled_available %}
-<div class="inline-form">
-  <button type="button" class="open-dialog" data-dialog="hand-out">Hand out items</button>
-  <span class="hint">Anything on the shelf is used first &mdash; otherwise a unit
-    counts as a new one and adds its price to this person&rsquo;s total.</span>
-</div>
-
-<dialog id="hand-out" class="picker">
-  <form method="post" action="/users/{{ u.upn }}/hand-out">
-    <header>
-      <h2>Hand out to {{ u.display_name }}</h2>
-      <button type="button" class="close-dialog" aria-label="Close">&times;</button>
-    </header>
-    <input class="picker-search" type="search" placeholder="Filter by name or category"
-           aria-label="Filter items" autocomplete="off">
-    <div class="picker-list">
-      {% for k in pooled_available %}
-      <label class="picker-row" data-text="{{ k.name|lower }} {{ k.category|lower }}">
-        <input type="checkbox" name="item" value="{{ k.id }}">
-        <span class="picker-name">{{ k.name }}
-          <span class="meta">{{ k.category }}</span></span>
-        <span class="picker-price">{% if k.unit_cost_cents %}{{ k.currency or currency }}
-          {{ k.unit_cost_cents|money }}{% else %}<span class="meta">no cost set</span>{% endif %}</span>
-        <span class="picker-shelf">{% if k.spare %}<span class="pill good">{{ k.spare }} on the shelf</span>
-          {% else %}<span class="meta">none returned</span>{% endif %}</span>
-        <input class="picker-qty" type="number" name="qty-{{ k.id }}" value="1" min="1"
-               aria-label="How many {{ k.name }}">
-      </label>
-      {% endfor %}
-      <p class="picker-empty" hidden>Nothing matches that.</p>
-    </div>
-    <footer>
-      <span class="picker-count meta">Nothing picked</span>
-      <span class="spacer"></span>
-      <button type="button" class="light close-dialog">Cancel</button>
-      <button type="submit">Hand out</button>
-    </footer>
-  </form>
-</dialog>
-{% endif %}
+{{ picker("give-item", "Assign items",
+          "Assign to " ~ u.display_name, "/users/" ~ u.upn ~ "/assign-items",
+          pooled_rows, "item",
+          "Nothing counted has been set up yet - add an item under Assets.",
+          qty=True) }}
+<p class="hint">Anything on the shelf is used first &mdash; otherwise a unit
+   counts as a new one and adds its price to this person&rsquo;s total.</p>
 
 <h2>Entra ID licences</h2>
 <table>
@@ -173,13 +134,8 @@
   </tbody>
 </table>
 
-<form class="inline-form" method="post" action="/users/{{ u.upn }}/assign-sub">
-  <select name="subscription_id" required>
-    <option value="">Assign a licence&hellip;</option>
-    {% for s in avail_subs %}
-      <option value="{{ s.id }}">{{ s.name }} &mdash; {{ s.monthly_cost_cents|money }}/mo</option>
-    {% endfor %}
-  </select>
-  <button type="submit">Assign</button>
-</form>
+{{ picker("give-sub", "Assign licences",
+          "Give " ~ u.display_name ~ " a seat", "/users/" ~ u.upn ~ "/assign-sub",
+          sub_rows, "subscription_id",
+          "Every subscription already has a seat for this person.") }}
 {% endblock %}

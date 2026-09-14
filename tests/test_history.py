@@ -81,10 +81,23 @@ with TestClient(main.app) as client:
           sorted(c["field"] for c in latest["changes"]), ["name", "status"])
 
     print("\n--- handing it to somebody else, and taking it back ---")
-    client.post("/users/ben@x.com/assign-asset", data={"asset_id": aid},
-                follow_redirects=False)
+    # A handover is an edit of who holds it. The picker on a person's page only
+    # offers spare assets, and taking one out of somebody else's hands is a
+    # different act from picking up a spare.
+    client.post(f"/assets/{aid}/edit", data={
+        "name": "MacBook Air 15", "category": "Laptop", "cost": "1200.00",
+        "currency": "USD", "serial": "C49KKVM4TF", "purchased_on": "2026-01-15",
+        "notes": "", "assigned_upn": "ben@x.com", "status": "Sold to employee"},
+        follow_redirects=False)
     check("the handover is recorded with both ends",
           moves(aid)["assigned_upn"][0], ("ann@x.com", "ben@x.com"))
+    r = client.post("/users/ann@x.com/assign-asset", data={"asset_id": aid},
+                    follow_redirects=False)
+    check("and picking a spare cannot quietly take it back off them",
+          "is+now+with+ben@x.com" in r.headers["location"], True)
+    check("so it stays where it is",
+          db.q1("SELECT assigned_upn FROM assets WHERE id=?", (aid,))["assigned_upn"],
+          "ben@x.com")
     client.post(f"/assets/{aid}/unassign", data={"redirect": "/assets"},
                 follow_redirects=False)
     check("and a return reads as cleared, not as blank",

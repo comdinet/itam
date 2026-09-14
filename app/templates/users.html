@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_picker.html" import picker %}
 {% block title %}People &middot; ITAM{% endblock %}
 {% block body %}
 <h1>People <span class="count">{{ users|length }}</span></h1>
@@ -30,28 +31,50 @@
 <input type="hidden" name="back" value="/users{{ '?' ~ request.url.query if request.url.query else '' }}">
 <div class="bulkbar" id="bulkbar">
   <strong><span id="bulkcount">0</span> selected</strong>
-  <label>Assign
-    <select name="target" id="bulktarget">
-      <option value="">&mdash; choose &mdash;</option>
-      {% if pooled_items %}
-      <optgroup label="Counted assets">
-        {% for i in pooled_items %}
-          <option value="pooled:{{ i.id }}">{{ i.name }} &mdash; {{ i.category }}</option>
-        {% endfor %}
-      </optgroup>
-      {% endif %}
-      {% if subs %}
-      <optgroup label="Licences">
-        {% for sub in subs %}<option value="sub:{{ sub.id }}">{{ sub.name }}</option>{% endfor %}
-      </optgroup>
-      {% endif %}
-    </select>
-  </label>
-  <label id="bulkqty">&times;<input name="quantity" type="number" min="1" value="1"
-         style="width:4.5rem"></label>
+  <button type="button" class="open-dialog" data-dialog="bulk-pick">Choose what to assign</button>
+  <span class="picker-chosen meta" data-for="bulk-pick">Nothing picked</span>
   <button type="submit">Assign</button>
   <span class="hint" id="bulkhint"></span>
 </div>
+
+<dialog id="bulk-pick" class="picker">
+  <div>
+    <header>
+      <h2>Assign to the people you ticked</h2>
+      <button type="button" class="close-dialog" aria-label="Close">&times;</button>
+    </header>
+    <input class="picker-search" type="search" placeholder="Filter by name"
+           aria-label="Filter" autocomplete="off">
+    <div class="picker-list">
+      {% for i in pooled_items %}
+      <label class="picker-row" data-text="{{ (i.name ~ ' ' ~ i.category)|lower }}">
+        <input type="checkbox" name="target" value="pooled:{{ i.id }}">
+        <span class="picker-name">{{ i.name }}<span class="meta">{{ i.category }}</span></span>
+        <span class="picker-price">{% if i.unit_cost_cents %}{{ i.currency or currency }}
+          {{ i.unit_cost_cents|money }}{% else %}<span class="meta">no cost set</span>{% endif %}</span>
+        <span class="picker-shelf">{% if i.spare %}<span class="pill good">{{ i.spare }} on the shelf</span>
+          {% else %}<span class="meta">none returned</span>{% endif %}</span>
+        <input class="picker-qty" type="number" name="qty-pooled:{{ i.id }}" value="1"
+               min="1" aria-label="How many {{ i.name }} each">
+      </label>
+      {% endfor %}
+      {% for sub in subs %}
+      <label class="picker-row no-qty" data-text="{{ (sub.name ~ ' licence')|lower }}">
+        <input type="checkbox" name="target" value="sub:{{ sub.id }}">
+        <span class="picker-name">{{ sub.name }}<span class="meta">licence seat</span></span>
+        <span class="picker-price"></span>
+        <span class="picker-shelf"><span class="meta">one seat each</span></span>
+      </label>
+      {% endfor %}
+      <p class="picker-empty" hidden>Nothing matches that.</p>
+    </div>
+    <footer>
+      <span class="picker-count meta">Nothing picked</span>
+      <span class="spacer"></span>
+      <button type="button" class="light close-dialog">Done</button>
+    </footer>
+  </div>
+</dialog>
 
 <table>
   <thead><tr><th class="pickcol"><input type="checkbox" id="pickall"
@@ -85,20 +108,43 @@
     var all = document.getElementById('pickall');
     var picks = Array.prototype.slice.call(document.querySelectorAll('.pick'));
     var count = document.getElementById('bulkcount');
-    var target = document.getElementById('bulktarget');
-    var qty = document.getElementById('bulkqty');
+    var dialog = document.getElementById('bulk-pick');
+    var chosen = document.querySelector('.picker-chosen[data-for="bulk-pick"]');
     var hint = document.getElementById('bulkhint');
+
+    function picked() {
+      return dialog
+        ? Array.prototype.slice.call(
+            dialog.querySelectorAll('input[name="target"]:checked'))
+        : [];
+    }
 
     function sync() {
       var n = picks.filter(function (p) { return p.checked; }).length;
       bar.style.display = n ? 'flex' : 'none';
       count.textContent = n;
-      // A licence is one seat per person; a quantity would be meaningless.
-      var isLicence = target.value.indexOf('sub:') === 0;
-      qty.style.display = isLicence ? 'none' : 'inline-flex';
-      hint.textContent = isLicence
-        ? 'One seat each. Anyone who already has one is left alone.'
-        : (target.value ? 'Anything on the shelf is used first.' : '');
+      var chosenNow = picked();
+      // Per item, because a quantity means nothing for a licence seat: the
+      // boxes live in the dialog next to the thing they belong to.
+      chosenNow.forEach(function (box) {
+        var row = box.closest('.picker-row');
+        var q = row && row.querySelector('.picker-qty');
+        if (q) q.disabled = false;
+      });
+      if (chosen) {
+        chosen.textContent = chosenNow.length
+          ? chosenNow.map(function (b) {
+              return b.closest('.picker-row').querySelector('.picker-name')
+                      .childNodes[0].textContent.trim();
+            }).join(', ')
+          : 'Nothing picked';
+      }
+      if (hint) {
+        hint.textContent = chosenNow.length
+          ? 'Anything on the shelf is used first. A licence is one seat each, '
+            + 'and anyone who already has one is left alone.'
+          : '';
+      }
       all.checked = n === picks.length && n > 0;
       all.indeterminate = n > 0 && n < picks.length;
     }
@@ -108,7 +154,7 @@
       sync();
     });
     picks.forEach(function (p) { p.addEventListener('change', sync); });
-    target.addEventListener('change', sync);
+    if (dialog) dialog.addEventListener('change', sync);
     sync();
   })();
 </script>

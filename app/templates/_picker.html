@@ -1,0 +1,54 @@
+{# One multi-select dialog, used everywhere something is handed to somebody.
+
+   Rows are normalised by the route into value / name / sub / price / note, so
+   this markup does not care whether it is looking at a monitor, a laptop or a
+   licence seat. Three copies of a dialog would be three things to keep in
+   step, and the one that drifts is the one nobody notices. #}
+{% macro picker(id, button, title, action, rows, field, empty, qty=False, note_kind='meta') %}
+{% if rows %}
+<div class="inline-form">
+  <button type="button" class="open-dialog" data-dialog="{{ id }}">{{ button }}</button>
+  {{ caller() if caller is defined and caller else '' }}
+</div>
+
+<dialog id="{{ id }}" class="picker">
+  <form method="post" action="{{ action }}">
+    <header>
+      <h2>{{ title }}</h2>
+      <button type="button" class="close-dialog" aria-label="Close">&times;</button>
+    </header>
+    <input class="picker-search" type="search" placeholder="Filter by name"
+           aria-label="Filter" autocomplete="off">
+    <div class="picker-list">
+      {% for r in rows %}
+      <label class="picker-row{% if not qty %} no-qty{% endif %}"
+             data-text="{{ (r.name ~ ' ' ~ (r.sub or '') ~ ' ' ~ (r.note or ''))|lower }}">
+        <input type="checkbox" name="{{ field }}" value="{{ r.value }}">
+        <span class="picker-name">{{ r.name }}
+          {% if r.sub %}<span class="meta">{{ r.sub }}</span>{% endif %}</span>
+        <span class="picker-price">{{ r.price }}</span>
+        <span class="picker-shelf">
+          {%- if r.note %}
+            {%- if r.note_good %}<span class="pill good">{{ r.note }}</span>
+            {%- else %}<span class="meta">{{ r.note }}</span>{% endif %}
+          {%- endif %}</span>
+        {% if qty %}
+        <input class="picker-qty" type="number" name="qty-{{ r.value }}" value="1" min="1"
+               aria-label="How many {{ r.name }}">
+        {% endif %}
+      </label>
+      {% endfor %}
+      <p class="picker-empty" hidden>Nothing matches that.</p>
+    </div>
+    <footer>
+      <span class="picker-count meta">Nothing picked</span>
+      <span class="spacer"></span>
+      <button type="button" class="light close-dialog">Cancel</button>
+      <button type="submit">{{ button }}</button>
+    </footer>
+  </form>
+</dialog>
+{% else %}
+<p class="hint">{{ empty }}</p>
+{% endif %}
+{% endmacro %}

@@ -891,7 +891,7 @@ def users_list(request: Request, q: str = "", dept: str = "", country: str = "",
 
 @app.post("/users/bulk-assign")
 async def users_bulk_assign(request: Request):
-    """Give the same thing to everyone ticked on the People page.
+    """Give the same things to everyone ticked on the People page.
 
     Only counted assets and licence seats. A serial-tracked machine is one
     specific piece of hardware with one serial - handing "one of those" to
@@ -899,50 +899,68 @@ async def users_bulk_assign(request: Request):
     """
     form = await request.form()
     upns = [u.strip().lower() for u in form.getlist("upn") if u.strip()]
-    target = str(form.get("target") or "")
-    if not upns:
-        return back("/users", "Tick somebody first")
-    if ":" not in target:
-        return back("/users", "Choose what to assign")
-    kind, _, raw_id = target.partition(":")
-    if not raw_id.isdigit():
-        return back("/users", "Choose what to assign")
-    target_id = int(raw_id)
-
     back_to = str(form.get("back") or "/users")
-    if kind == "sub":
-        sub = db.q1("SELECT name FROM subscriptions WHERE id = ?", (target_id,))
-        if not sub:
-            return back(back_to, "No such subscription")
-        before = db.q1("SELECT COUNT(*) c FROM subscription_seats WHERE subscription_id = ?",
-                       (target_id,))["c"]
-        for upn in upns:
-            db.execute(
-                """INSERT OR IGNORE INTO subscription_seats
-                       (subscription_id, upn, assigned_on) VALUES (?,?,?)""",
-                (target_id, upn, today()))
-        after = db.q1("SELECT COUNT(*) c FROM subscription_seats WHERE subscription_id = ?",
-                      (target_id,))["c"]
-        granted = after - before
-        msg = f"Gave {granted} person/people a seat on {sub['name']}"
-        if granted < len(upns):
-            msg += f"; {len(upns) - granted} already had one"
-        return back(back_to, msg)
+    if not upns:
+        return back(back_to, "Tick somebody first")
 
-    if kind != "pooled":
-        return back(back_to, "Choose what to assign")
-    item = pooled.get(target_id)
-    if not item:
-        return back(back_to, "No such item")
-    try:
-        qty = max(1, int(str(form.get("quantity") or "1")))
-    except ValueError:
-        return back(back_to, "Quantity must be a whole number")
-    problems = [p for p in (pooled.assign(target_id, upn, qty) for upn in upns) if p]
-    given = len(upns) - len(problems)
-    msg = f"Gave {given} person/people {qty} \u00d7 {item['name']}"
+    targets = [t for t in form.getlist("target") if ":" in str(t)]
+    if not targets:
+        return back(back_to, "Pick at least one thing to assign")
+
+    done, problems = [], []
+    for target in targets:
+        kind, _, raw_id = str(target).partition(":")
+        if not raw_id.isdigit():
+            continue
+        target_id = int(raw_id)
+
+        if kind == "sub":
+            sub = db.q1("SELECT name FROM subscriptions WHERE id = ?", (target_id,))
+            if not sub:
+                problems.append(f"subscription {target_id} no longer exists")
+                continue
+            granted = 0
+            for upn in upns:
+                held = db.q1("SELECT 1 FROM subscription_seats WHERE subscription_id = ? "
+                             "AND upn = ?", (target_id, upn))
+                if held:
+                    continue
+                db.execute("""INSERT OR IGNORE INTO subscription_seats
+                                  (subscription_id, upn, assigned_on) VALUES (?,?,?)""",
+                           (target_id, upn, today()))
+                granted += 1
+            done.append(f"{sub['name']} to {granted}")
+            if granted < len(upns):
+                problems.append(f"{len(upns) - granted} already had {sub['name']}")
+            continue
+
+        if kind != "pooled":
+            continue
+        item = pooled.get(target_id)
+        if not item:
+            problems.append(f"item {target_id} no longer exists")
+            continue
+        try:
+            qty = int(form.get(f"qty-pooled:{target_id}") or 1)
+        except (TypeError, ValueError):
+            qty = 1
+        qty = max(1, qty)
+        handed, refused = 0, []
+        for upn in upns:
+            complaint = pooled.assign(target_id, upn, qty)
+            if complaint:
+                refused.append(f"{upn}: {complaint.lower()}")
+            else:
+                handed += 1
+        if handed:
+            done.append(f"{qty} x {item['name']} to {handed}")
+        if refused:
+            problems.append(f"{item['name']} could not be done for "
+                            + ", ".join(refused))
+
+    msg = ("Assigned " + ", ".join(done)) if done else "Nothing was assigned"
     if problems:
-        msg += f"; {len(problems)} could not be done ({problems[0]})"
+        msg += " - " + "; ".join(problems)
     return back(back_to, msg)
 
 
@@ -979,26 +997,97 @@ def user_detail(request: Request, upn: str):
     pooled_available = db.q(
         """SELECT p.*, p.spare AS available
            FROM pooled_items p ORDER BY p.category, p.name""")
+    # The pickers are all fed the same shape, so one dialog serves all three
+    # and there is nothing to keep in step when one of them changes.
+    money = settings.currency()
+    spare_rows = [{"value": a["id"], "name": a["name"], "sub": a["category"],
+                   "price": f"{a['currency'] or money} {db.money(a['cost_cents'])}"
+                            if a["cost_cents"] else "",
+                   "note": a["serial"] or "", "note_good": False}
+                  for a in spare]
+    sub_rows = [{"value": r["id"], "name": r["name"], "sub": r["vendor"] or "",
+                 "price": f"{r['currency'] or money} {db.money(r['monthly_cost_cents'])}",
+                 "note": "per seat / month", "note_good": False}
+                for r in avail_subs]
+    pooled_rows = [{"value": k["id"], "name": k["name"], "sub": k["category"],
+                    "price": f"{k['currency'] or money} {db.money(k['unit_cost_cents'])}"
+                             if k["unit_cost_cents"] else "no cost set",
+                    "note": (f"{k['spare']} on the shelf" if k["spare"]
+                             else "none returned"),
+                    "note_good": bool(k["spare"])}
+                   for k in pooled_available]
     return render(request, "user_detail.html", u=user, assets=assets, subs=subs,
                   spare=spare, avail_subs=avail_subs, entra_licences=entra_licences,
                   pooled_held=pooled_held, pooled_available=pooled_available,
+                  spare_rows=spare_rows, sub_rows=sub_rows, pooled_rows=pooled_rows,
                   asset_specs=asset_specs)
 
 
+def _picked(form, field: str) -> list[int]:
+    """The ids ticked in a picker, as integers, ignoring anything malformed."""
+    out = []
+    for raw in form.getlist(field):
+        try:
+            out.append(int(str(raw).strip()))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _picker_result(done: list[str], problems: list[str], nothing: str) -> str:
+    msg = ("Assigned " + ", ".join(done)) if done else nothing
+    if problems:
+        msg += " - " + "; ".join(problems)
+    return msg
+
+
 @app.post("/users/{upn}/assign-asset")
-def assign_asset(request: Request, upn: str, asset_id: int = Form(...)):
-    before = db.q1("SELECT * FROM assets WHERE id = ?", (asset_id,))
-    db.execute("UPDATE assets SET assigned_upn = ?, assigned_on = ? WHERE id = ?", (upn, today(), asset_id))
-    events.changed(asset_id, before, "ui", actor(request))
-    return back(f"/users/{upn}", "Asset assigned")
+async def assign_asset(request: Request, upn: str):
+    """Give somebody one or several serial-tracked assets."""
+    form = await request.form()
+    person = upn.strip().lower()
+    picked = _picked(form, "asset_id")
+    if not picked:
+        return back(f"/users/{person}", "Pick at least one asset")
+    done, problems = [], []
+    for asset_id in picked:
+        before = db.q1("SELECT * FROM assets WHERE id = ?", (asset_id,))
+        if not before:
+            problems.append(f"asset {asset_id} no longer exists")
+            continue
+        if before["assigned_upn"]:
+            # Somebody took it while the dialog was open. Say so rather than
+            # silently moving a machine out of their hands.
+            problems.append(f"{before['name']} is now with {before['assigned_upn']}")
+            continue
+        db.execute("UPDATE assets SET assigned_upn = ?, assigned_on = ? WHERE id = ?",
+                   (person, today(), asset_id))
+        events.changed(asset_id, before, "ui", actor(request))
+        done.append(before["name"])
+    return back(f"/users/{person}",
+                _picker_result(done, problems, "Nothing was assigned"))
 
 
 @app.post("/users/{upn}/assign-sub")
-def assign_sub(upn: str, subscription_id: int = Form(...)):
-    db.execute(
-        "INSERT OR IGNORE INTO subscription_seats (subscription_id, upn, assigned_on) VALUES (?,?,?)",
-        (subscription_id, upn, today()))
-    return back(f"/users/{upn}", "Licence assigned")
+async def assign_sub(request: Request, upn: str):
+    """Give somebody a seat on one or several subscriptions."""
+    form = await request.form()
+    person = upn.strip().lower()
+    picked = _picked(form, "subscription_id")
+    if not picked:
+        return back(f"/users/{person}", "Pick at least one licence")
+    done, problems = [], []
+    for sub_id in picked:
+        sub = db.q1("SELECT name FROM subscriptions WHERE id = ?", (sub_id,))
+        if not sub:
+            problems.append(f"subscription {sub_id} no longer exists")
+            continue
+        db.execute("INSERT OR IGNORE INTO subscription_seats "
+                   "(subscription_id, upn, assigned_on) VALUES (?,?,?)",
+                   (sub_id, person, today()))
+        done.append(sub["name"])
+    return back(f"/users/{person}",
+                _picker_result(done, problems, "Nothing was assigned"))
 
 
 # --- assets --------------------------------------------------------------
@@ -1199,25 +1288,21 @@ def pooled_assign(item_id: int, upn: str = Form(...), quantity: str = Form("1"),
     return back(target, problem or f"Handed out {qty} unit(s)")
 
 
-@app.post("/users/{upn}/hand-out")
-async def user_hand_out(request: Request, upn: str):
-    """Hand several counted items to one person in a single go.
+@app.post("/users/{upn}/assign-items")
+async def user_assign_items(request: Request, upn: str):
+    """Assign several counted items to one person in a single go.
 
     One form, one redirect, one message. Doing it as a link per item meant a
     page load each, and no way to see what you had already picked.
     """
     form = await request.form()
     person = upn.strip().lower()
-    picked = [i for i in form.getlist("item") if str(i).strip()]
+    picked = _picked(form, "item")
     if not picked:
         return back(f"/users/{person}", "Pick at least one item")
 
     handed, problems = [], []
-    for raw in picked:
-        try:
-            item_id = int(raw)
-        except (TypeError, ValueError):
-            continue
+    for item_id in picked:
         try:
             qty = int(form.get(f"qty-{item_id}") or 1)
         except (TypeError, ValueError):
@@ -1233,10 +1318,8 @@ async def user_hand_out(request: Request, upn: str):
         else:
             handed.append(f"{qty} x {item['name']}")
 
-    msg = ("Handed out " + ", ".join(handed)) if handed else "Nothing was handed out"
-    if problems:
-        msg += " - " + "; ".join(problems)
-    return back(f"/users/{person}", msg)
+    return back(f"/users/{person}",
+                _picker_result(handed, problems, "Nothing was assigned"))
 
 
 @app.post("/assets/pooled/{item_id}/take-back")
